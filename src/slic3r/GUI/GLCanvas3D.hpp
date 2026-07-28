@@ -939,6 +939,15 @@ public:
                                  Camera::ViewAngleType     camera_view_angle_type = Camera::ViewAngleType::Iso,
                                  bool                      for_picking  = false,
                                  bool                      ban_light    = false);
+    // Offscreen render of the plate as the user sees it: bed + plate grid +
+    // models, framed on the build volume (so plate contact, bed position and
+    // first-layer footprint are all readable). Returns false on FBO failure.
+    bool render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h,
+                                Camera::ViewAngleType camera_view_angle_type, bool frame_object);
+    // Offscreen render of the sliced toolpaths (preview) into thumbnail_data.
+    // Returns false when no toolpaths are loaded or the FBO cannot be built.
+    bool render_gcode_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h,
+                                Camera::ViewAngleType camera_view_angle_type, bool frame_object);
     static void render_thumbnail_internal(ThumbnailData& thumbnail_data, const ThumbnailsParams& thumbnail_params, PartPlateList& partplate_list, ModelObjectPtrs& model_objects,
         const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
                                           GLShaderProgram *                  shader,

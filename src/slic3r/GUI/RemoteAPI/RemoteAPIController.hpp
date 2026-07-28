@@ -65,6 +65,7 @@ private:
     Response handle_put_layer_height(uint64_t id, const std::string &body);  // M4c: PUT /objects/{id}/layer_height
     Response handle_put_height_range(uint64_t id, const std::string &body);  // M4c: PUT /objects/{id}/height_range
     Response handle_get_gcode();                            // M4a: GET /gcode (raw body)
+    Response handle_plate_render(const std::string &target); // GET /plate/render (PNG: editor|preview)
     Response handle_get_objects();                          // M4b: GET /objects
     Response handle_delete_object(uint64_t id);             // M4b: DELETE /objects/{id}
     Response handle_transform_object(uint64_t id, const std::string &body); // M4b: POST /objects/{id}/transform

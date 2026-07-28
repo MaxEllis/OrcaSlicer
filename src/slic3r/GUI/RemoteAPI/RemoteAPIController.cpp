@@ -19,14 +19,20 @@
 #include "libslic3r/Format/bbs_3mf.hpp" // LoadStrategy (used by Plater::load_files)
 #include "libslic3r/Slicing.hpp"          // M4c: layer_height_profile_adaptive, t_layer_height_range
 #include "slic3r/GUI/GUI_ObjectList.hpp" // M4c: obj_list()->update_info_items
+#include "slic3r/GUI/GLCanvas3D.hpp"      // plate_render: offscreen thumbnail/gcode render
+#include "slic3r/GUI/Camera.hpp"          // plate_render: ViewAngleType
+#include "libslic3r/GCode/ThumbnailData.hpp" // plate_render: ThumbnailData/ThumbnailsParams
+#include <miniz.h>                        // plate_render: RGBA -> PNG in memory
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <atomic>
 #include <cctype>
 #include <deque>
 #include <fstream>
 #include <future>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -264,7 +270,7 @@ Response Controller::handle_status()
             {"app", SLIC3R_APP_NAME},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render"}},
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
             {"presets", {
@@ -1149,6 +1155,116 @@ Response Controller::handle_get_gcode()
 }
 
 
+Response Controller::handle_plate_render(const std::string &target)
+{
+    // GET /api/v1/plate/render?view=editor|preview&angle=iso|top|front|left|right|rear|bottom&width=800&height=600
+    auto qparam = [&target](const char *name) -> std::string {
+        auto qpos = target.find('?');
+        if (qpos == std::string::npos) return {};
+        const std::string key = std::string(name) + "=";
+        const std::string q   = target.substr(qpos + 1);
+        size_t start = 0;
+        while (start <= q.size()) {
+            auto amp = q.find('&', start);
+            std::string item = q.substr(start, amp == std::string::npos ? std::string::npos : amp - start);
+            if (item.size() >= key.size() && item.compare(0, key.size(), key) == 0)
+                return url_decode(item.substr(key.size()));
+            if (amp == std::string::npos) break;
+            start = amp + 1;
+        }
+        return {};
+    };
+
+    std::string view = qparam("view");
+    if (view.empty()) view = "editor";
+    if (view != "editor" && view != "preview")
+        return { 400, {{"error", "bad_param"}, {"param", "view"},
+                       {"allowed", nlohmann::json::array({"editor", "preview"})}} };
+
+    std::string angle = qparam("angle");
+    if (angle.empty()) angle = "iso";
+    static const std::map<std::string, Camera::ViewAngleType> angle_map = {
+        {"iso",    Camera::ViewAngleType::Iso},   {"top",  Camera::ViewAngleType::Top},
+        {"front",  Camera::ViewAngleType::Front}, {"left", Camera::ViewAngleType::Left},
+        {"right",  Camera::ViewAngleType::Right}, {"rear", Camera::ViewAngleType::Rear},
+        {"bottom", Camera::ViewAngleType::Bottom}};
+    auto ait = angle_map.find(angle);
+    if (ait == angle_map.end())
+        return { 400, {{"error", "bad_param"}, {"param", "angle"},
+                       {"allowed", nlohmann::json::array({"iso", "top", "front", "left", "right", "rear", "bottom"})}} };
+
+    // frame=plate  -> zoom to the whole bed (where the part sits, footprint)
+    // frame=object -> zoom to the model/toolpaths (detail)
+    // default: plate for the editor view, object for the preview view.
+    std::string frame = qparam("frame");
+    if (!frame.empty() && frame != "plate" && frame != "object")
+        return { 400, {{"error", "bad_param"}, {"param", "frame"},
+                       {"allowed", nlohmann::json::array({"plate", "object"})}} };
+
+    long w = 800, h = 600;
+    try {
+        const std::string ws = qparam("width"), hs = qparam("height");
+        if (!ws.empty()) w = std::stol(ws);
+        if (!hs.empty()) h = std::stol(hs);
+    } catch (...) {
+        return { 400, {{"error", "bad_param"}, {"param", "width/height"}} };
+    }
+    w = std::min(std::max(w, 64L), 2048L);
+    h = std::min(std::max(h, 64L), 2048L);
+
+    const Camera::ViewAngleType va           = ait->second;
+    const bool                  preview      = (view == "preview");
+    const bool                  frame_object = frame.empty() ? preview : (frame == "object");
+    // Filled on the GUI thread; run_on_ui blocks until the lambda completes, and
+    // the shared_ptr keeps the buffer alive even if the io side times out first.
+    auto png_out = std::make_shared<std::string>();
+
+    // 30s (not the 10s default): a large plate at 2048px can outrun the default.
+    nlohmann::json j = run_on_ui([va, w, h, preview, frame_object, png_out]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        ThumbnailData data;
+        if (preview) {
+            PartPlate *plate = plater->get_partplate_list().get_curr_plate();
+            if (!plate->is_slice_result_valid())
+                return {{"error", "no_slice_result"}};
+            GLCanvas3D *canvas = plater->get_preview_canvas3D();
+            if (canvas == nullptr)
+                return {{"error", "render_failed"}, {"reason", "no preview canvas"}};
+            // The preview only auto-reloads while its panel is on screen
+            // (Plater::priv::update: `if (is_preview_shown()) preview->reload_print()`),
+            // so an API-driven slice leaves the GCodeViewer empty. Load it on demand.
+            if (!canvas->render_gcode_thumbnail(data, (unsigned int)w, (unsigned int)h, va, frame_object)) {
+                plater->reload_print();
+                if (!canvas->render_gcode_thumbnail(data, (unsigned int)w, (unsigned int)h, va, frame_object))
+                    return {{"error", "render_failed"}, {"reason", "gcode preview render unavailable"}};
+            }
+        } else {
+            GLCanvas3D *canvas = plater->get_view3D_canvas3D();
+            if (canvas == nullptr || !canvas->render_plate_thumbnail(data, (unsigned int)w, (unsigned int)h, va, frame_object))
+                return {{"error", "render_failed"}, {"reason", "editor plate render failed"}};
+        }
+        size_t png_size = 0;
+        void  *png      = tdefl_write_image_to_png_file_in_memory_ex(
+            (const void *)data.pixels.data(), data.width, data.height, 4, &png_size, MZ_DEFAULT_LEVEL, 1);
+        if (png == nullptr)
+            return {{"error", "render_failed"}, {"reason", "png encode failed"}};
+        png_out->assign((const char *)png, png_size);
+        mz_free(png);
+        return {{"bytes", png_size}};
+    }, 30);
+
+    if (j.contains("error")) {
+        const std::string err = j["error"].get<std::string>();
+        return { err == "no_slice_result" ? 409 : 500, j };
+    }
+    Response r;
+    r.status           = 200;
+    r.raw_body         = *png_out;
+    r.raw_content_type = "image/png";
+    return r;
+}
+
+
 Response Controller::handle_get_objects()
 {
     nlohmann::json r = run_on_ui([]() -> nlohmann::json {
@@ -1175,6 +1291,17 @@ Response Controller::handle_get_objects()
                     {"rotation", {rot.x(), rot.y(), rot.z()}},
                     {"scale",    {scl.x(), scl.y(), scl.z()}},
                 };
+                // World-space bbox of instance 0. `offset` above is the MESH
+                // ORIGIN, which only coincides with the bbox centre for a
+                // centred, unrotated mesh - so plate contact is NOT derivable
+                // from it. bbox_min[2] is the real answer: ~0 sits on the
+                // plate, >0 floats, <0 sinks into it.
+                const BoundingBoxf3 bb = mo->instance_bounding_box(*mi, false);
+                if (bb.defined) {
+                    o["bbox_min"] = {bb.min.x(), bb.min.y(), bb.min.z()};
+                    o["bbox_max"] = {bb.max.x(), bb.max.y(), bb.max.z()};
+                    o["on_plate"] = (std::abs(bb.min.z()) < 0.05);
+                }
             }
             // M4c readback: per-object overrides + variable-layer-height state
             {
@@ -1411,6 +1538,7 @@ Response Controller::dispatch(const Request &req)
         }
         if (is("GET",  "/api/v1/gcode"))        return handle_get_gcode();
         if (is("GET",  "/api/v1/objects"))      return handle_get_objects();
+        if (is("GET",  "/api/v1/plate/render")) return handle_plate_render(t);
         if (is("GET",  "/api/v1/presets"))      return handle_get_presets();
         if (is("POST", "/api/v1/arrange"))      return handle_arrange();
         if (is("POST", "/api/v1/orient"))       return handle_orient();
