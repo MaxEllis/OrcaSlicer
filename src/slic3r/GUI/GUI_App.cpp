@@ -5947,6 +5947,11 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
     // (the N in v<base>-mcp.N), which is monotonic across base-version bumps;
     // semver alone cannot order two -mcp.N tags (the suffix regex stops at the
     // dot, so mcp.5 and mcp.6 parse equal).
+    // Scoped: the stock implementation below is left intact (unreachable) to keep
+    // the diff against upstream small for future rebases, and it declares its own
+    // `http` in this same function scope - which is a hard redefinition error even
+    // though it can never run. The braces keep the two sets of locals apart.
+    {
     (void)show_tips;
     if (app_config->get_stealth_mode())
         return;
@@ -6019,6 +6024,7 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
 
     http.perform();
     return;
+    }
 
     // ---- stock update check below is intentionally unreachable ----
     AppConfig* app_config = wxGetApp().app_config;
