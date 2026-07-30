@@ -4,7 +4,8 @@
 #include "libslic3r/AppConfig.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 
-#include <random>
+#include <boost/log/trivial.hpp>
+#include <openssl/rand.h>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -46,11 +47,23 @@ void Config::save() const
 
 std::string Config::generate_token()
 {
+    // std::random_device is not required by the standard to be a CSPRNG - on MinGW
+    // it is a fixed deterministic sequence - and this token is the only thing
+    // guarding the API once the user opts into LAN binding. Use OpenSSL's CSPRNG,
+    // as Utils/OrcaCloudServiceAgent.cpp already does for PKCE secrets.
     static const char hex[] = "0123456789abcdef";
-    std::random_device              rd;
-    std::uniform_int_distribution<> dist(0, 15);
-    std::string                     tok(32, '0');
-    for (auto &c : tok) c = hex[dist(rd)];
+    unsigned char     bytes[16];
+    if (RAND_bytes(bytes, sizeof(bytes)) != 1) {
+        // Fail closed: an empty token makes check_token() reject every request,
+        // which is the safe outcome. Never fall back to a weaker generator.
+        BOOST_LOG_TRIVIAL(error) << "RemoteAPI: CSPRNG unavailable, refusing to generate a guessable token";
+        return {};
+    }
+    std::string tok(2 * sizeof(bytes), '0');
+    for (size_t i = 0; i < sizeof(bytes); ++i) {
+        tok[2 * i]     = hex[bytes[i] >> 4];
+        tok[2 * i + 1] = hex[bytes[i] & 0x0F];
+    }
     return tok;
 }
 

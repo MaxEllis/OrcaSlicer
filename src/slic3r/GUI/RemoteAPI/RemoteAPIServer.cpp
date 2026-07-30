@@ -227,7 +227,15 @@ void Server::stop()
 
 bool Server::check_token(const std::string &presented) const
 {
-    return !m_cfg.token.empty() && presented == m_cfg.token;
+    // Constant-time comparison: this is the authentication path, so it must not
+    // leak the token's contents through how early the comparison gives up. The
+    // length check is separate because the token's length is not the secret.
+    if (m_cfg.token.empty() || presented.size() != m_cfg.token.size())
+        return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < m_cfg.token.size(); ++i)
+        diff |= static_cast<unsigned char>(presented[i] ^ m_cfg.token[i]);
+    return diff == 0;
 }
 
 // WS plumbing — populated in Task 11; broadcast is already safe to call.
