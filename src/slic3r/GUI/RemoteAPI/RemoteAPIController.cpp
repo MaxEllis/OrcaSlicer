@@ -397,6 +397,58 @@ static const char *project_key_block_reason(const std::string &key)
     return "not_writable_project_key";
 }
 
+// ConfigOptionFloatsTempl::deserialize pushes a zero-initialized value for any
+// token it cannot parse and still returns true, so "a,b,c" would be stored as
+// {0,0,0} and reported as applied - a silent wrong answer that no range check can
+// catch, because 0 is a perfectly valid purge volume. Vet the raw string first.
+static std::string numeric_list_error(const std::string &s)
+{
+    if (s.empty())
+        return "expected a comma-separated list of numbers, got an empty string";
+    size_t start = 0;
+    while (true) {
+        const size_t comma = s.find(',', start);
+        std::string  tok   = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        const size_t b     = tok.find_first_not_of(" \t");
+        const size_t e     = tok.find_last_not_of(" \t");
+        tok                = (b == std::string::npos) ? std::string() : tok.substr(b, e - b + 1);
+        try {
+            size_t pos = 0;
+            std::stod(tok, &pos);
+            if (pos != tok.size())
+                throw std::invalid_argument("trailing characters");
+        } catch (const std::exception &) {
+            return "\"" + tok + "\" is not a number";
+        }
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return {};
+}
+
+// Same class of silent failure for colours: ConfigOptionStrings::deserialize
+// accepts anything, and a colour the parser cannot read becomes black in the
+// flush estimator rather than an error.
+static std::string colour_list_error(const std::string &s)
+{
+    size_t start = 0;
+    while (true) {
+        const size_t semi = s.find(';', start);
+        std::string  tok  = s.substr(start, semi == std::string::npos ? std::string::npos : semi - start);
+        const size_t b    = tok.find_first_not_of(" \t");
+        const size_t e    = tok.find_last_not_of(" \t");
+        tok               = (b == std::string::npos) ? std::string() : tok.substr(b, e - b + 1);
+        const bool ok = (tok.size() == 7 || tok.size() == 9) && tok[0] == '#' &&
+                        std::all_of(tok.begin() + 1, tok.end(),
+                                    [](char c) { return std::isxdigit((unsigned char) c) != 0; });
+        if (!ok)
+            return "\"" + tok + "\" is not a #RRGGBB or #RRGGBBAA colour";
+        if (semi == std::string::npos) break;
+        start = semi + 1;
+    }
+    return {};
+}
+
 // Checks the staged value against the invariant its consumers assume. Runs over
 // the FINAL staged config, after every key in the batch is written, so a request
 // that changes filament_colour and flush_volumes_matrix together is judged
@@ -525,6 +577,18 @@ Response Controller::handle_put_config(const std::string &body)
                 try {
                     std::string oldv = proj_new.opt_serialize(key);
                     std::string sval = json_value_to_config_string(it.value());
+                    // Vet the raw text: the vector deserializers below cannot fail,
+                    // so garbage would be stored as zeros and reported as applied.
+                    std::string terr;
+                    if (key == "flush_volumes_matrix" || key == "flush_multiplier" ||
+                        key == "flush_multiplier_fast" || key == "wipe_tower_x" || key == "wipe_tower_y")
+                        terr = numeric_list_error(sval);
+                    else if (key == "filament_colour")
+                        terr = colour_list_error(sval);
+                    if (!terr.empty()) {
+                        errors[key] = terr;
+                        continue;
+                    }
                     if (key == "wipe_tower_x" || key == "wipe_tower_y") {
                         // Per-plate vectors: the GUI writes them with set_at at the
                         // plate index (GLCanvas3D::WipeTowerInfo::apply_wipe_tower).
