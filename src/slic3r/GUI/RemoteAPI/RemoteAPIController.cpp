@@ -23,6 +23,8 @@
 #include "slic3r/GUI/Camera.hpp"          // plate_render: ViewAngleType
 #include "libslic3r/GCode/ThumbnailData.hpp" // plate_render: ThumbnailData/ThumbnailsParams
 #include <miniz.h>                        // plate_render: RGBA -> PNG in memory
+#include "libslic3r/FlushVolCalc.hpp"      // project scope: g_max_flush_volume bound
+#include "slic3r/GUI/WipeTowerDialog.hpp"  // project scope: is_flush_config_modified
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +36,7 @@
 #include <future>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -346,6 +349,123 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
     throw std::runtime_error("unsupported value type");
 }
 
+// ---------------------------------------------------------------------------
+// Project-scope writes (CFS / multi-material)
+//
+// PresetBundle::project_config holds the ~19 keys of s_project_options, but
+// opening all of them would be unsafe. Their consumers index them with unchecked
+// arithmetic whose bound comes from a DIFFERENT vector, so a wrong-length write
+// is an out-of-bounds heap access rather than a validation failure - e.g.
+// Sidebar::auto_calc_flushing_volumes sizes its loop from filament_colour and
+// writes flush_volumes_matrix at [n*from + to] (Plater.cpp), and
+// Print::_make_wipe_tower uses filament_map values as direct extruder indices.
+//
+// The usual guard does not help: set_deserialize_strict rejects a malformed
+// scalar or enum, but ConfigOptionFloatsTempl::deserialize (Config.hpp) accepts
+// any input and unconditionally returns true, so a short or non-numeric matrix
+// sails through as "applied". Hence an explicit allow-list, each entry carrying
+// the invariant its consumers assume, checked after the whole batch is staged.
+static bool project_key_writable(const std::string &key)
+{
+    static const std::set<std::string> s_writable {
+        "flush_volumes_matrix",  // filaments^2 * nozzles
+        "flush_multiplier",      // one per nozzle
+        "flush_multiplier_fast", // one per nozzle
+        "filament_colour",       // its length IS the filament count - kept fixed
+        "curr_bed_type",         // enum; btDefault rejected
+        "prime_volume_mode",     // enum, self-validating
+        "wipe_tower_x",          // per-plate vector, written via set_at
+        "wipe_tower_y",
+    };
+    return s_writable.count(key) > 0;
+}
+
+// Why a recognized project key stays read-only. Keeps the 422 actionable rather
+// than a bare "not_editable_in_current_config".
+static const char *project_key_block_reason(const std::string &key)
+{
+    if (key == "flush_volumes_vector")
+        return "derived_from_flush_volumes_matrix";
+    if (key == "filament_colour_type" || key == "filament_multi_colour")
+        return "indexed_unchecked_by_the_colour_picker";
+    if (key == "filament_map" || key == "filament_volume_map" || key == "filament_nozzle_map")
+        return "values_are_unchecked_extruder_indices";
+    if (key == "filament_map_mode" || key == "nozzle_volume_type")
+        return "tied_to_filament_map";
+    if (key == "has_filament_switcher" || key == "enable_filament_dynamic_map")
+        return "live_printer_state_not_a_setting";
+    return "not_writable_project_key";
+}
+
+// Checks the staged value against the invariant its consumers assume. Runs over
+// the FINAL staged config, after every key in the batch is written, so a request
+// that changes filament_colour and flush_volumes_matrix together is judged
+// against the new filament count regardless of key order. Returns "" when valid.
+static std::string project_value_error(const std::string        &key,
+                                       const DynamicPrintConfig &staged,
+                                       int                       nozzles,
+                                       size_t                    filaments_before)
+{
+    auto floats_of = [&staged](const std::string &k) -> std::vector<double> {
+        const auto *o = staged.option<ConfigOptionFloats>(k);
+        return o == nullptr ? std::vector<double>{} : o->values;
+    };
+
+    if (key == "flush_volumes_matrix") {
+        const std::vector<double> v = floats_of(key);
+        const auto *colours = staged.option<ConfigOptionStrings>("filament_colour");
+        const size_t filaments = colours == nullptr ? filaments_before : colours->values.size();
+        const size_t want = filaments * filaments * size_t(nozzles > 0 ? nozzles : 1);
+        if (v.size() != want)
+            return "expected " + std::to_string(want) + " values (filaments^2 x nozzles = " +
+                   std::to_string(filaments) + "^2 x " + std::to_string(nozzles) + "), got " +
+                   std::to_string(v.size());
+        for (double d : v)
+            if (!std::isfinite(d) || d < 0. || d > double(g_max_flush_volume))
+                return "each value must be a finite number within [0, " + std::to_string(g_max_flush_volume) + "]";
+        return {};
+    }
+    if (key == "flush_multiplier" || key == "flush_multiplier_fast") {
+        const std::vector<double> v = floats_of(key);
+        if (v.size() != size_t(nozzles > 0 ? nozzles : 1))
+            return "expected " + std::to_string(nozzles) + " value(s), one per nozzle, got " +
+                   std::to_string(v.size());
+        // Same range the wipe-tower dialog's spin control enforces.
+        for (double d : v)
+            if (!std::isfinite(d) || d < 0. || d > 3.)
+                return "each value must be a finite number within [0, 3]";
+        return {};
+    }
+    if (key == "filament_colour") {
+        const auto *o = staged.option<ConfigOptionStrings>(key);
+        const size_t n = o == nullptr ? 0 : o->values.size();
+        // The length of filament_colour is what defines the filament count for
+        // the wipe tower and the flush matrix. Changing it here would desync
+        // every vector sized from it, so colours may be recoloured but not
+        // added or removed - that is the filament-preset selection's job.
+        if (n != filaments_before)
+            return "filament count is fixed here: expected " + std::to_string(filaments_before) +
+                   " colours (';'-separated), got " + std::to_string(n);
+        return {};
+    }
+    if (key == "curr_bed_type") {
+        // btDefault is reachable only through a raw write (the GUI never offers
+        // it) and is a null dereference on the slicing path: its bed-temperature
+        // key is "", so the lookup returns nullptr and GCode.cpp dereferences it.
+        if (staged.opt_enum<BedType>(key) == btDefault)
+            return "\"Default Plate\" is not selectable; pick a concrete plate type";
+        return {};
+    }
+    if (key == "wipe_tower_x" || key == "wipe_tower_y") {
+        const std::vector<double> v = floats_of(key);
+        for (double d : v)
+            if (!std::isfinite(d))
+                return "must be a finite number";
+        return {};
+    }
+    return {};
+}
+
 Response Controller::handle_put_config(const std::string &body)
 {
     // May throw nlohmann::json::parse_error - caught by the dispatch route
@@ -381,16 +501,63 @@ Response Controller::handle_put_config(const std::string &body)
         nlohmann::json errors  = nlohmann::json::object();
         std::vector<std::array<std::string, 3>> changes; // key, old, new -> notification
 
+        // Project scope (CFS / multi-material) is staged on its own copy. It is
+        // checked AFTER the three presets so wipe_tower_rotation_angle - the one
+        // key that lives in both s_project_options and the print preset - keeps
+        // routing to the print preset exactly as it did before.
+        DynamicPrintConfig     proj_new = bundle->project_config;
+        std::set<std::string>  proj_keys;
+        const int              nozzles  = bundle->get_printer_extruder_count();
+        const auto            *colours0 = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        const size_t           filaments_before = colours0 == nullptr ? 0 : colours0->values.size();
+        const int              plate_idx = wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
+
         for (auto it = in.begin(); it != in.end(); ++it) {
             const std::string &key = it.key();
             Target *tgt = nullptr;
             for (auto &t : targets)
                 if (t.cfg.option(key) != nullptr) { tgt = &t; break; }
+            if (tgt == nullptr && proj_new.option(key) != nullptr) {
+                if (!project_key_writable(key)) {
+                    errors[key] = project_key_block_reason(key);
+                    continue;
+                }
+                try {
+                    std::string oldv = proj_new.opt_serialize(key);
+                    std::string sval = json_value_to_config_string(it.value());
+                    if (key == "wipe_tower_x" || key == "wipe_tower_y") {
+                        // Per-plate vectors: the GUI writes them with set_at at the
+                        // plate index (GLCanvas3D::WipeTowerInfo::apply_wipe_tower).
+                        // A whole-vector deserialize would collapse them to a single
+                        // element and move every other plate's tower.
+                        ConfigOptionFloat one;
+                        if (!one.deserialize(sval))
+                            throw std::runtime_error("expected a number");
+                        proj_new.option<ConfigOptionFloats>(key, true)->set_at(&one, plate_idx, 0);
+                    } else {
+                        proj_new.set_deserialize_strict(key, sval);
+                    }
+                    // handle_legacy (run inside set_deserialize) may rename or clear
+                    // a key and still report success, which would otherwise be
+                    // reported as applied while nothing was written.
+                    if (proj_new.option(key) == nullptr) {
+                        errors[key] = "key_dropped_by_legacy_handler";
+                        continue;
+                    }
+                    proj_keys.insert(key);
+                    applied.push_back(key);
+                    // Re-serialized, not echoed: handle_legacy can rewrite the value.
+                    changes.push_back({ key, oldv, proj_new.opt_serialize(key) });
+                } catch (const std::exception &e) {
+                    errors[key] = e.what();
+                }
+                continue;
+            }
             if (tgt == nullptr) {
                 // F9: distinguish a real typo from a recognized Orca setting that
-                // simply isn't editable through the preset configs (project/plate/
-                // computed-layer keys: wipe tower position, flush volumes, AMS maps...
-                // - GET /config serializes the merged config, which is wider).
+                // simply isn't editable through the preset configs (plate-scope and
+                // computed-layer keys - GET /config serializes the merged config,
+                // which is wider than anything writable).
                 errors[key] = (print_config_def.get(key) != nullptr)
                                   ? "not_editable_in_current_config"
                                   : "unknown_key";
@@ -408,6 +575,14 @@ Response Controller::handle_put_config(const std::string &body)
             } catch (const std::exception &e) {
                 errors[key] = e.what();
             }
+        }
+
+        // Second pass over the FINAL staged project config: the invariants are
+        // cross-key (the matrix size depends on filament_colour), so they can only
+        // be judged once the whole batch is written, not as each key arrives.
+        for (const std::string &key : proj_keys) {
+            std::string err = project_value_error(key, proj_new, nozzles, filaments_before);
+            if (!err.empty()) errors[key] = err;
         }
 
         // Atomic: if any key failed validation, apply NOTHING and report errors.
@@ -437,6 +612,57 @@ Response Controller::handle_put_config(const std::string &body)
                 tab->load_config(t.cfg);
                 wxGetApp().plater()->on_config_change(t.cfg);
             }
+
+        // Project scope has no Tab, so the preset path above does not apply. There
+        // is no single "apply a project config change" helper in-tree either - every
+        // GUI writer hand-composes this epilogue (WipeTowerDialog::open_flushing_dialog,
+        // Sidebar::auto_calc_flushing_volumes, Plater::priv::on_select_bed_type,
+        // PlaterPresetComboBox::sync_colour_config). This mirrors them, once per
+        // request rather than once per key.
+        if (!proj_keys.empty()) {
+            Plater *plater = wxGetApp().plater();
+            bundle->project_config.apply(proj_new);
+
+            const bool touched_flush = proj_keys.count("flush_volumes_matrix") ||
+                                       proj_keys.count("flush_multiplier") ||
+                                       proj_keys.count("flush_multiplier_fast");
+            const bool touched_tower = proj_keys.count("wipe_tower_x") || proj_keys.count("wipe_tower_y");
+
+            if (proj_keys.count("curr_bed_type")) {
+                // The bed type is cached in AppConfig as well, globally and per
+                // printer, and export_selections below reads the global copy back -
+                // so these have to run first. on_bed_type_change (not
+                // Sidebar::set_bed_type_accord_combox) because the latter fires
+                // wxEVT_COMBOBOX and would re-enter this same write path.
+                BedType    bt = bundle->project_config.opt_enum<BedType>("curr_bed_type");
+                AppConfig *ac = wxGetApp().app_config;
+                ac->set("curr_bed_type", std::to_string(int(bt)));
+                ac->set_printer_setting(bundle->printers.get_selected_preset_name(),
+                                        "curr_bed_type", std::to_string(int(bt)));
+                plater->on_bed_type_change(bt);
+            }
+            if (touched_flush)
+                wxGetApp().sidebar().set_flushing_volume_warning(is_flush_config_modified());
+
+            bundle->export_selections(*wxGetApp().app_config);
+            // Once per request: it re-arms the auto-backup exporter.
+            plater->update_project_dirty_from_presets();
+
+            // Flip the flag synchronously. on_config_change only arms a 500 ms
+            // one-shot timer, so a GET /status issued right after this 200 would
+            // otherwise still report the stale slice as valid.
+            plater->get_partplate_list().invalid_all_slice_result();
+
+            // Most project keys are outside Plater::priv::config's whitelist and so
+            // are ignored by the per-key loop, but the unconditional tail is what we
+            // want: schedule_background_process + title dirty + auto-reslice.
+            plater->on_config_change(bundle->full_config());
+
+            if (touched_flush || touched_tower) {
+                plater->get_view3D_canvas3D()->reload_scene(true);
+                plater->update();
+            }
+        }
 
         if (!changes.empty()) {
             std::string msg = "Settings updated";
