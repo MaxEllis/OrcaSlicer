@@ -5953,8 +5953,11 @@ void GUI_App::check_new_version_sf(bool show_tips, int by_user)
     // though it can never run. The braces keep the two sets of locals apart.
     {
     (void)show_tips;
-    if (app_config->get_stealth_mode())
-        return;
+    // Deliberately NOT gated on stealth_mode. Upstream's call site gates only
+    // preset_updater->sync() behind stealth and calls this function OUTSIDE that
+    // guard, so stock OrcaSlicer checks for updates in stealth mode too. Gating
+    // here would mean a stealth-mode user never learns a newer fork build exists,
+    // which defeats the whole point of this check. Do not "restore" the guard.
 
     auto parse_mcp_ordinal = [](const std::string& tag) -> long {
         static const std::regex mcp_tag("-mcp\\.([0-9]+)$");
