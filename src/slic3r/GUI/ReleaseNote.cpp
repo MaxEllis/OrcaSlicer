@@ -247,7 +247,10 @@ void UpdatePluginDialog::update_info(std::string json_path)
 }
 
 UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
-    : DPIDialog(parent, wxID_ANY, _L("New version of Orca Slicer"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
+    // orca-mcp: this dialog now only ever announces releases of THIS fork (the stock
+    // update path is dead - see check_new_version_sf), so name the product so users
+    // know they are being offered a new OrcaSlicer MCP build, not stock OrcaSlicer.
+    : DPIDialog(parent, wxID_ANY, _L("New version of OrcaSlicer MCP"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
 {
     SetBackgroundColour(*wxWHITE);
 
