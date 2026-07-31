@@ -100,6 +100,7 @@ public:
     wxBoxSizer *create_item_auto_reslice(wxString title, wxString checkbox_tooltip, wxString delay_tooltip);
     wxBoxSizer *create_item_bambu_cloud(wxString title, wxString tooltip);
     wxBoxSizer *create_item_network_plugin_version(wxString title, wxString tooltip);
+    void create_remote_api_page(wxBoxSizer* sizer_page, int v_gap);
 #ifdef WIN32
     wxBoxSizer *create_item_link_association(wxString url_prefix, wxString website_name);
 #endif // WIN32

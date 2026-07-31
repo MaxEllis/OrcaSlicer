@@ -289,6 +289,11 @@ extern void delete_object_mesh(ModelObject& object);
 
 extern void backup_soon();
 
+// Remote API (F8): push the next periodic auto-backup at least `seconds` into
+// the future. Called around API-driven mutations so the 10s backup exporter
+// doesn't fire mid-burst; a no-op when auto-backup is disabled.
+extern void backup_defer(long seconds);
+
 extern void remove_backup(Model& model, bool removeAll);
 
 extern void set_backup_interval(long interval);

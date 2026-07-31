@@ -1,0 +1,299 @@
+openapi: 3.0.3
+info:
+  title: OrcaSlicer Remote API
+  version: "1.0"
+  description: |
+    Token-authenticated HTTP + WebSocket API embedded in OrcaSlicer, exposing the
+    running application for automation (status, live config read/write, slicing,
+    and an event stream).
+
+    **Enabling:** Preferences → *Remote API*: enable, choose LAN vs localhost,
+    port (default 13130), and copy/regenerate the token. Off by default.
+
+    **Auth:** every HTTP request must send `X-Api-Token: <token>`. The WebSocket
+    endpoint authenticates via a `?token=<token>` query parameter (browser WS
+    clients cannot set request headers).
+
+    **Threading note:** the server runs a single I/O thread and dispatches most
+    endpoints onto the GUI thread with a 10s timeout (`504 ui_timeout`). Treat the
+    API as single-client; concurrent heavy calls serialize.
+servers:
+  - url: http://{host}:{port}/api/v1
+    variables:
+      host: { default: "127.0.0.1", description: "localhost, or the machine's LAN IP when 'Bind LAN' is on" }
+      port: { default: "13130" }
+security:
+  - ApiToken: []
+paths:
+  /status:
+    get:
+      summary: Application + project status
+      operationId: getStatus
+      responses:
+        "200":
+          description: Current app, project, loaded objects, selected/modified presets, and slice validity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /config:
+    get:
+      summary: Read the merged (full) config
+      operationId: getConfig
+      description: |
+        Returns the secure merged config (secrets redacted) as canonical string
+        values (same form as `.ini`/`.3mf`). Optionally filter with `?keys=`.
+      parameters:
+        - name: keys
+          in: query
+          required: false
+          schema: { type: string }
+          description: Comma-separated key list, e.g. `layer_height,wall_loops`.
+          example: layer_height,wall_loops
+      responses:
+        "200":
+          description: Config map.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config:
+                    type: object
+                    additionalProperties: { type: string }
+                    example: { layer_height: "0.2", wall_loops: "2" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      summary: Apply config changes (live)
+      operationId: putConfig
+      description: |
+        Applies key/value edits through the GUI's own edit path (dirty markers +
+        live panel refresh + slice invalidation), exactly as if typed in the UI.
+
+        **Atomic:** if ANY key is unknown or fails validation, NOTHING is applied
+        and the response is `422` with per-key reasons. On full success the
+        response is `200` with every applied key.
+
+        Values may be JSON strings, numbers, or booleans; they are coerced to the
+        canonical config string form.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            example: { layer_height: 0.28, wall_loops: 3 }
+      responses:
+        "200":
+          description: All keys applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigApplyResult" }
+              example: { applied: ["layer_height", "wall_loops"], errors: {} }
+        "422":
+          description: At least one key invalid — nothing applied.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigApplyResult" }
+              example: { applied: [], errors: { layer_height: "value out of range", bogus_key: "unknown_key" } }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                not_object: { value: { error: "body_must_be_object" } }
+                bad_json:   { value: { error: "invalid_json" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /slice:
+    post:
+      summary: Start slicing the current plate
+      operationId: startSlice
+      description: |
+        Triggers a reslice of the current plate. Progress and completion are
+        delivered as `slice.*` WebSocket events and via `GET /slice/status`.
+      responses:
+        "202":
+          description: Slicing started.
+          content:
+            application/json:
+              schema: { type: object, properties: { started: { type: boolean, enum: [true] } } }
+              example: { started: true }
+        "200":
+          description: Plate already sliced (valid result) — nothing to do.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  started: { type: boolean, enum: [false] }
+                  already_valid: { type: boolean, enum: [true] }
+              example: { started: false, already_valid: true }
+        "409":
+          description: A slice is already in progress.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "already_slicing" }
+        "422":
+          description: Nothing to slice (no objects on the plate).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "nothing_to_slice" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /slice/status:
+    get:
+      summary: Current/last slice state
+      operationId: getSliceStatus
+      responses:
+        "200":
+          description: Slice state snapshot. `stats` present once done; `warnings` always present (may be empty).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SliceStatus" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /events:
+    get:
+      summary: WebSocket event stream (upgrade)
+      operationId: events
+      description: |
+        **This is a WebSocket endpoint, not a normal GET.** Open a WebSocket to
+        `ws://{host}:{port}/api/v1/events?token=<token>`. A bad/missing token
+        closes the connection immediately. Inbound messages are ignored.
+
+        Each message is a JSON object with an `event` field. See the
+        `Event` schema for the payload shapes:
+        `slice.started`, `slice.progress`, `slice.done`, `slice.error`,
+        `slice.cancelled`, `config.changed`, `project.opened`.
+
+        Note: `slice.*` event payloads carry `stats` (on done) but NOT the slice
+        `warnings` array — fetch `GET /slice/status` for warnings.
+      security: []
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "101": { description: Switching Protocols (WebSocket handshake accepted). }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+components:
+  securitySchemes:
+    ApiToken:
+      type: apiKey
+      in: header
+      name: X-Api-Token
+  responses:
+    Unauthorized:
+      description: Missing or invalid token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "unauthorized" }
+    UiTimeout:
+      description: The GUI thread did not respond within 10s.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: "ui_timeout" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        detail: { type: string, description: "Present on 500 responses." }
+      required: [error]
+    Vec3:
+      type: array
+      items: { type: number }
+      minItems: 3
+      maxItems: 3
+    Status:
+      type: object
+      properties:
+        app: { type: string, example: OrcaSlicer }
+        app_version: { type: string, example: "2.3.2" }
+        api_version: { type: string, example: "1.0" }
+        capabilities:
+          type: array
+          items: { type: string }
+          example: [status, config, slice, events]
+        project: { type: string, description: "Current project filename (may be empty)." }
+        objects:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              size_mm: { $ref: "#/components/schemas/Vec3" }
+        presets:
+          type: object
+          properties:
+            printer: { type: string }
+            print: { type: string }
+            filaments: { type: array, items: { type: string } }
+        modified:
+          type: object
+          description: Dirty (unsaved) option keys per preset category.
+          properties:
+            print: { type: array, items: { type: string } }
+            filament: { type: array, items: { type: string } }
+            printer: { type: array, items: { type: string } }
+        slice_result_valid: { type: boolean }
+        slicing: { type: boolean, description: "True while a slice is in progress." }
+    ConfigApplyResult:
+      type: object
+      properties:
+        applied: { type: array, items: { type: string } }
+        errors:
+          type: object
+          additionalProperties: { type: string }
+          description: "key -> reason (e.g. unknown_key, or a validation message)."
+      required: [applied, errors]
+    SliceStats:
+      type: object
+      properties:
+        estimated_time: { type: string, example: "27m 23s" }
+        estimated_time_seconds: { type: number, example: 1643 }
+        filament_used_mm: { type: number, example: 1582 }
+        filament_used_g: { type: number, example: 4.72 }
+        total_cost: { type: number, example: 0.094 }
+    SliceWarning:
+      type: object
+      properties:
+        level: { type: integer }
+        message: { type: string }
+        code: { type: string, example: "1000C001" }
+    SliceStatus:
+      type: object
+      properties:
+        state: { type: string, enum: [idle, slicing, done, error] }
+        percent: { type: integer, description: "-1 when not slicing." }
+        message: { type: string }
+        stats: { $ref: "#/components/schemas/SliceStats" }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/SliceWarning" }
+      required: [state, percent, message, warnings]
+    Event:
+      type: object
+      description: |
+        A WebSocket message. `event` discriminates the shape.
+      properties:
+        event:
+          type: string
+          enum: [slice.started, slice.progress, slice.done, slice.error, slice.cancelled, config.changed, project.opened]
+        state: { type: string, description: "slice.* events: idle|slicing|done|error." }
+        percent: { type: integer, description: "slice.* events." }
+        message: { type: string, description: "slice.* events." }
+        stats: { $ref: "#/components/schemas/SliceStats" }
+        tabs:
+          type: array
+          description: "config.changed: which preset categories changed."
+          items: { type: string, enum: [print, filament, printer, sla_print, sla_material, other] }
+        project: { type: string, description: "project.opened: the opened project filename." }
+      required: [event]

@@ -2298,6 +2298,18 @@ void GCodeViewer::load_shells(const Print& print, bool initialized, bool force_p
         % m_shells.print_id % m_shells.print_modify_count % object_count %m_shells.volumes.volumes.size();
 }
 
+void GCodeViewer::render_toolpaths_with_camera(const Camera& camera)
+{
+    // Same matrix conversion as render_toolpaths(), but with the camera passed
+    // in (the plater camera belongs to the on-screen canvas) and without any
+    // ImGui/debug overlay - this draws into an offscreen FBO.
+    const libvgcode::Mat4x4 converted_view_matrix =
+        libvgcode::convert(static_cast<Matrix4f>(camera.get_view_matrix().matrix().cast<float>()));
+    const libvgcode::Mat4x4 converted_projection_matrix =
+        libvgcode::convert(static_cast<Matrix4f>(camera.get_projection_matrix().matrix().cast<float>()));
+    m_viewer.render(converted_view_matrix, converted_projection_matrix);
+}
+
 void GCodeViewer::render_toolpaths()
 {
     const Camera& camera = wxGetApp().plater()->get_camera();

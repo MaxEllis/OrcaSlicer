@@ -50,6 +50,8 @@ class SLAPrint;
 //BBS: add partplatelist and SlicingStatusEvent
 class PartPlateList;
 class SlicingStatusEvent;
+class BackgroundSlicingProcess;
+class SlicingProcessCompletedEvent;
 enum SLAPrintObjectStep : unsigned int;
 enum class ConversionType : int;
 class DevAms;
@@ -90,6 +92,7 @@ enum class ActionButtonType : int;
 
 //BBS: add EVT_SLICING_UPDATE declare here
 wxDECLARE_EVENT(EVT_SLICING_UPDATE, Slic3r::SlicingStatusEvent);
+wxDECLARE_EVENT(EVT_PROCESS_COMPLETED, Slic3r::SlicingProcessCompletedEvent);
 wxDECLARE_EVENT(EVT_PUBLISH,        wxCommandEvent);
 wxDECLARE_EVENT(EVT_OPEN_PLATESETTINGSDIALOG,        wxCommandEvent);
 
@@ -505,6 +508,9 @@ public:
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
     void reslice();
+    // Remote API (F2): stop a running background slice (no-op when idle) and
+    // clear the is-slicing flag. Public sibling of the private stop() calls.
+    void stop_background_slicing();
     void record_slice_preset(std::string action);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);

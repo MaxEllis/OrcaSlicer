@@ -6126,6 +6126,236 @@ static void debug_output_thumbnail(const ThumbnailData& thumbnail_data)
 }
 #endif // ENABLE_THUMBNAIL_GENERATOR_DEBUG_OUTPUT
 
+bool GLCanvas3D::render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h,
+                                        Camera::ViewAngleType camera_view_angle_type, bool frame_object)
+{
+    // Remote API: offscreen render of the current plate. Unlike render_thumbnail()
+    // (which frames the objects and deliberately skips the bed - see
+    // "don't render plate in thumbnail" in render_thumbnail_internal), this frames
+    // the BUILD VOLUME and draws bed + plate grid, so a caller can see where the
+    // model sits, whether it touches the plate, and its first-layer footprint.
+    PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+    if (plate == nullptr)
+        return false;
+    const BoundingBoxf3 plate_box = plate->get_build_volume();
+    if (!plate_box.defined)
+        return false;
+    // Content box = the models themselves. scene_box additionally covers anything
+    // sitting above/outside the build volume, so a floating or off-bed object is
+    // never silently cropped and the depth range always contains the bed.
+    BoundingBoxf3 content_box;
+    for (const GLVolume *vol : m_volumes.volumes) {
+        if (vol != nullptr && vol->is_active && !vol->is_modifier && !vol->is_wipe_tower)
+            content_box.merge(vol->transformed_bounding_box());
+    }
+    BoundingBoxf3 scene_box = plate_box;
+    if (content_box.defined)
+        scene_box.merge(content_box);
+    // frame_object zooms to the models (detail); otherwise the whole plate
+    // (where the part sits on the bed, first-layer footprint).
+    const BoundingBoxf3 &zoom_box = (frame_object && content_box.defined) ? content_box : scene_box;
+
+    thumbnail_data.set(w, h);
+    if (!thumbnail_data.is_valid())
+        return false;
+
+    GLint prev_fbo = 0;
+    glsafe(::glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo));
+
+    GLuint render_fbo = 0, render_tex = 0, render_depth = 0;
+    glsafe(::glGenFramebuffers(1, &render_fbo));
+    glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, render_fbo));
+    glsafe(::glGenTextures(1, &render_tex));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, render_tex));
+    glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_tex, 0));
+    glsafe(::glGenRenderbuffers(1, &render_depth));
+    glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, render_depth));
+    glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h));
+    glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
+    const GLenum draw_bufs[] = { GL_COLOR_ATTACHMENT0 };
+    glsafe(::glDrawBuffers(1, draw_bufs));
+
+    bool ok = false;
+    if (::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        // PartPlateList::render() reads wxGetApp().plater()->get_camera() internally
+        // (bed texture, logo, grid) instead of the matrices it is handed, so the
+        // plate would be drawn from the on-screen camera while the models used
+        // ours. Swap the global camera for the duration and always put it back -
+        // we are synchronous on the GUI thread here, so nothing repaints in between.
+        Camera &global_camera = wxGetApp().plater()->get_camera();
+        struct CameraRestore {
+            Camera &cam; const Camera saved;
+            ~CameraRestore() { cam = saved; }
+        } camera_restore { global_camera, global_camera };
+
+        Camera camera;
+        camera.set_type(Camera::EType::Ortho);
+        camera.set_scene_box(scene_box);
+        camera.set_viewport(0, 0, w, h);
+        camera.select_view(camera_view_angle_type);
+        camera.zoom_to_box(zoom_box);
+        // Projection takes the FULL scene box: apply_projection() only uses it for
+        // the near/far planes (the ortho extents come from the zoom above), so the
+        // bed stays unclipped even when zoomed tight on the object.
+        camera.apply_projection(scene_box);
+
+        global_camera = camera;
+        global_camera.apply_viewport();
+
+        const Transform3d view_matrix       = global_camera.get_view_matrix();
+        const Transform3d projection_matrix = global_camera.get_projection_matrix();
+        const bool        bottom            = !global_camera.is_looking_downward();
+
+        glsafe(::glClearColor(0.906f, 0.906f, 0.906f, 1.0f));
+        glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+        glsafe(::glEnable(GL_DEPTH_TEST));
+
+        _render_bed(view_matrix, projection_matrix, bottom, false);
+        _render_platelist(view_matrix, projection_matrix, bottom, true, true /*only_body: no plate toolbar icons*/, -1, false, true);
+
+        // Models: same draw loop render_thumbnail_internal() uses for its volumes.
+        GLShaderProgram *shader = wxGetApp().get_shader("thumbnail");
+        if (shader != nullptr) {
+            ModelObjectPtrs &      model_objects   = wxGetApp().model().objects;
+            std::vector<ColorRGBA> extruder_colors = wxGetApp().plater()->get_extruders_colors();
+            shader->start_using();
+            shader->set_uniform("emission_factor", 0.1f);
+            shader->set_uniform("ban_light", false);
+            for (GLVolume *vol : m_volumes.volumes) {
+                if (vol == nullptr || vol->is_modifier || vol->is_wipe_tower)
+                    continue;
+                vol->model.set_color(adjust_color_for_rendering(vol->color));
+                shader->set_uniform("volume_world_matrix", vol->world_matrix());
+                const bool is_active = vol->is_active;
+                vol->is_active = true;
+                const Transform3d model_matrix = vol->world_matrix();
+                shader->set_uniform("view_model_matrix", view_matrix * model_matrix);
+                shader->set_uniform("projection_matrix", projection_matrix);
+                const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) *
+                                                    model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
+                shader->set_uniform("view_normal_matrix", view_normal_matrix);
+                vol->simple_render(shader, model_objects, extruder_colors, false);
+                vol->is_active = is_active;
+            }
+            shader->stop_using();
+        }
+
+        glsafe(::glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)thumbnail_data.pixels.data()));
+        ok = true;
+    }
+
+    glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo));
+    if (render_depth != 0) glsafe(::glDeleteRenderbuffers(1, &render_depth));
+    if (render_tex != 0)   glsafe(::glDeleteTextures(1, &render_tex));
+    if (render_fbo != 0)   glsafe(::glDeleteFramebuffers(1, &render_fbo));
+    return ok;
+}
+
+bool GLCanvas3D::render_gcode_thumbnail(ThumbnailData& thumbnail_data, unsigned int w, unsigned int h,
+                                        Camera::ViewAngleType camera_view_angle_type, bool frame_object)
+{
+    // Remote API: offscreen render of the gcode preview (toolpaths incl. support).
+    // FBO scaffold mirrors render_thumbnail_framebuffer(); camera setup mirrors
+    // render_thumbnail_internal(). No legend/sliders/ImGui by construction.
+    if (!m_gcode_viewer.has_data()) {
+        // Preview::load_print_as_fff() only calls load_gcode_preview() inside
+        // `if (IsShown())`, so an API-driven slice with the editor tab in front
+        // never populates the toolpath viewer. Load it here from the plate's own
+        // slice result - no panel switching, nothing visible to the user.
+        PartPlate *cur_plate = wxGetApp().plater()->get_partplate_list().get_curr_plate();
+        const GCodeProcessorResult *gcode_result = (cur_plate != nullptr) ? cur_plate->get_slice_result() : nullptr;
+        if (gcode_result == nullptr || gcode_result->moves.empty())
+            return false;
+        const std::vector<std::string> tool_colors =
+            wxGetApp().plater()->get_extruder_colors_from_plater_config(gcode_result);
+        load_gcode_preview(*gcode_result, tool_colors, std::vector<std::string>(), false);
+        if (!m_gcode_viewer.has_data())
+            return false;
+    }
+    const BoundingBoxf3 box = m_gcode_viewer.get_paths_bounding_box();
+    if (!box.defined)
+        return false;
+
+    thumbnail_data.set(w, h);
+    if (!thumbnail_data.is_valid())
+        return false;
+
+    GLint prev_fbo = 0;
+    glsafe(::glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo));
+
+    GLuint render_fbo = 0, render_tex = 0, render_depth = 0;
+    glsafe(::glGenFramebuffers(1, &render_fbo));
+    glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, render_fbo));
+    glsafe(::glGenTextures(1, &render_tex));
+    glsafe(::glBindTexture(GL_TEXTURE_2D, render_tex));
+    glsafe(::glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+    glsafe(::glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+    glsafe(::glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, render_tex, 0));
+    glsafe(::glGenRenderbuffers(1, &render_depth));
+    glsafe(::glBindRenderbuffer(GL_RENDERBUFFER, render_depth));
+    glsafe(::glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h));
+    glsafe(::glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, render_depth));
+    const GLenum draw_bufs[] = { GL_COLOR_ATTACHMENT0 };
+    glsafe(::glDrawBuffers(1, draw_bufs));
+
+    bool ok = false;
+    if (::glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        // Frame the plate as well as the toolpaths, so support is readable in
+        // relation to the bed rather than floating in a void. Same global-camera
+        // swap as render_plate_thumbnail(): PartPlateList::render() reads the
+        // plater camera internally. Always restored.
+        Camera &global_camera = wxGetApp().plater()->get_camera();
+        struct CameraRestore {
+            Camera &cam; const Camera saved;
+            ~CameraRestore() { cam = saved; }
+        } camera_restore { global_camera, global_camera };
+
+        BoundingBoxf3 scene_box = box;
+        if (PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate()) {
+            const BoundingBoxf3 plate_box = plate->get_build_volume();
+            if (plate_box.defined)
+                scene_box.merge(plate_box);
+        }
+        // Default here is frame_object: support detail is the point of this view.
+        const BoundingBoxf3 &zoom_box = frame_object ? box : scene_box;
+
+        Camera camera;
+        camera.set_type(Camera::EType::Ortho);
+        camera.set_scene_box(scene_box);
+        camera.set_viewport(0, 0, w, h);
+        camera.select_view(camera_view_angle_type);
+        camera.zoom_to_box(zoom_box);
+        camera.apply_projection(scene_box);
+
+        global_camera = camera;
+        global_camera.apply_viewport();
+
+        glsafe(::glClearColor(0.906f, 0.906f, 0.906f, 1.0f));
+        glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+        glsafe(::glEnable(GL_DEPTH_TEST));
+
+        const bool bottom = !global_camera.is_looking_downward();
+        _render_bed(global_camera.get_view_matrix(), global_camera.get_projection_matrix(), bottom, false);
+        _render_platelist(global_camera.get_view_matrix(), global_camera.get_projection_matrix(), bottom,
+                          true, true /*only_body: no plate toolbar icons*/, -1, false, true);
+
+        m_gcode_viewer.render_toolpaths_with_camera(global_camera);
+
+        glsafe(::glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)thumbnail_data.pixels.data()));
+        ok = true;
+    }
+
+    glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo));
+    if (render_depth != 0) glsafe(::glDeleteRenderbuffers(1, &render_depth));
+    if (render_tex != 0)   glsafe(::glDeleteTextures(1, &render_tex));
+    if (render_fbo != 0)   glsafe(::glDeleteFramebuffers(1, &render_fbo));
+    return ok;
+}
+
 void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const ThumbnailsParams& thumbnail_params,
     PartPlateList& partplate_list, ModelObjectPtrs& model_objects, const GLVolumeCollection& volumes, std::vector<ColorRGBA>& extruder_colors,
                                            GLShaderProgram *                  shader,

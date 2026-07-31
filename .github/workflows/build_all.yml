@@ -1,3 +1,4 @@
+# OrcaSlicer MCP fork — workflows re-registered post-migration 2026-07-20
 name: Build all
 
 on:

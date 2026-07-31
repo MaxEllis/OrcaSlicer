@@ -166,6 +166,9 @@ enum class NotificationType
     OrcaSharedProfilesAvailable,
 	OrcaCloudAPIError,
     OrcaSyncConflict,
+	// Remote API change toasts (RemoteAPIController); own type so coalescing
+	// close/re-push never touches other features' notifications.
+	RemoteAPIChange,
     NotificationTypeCount
 
 };
