@@ -1,9 +1,14 @@
 name: Publish to WinGet
+# orca-mcp: DISABLED on this fork. Upstream uses this to publish the official
+# SoftFever.OrcaSlicer package to Microsoft's winget-pkgs, which a fork must never
+# do (wrong package identity, and there is no WINGET_TOKEN secret here). Trigger
+# reduced to manual-only so a release can never fire it; the repo-level workflow
+# is also disabled (gh workflow disable). Do not re-enable the `release` trigger.
 on:
-  release:
-    types: [ released ]
+  workflow_dispatch: {}
 jobs:
   publish:
+    if: ${{ false }}   # hard stop: never run, even if dispatched by mistake
     runs-on: windows-latest
     steps:
       - uses: vedantmgoyal9/winget-releaser@main
