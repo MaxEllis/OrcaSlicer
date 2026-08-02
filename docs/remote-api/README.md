@@ -91,13 +91,12 @@ Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 #### Project-scope keys (multi-material / CFS)
 
 Most keys resolve against the edited print, filament or printer preset. A few
-belong to the *project* instead, and only these eight are writable:
+belong to the *project* instead, and only these seven are writable:
 
 | Key | Shape | Constraint |
 |---|---|---|
 | `flush_volumes_matrix` | `,`-separated floats | exactly `filaments² × nozzles` values, each in `[0, 20000]` |
 | `flush_multiplier` | `,`-separated floats | one per nozzle, each in `[0, 3]` |
-| `flush_multiplier_fast` | `,`-separated floats | one per nozzle, each in `[0, 3]` |
 | `filament_colour` | `;`-separated `#RRGGBB` | recolour only — the count is fixed by the filament presets |
 | `curr_bed_type` | enum name | `"Default Plate"` is rejected |
 | `prime_volume_mode` | enum name | — |
