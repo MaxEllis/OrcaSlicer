@@ -1,3 +1,6 @@
+> [!NOTE]
+> **This is the OrcaSlicer MCP fork.** It adds a token-authenticated local Remote API so AI assistants can work the slicer: load models, edit settings, slice, read per-feature breakdowns, and render the plate. Download binaries from the [Releases page](https://github.com/MaxEllis/OrcaSlicer/releases) and pair them with the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. Issues are disabled on this repo; report problems on the [orcaslicer-mcp issue tracker](https://github.com/MaxEllis/orcaslicer-mcp/issues). Everything below this note is the upstream OrcaSlicer README.
+
 <div align="center">
 
 <picture>
