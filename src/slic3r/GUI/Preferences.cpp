@@ -2272,7 +2272,7 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     token_label->Wrap(DESIGN_TITLE_SIZE.x);
 
     auto token_value = new wxTextCtrl(m_parent, wxID_ANY, wxString(app_config->get("remote_api_token")),
-                                      wxDefaultPosition, wxSize(FromDIP(320), -1), wxTE_READONLY);
+                                      wxDefaultPosition, wxSize(FromDIP(120), -1), wxTE_READONLY);
 
     auto token_btn = new Button(m_parent, _L("Regenerate"));
     token_btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
@@ -2287,9 +2287,12 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     });
 
     token_sizer->Add(token_label, 0, wxALIGN_CENTER_VERTICAL);
-    token_sizer->Add(token_value, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
+    // Proportion 1: stretch to the row, so the field never pushes the Regenerate
+    // button past the dialog edge (a fixed 320 DIP overflowed and forced an hscroll).
+    token_sizer->Add(token_value, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
     token_sizer->Add(token_btn,   0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
-    g_sizer->Add(token_sizer);
+    token_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+    g_sizer->Add(token_sizer, 0, wxEXPAND);
 
     g_sizer->AddSpacer(FromDIP(10));
     sizer_page->Add(g_sizer, 0, wxEXPAND);
