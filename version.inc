@@ -13,7 +13,7 @@ set(SoftFever_VERSION "2.4.2")
 # release tags on MaxEllis/OrcaSlicer). The in-app update check compares this
 # against the latest GitHub release tag; scripts/cut-fork-release.sh bumps it
 # at release time. It is monotonic ACROSS base-version bumps (mcp.4 was 2.3.2).
-set(ORCA_MCP_RELEASE "7")
+set(ORCA_MCP_RELEASE "8")
 string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)"
        SoftFever_VERSION_MATCH ${SoftFever_VERSION})
 set(ORCA_VERSION_MAJOR ${CMAKE_MATCH_1})
