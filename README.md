@@ -4,6 +4,8 @@
 > Enable the API in **Preferences → Remote API** (Ctrl+P): tick **Enable Remote API**, copy the token, and tick **Allow LAN access** only if the MCP server runs on another machine.
 >
 > <img src="doc/images/remote-api-preferences.png" width="480" alt="Preferences, Remote API page: Enable Remote API, Allow LAN access, port and API token fields">
+>
+> \*The token shown here is a dummy example. OrcaSlicer generates a unique token for you; keep yours private.
 
 <div align="center">
 
