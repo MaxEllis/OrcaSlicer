@@ -6,6 +6,10 @@
 > <img src="doc/images/remote-api-preferences.png" width="480" alt="Preferences, Remote API page: Enable Remote API, Allow LAN access, port and API token fields">
 >
 > \*The token shown here is a dummy example. OrcaSlicer generates a unique token for you; keep yours private.
+>
+> If the fork saves you time and you feel like saying thanks, you can buy me a coffee.
+>
+> <a href="https://buymeacoffee.com/maxellis"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="50"></a>
 
 <div align="center">
 
