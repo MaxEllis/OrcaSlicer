@@ -6,6 +6,11 @@
 #define SLIC3R_VERSION "@SLIC3R_VERSION@"
 #define SoftFever_VERSION "@SoftFever_VERSION@"
 #define ORCA_MCP_RELEASE @ORCA_MCP_RELEASE@
+// orca-mcp: the same ordinal as a string, and the full user-facing version
+// ("2.4.2-mcp.8"), matching the v<base>-mcp.N release tags. Shown on the
+// splash and in About so an MCP build is never mistaken for stock OrcaSlicer.
+#define ORCA_MCP_RELEASE_STR "@ORCA_MCP_RELEASE@"
+#define ORCA_MCP_VERSION SoftFever_VERSION "-mcp." ORCA_MCP_RELEASE_STR
 #ifndef GIT_COMMIT_HASH
     #define GIT_COMMIT_HASH "0000000" // 0000000 means uninitialized
 #endif
