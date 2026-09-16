@@ -335,7 +335,9 @@ public:
         dc.SetTextForeground(m_fg_color);
 
         dc.SetFont(m_font_version);
-        rc.y      = c_sz.GetHeight() * 0.72;
+        // orca-mcp: the splash logo carries a third wordmark line ("mcp"), so the
+        // version sits lower than upstream's 0.72 to clear it.
+        rc.y      = c_sz.GetHeight() * 0.79;
         rc.height = dc.GetTextExtent(m_text_version).GetHeight();
         dc.DrawLabel(m_text_version, rc, wxALIGN_CENTER);
 
@@ -6129,7 +6131,8 @@ std::string GUI_App::format_display_version()
 {
     if (!version_display.empty()) return version_display;
 
-    version_display = SoftFever_VERSION;
+    // orca-mcp: "2.4.2-mcp.N", not the bare upstream number (splash, About).
+    version_display = ORCA_MCP_VERSION;
     return version_display;
 }
 
