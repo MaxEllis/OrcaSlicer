@@ -558,9 +558,16 @@ jobs:
         timeout-minutes: 20
         shell: bash
         run: |
+          # orca-mcp: pin the external test repo. Upstream's HEAD tracks upstream
+          # main (a new CLI suite landed 2026-09-08 that a 2.4.2 binary cannot
+          # pass: --rotate-x, mixed-filament rules, settings import). This is the
+          # last commit the 2.4.2 base passed against (green on v2.4.2-mcp.8).
+          test_repo_ref="0dfd8df467895d7093d50b267c7209fd53f43a40"
           test_repo_dir="${{ runner.temp }}/orca-test-repo"
           rm -rf "$test_repo_dir"
-          git clone --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
+          git init -q "$test_repo_dir"
+          git -C "$test_repo_dir" fetch -q --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_ref"
+          git -C "$test_repo_dir" checkout -q FETCH_HEAD
           python3 "$test_repo_dir/run_test.py" "${{ github.workspace }}/build/package/bin/orca-slicer"
 
       - name: Build orca_custom_preset_tests
