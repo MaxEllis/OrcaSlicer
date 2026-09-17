@@ -1,0 +1,27 @@
+# orca-mcp: keep the release branch's dependency caches alive.
+#
+# GitHub evicts Actions caches unused for 7 days. Releases are weeks apart, so the
+# first build after a gap rebuilt the Windows and macOS deps from scratch (~2.5 h
+# instead of ~75 min, v2.4.2-mcp.9 on 2026-09-17). This dispatches build_all on
+# the release base once a week so its deps caches are always warm.
+#
+# It lives on the default branch (remote-api) because GitHub only runs `schedule`
+# triggers from the default branch; the branch it warms is set below.
+name: Warm deps cache
+
+on:
+  schedule:
+    - cron: '0 12 * * 0'   # Sundays 12:00 UTC (Monday 00:00 NZST)
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch build_all on the release base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build_all.yml --repo "$GITHUB_REPOSITORY" --ref remote-api-242
