@@ -395,6 +395,11 @@ static bool is_credential_key(const std::string &key)
     return key == "printhost_apikey" || key == "printhost_user" || key == "printhost_password";
 }
 
+static bool is_host_url_key(const std::string &key)
+{
+    return key == "print_host" || key == "print_host_webui";
+}
+
 static std::string strip_url_userinfo(const std::string &url)
 {
     // Only a "://" that ends the scheme counts, i.e. one that comes before any other '/'.
@@ -710,8 +715,11 @@ Response Controller::handle_put_config(const std::string &body)
                 }
                 tgt->touched = true;
                 applied.push_back(key);
+                // The notification is on screen, so it never shows a credential.
                 if (is_credential_key(key))
-                    changes.push_back({ key, "(hidden)", "(hidden)" }); // the notification is on screen
+                    changes.push_back({ key, "(hidden)", "(hidden)" });
+                else if (is_host_url_key(key))
+                    changes.push_back({ key, strip_url_userinfo(oldv), strip_url_userinfo(newv) });
                 else
                     changes.push_back({ key, oldv, newv });
             } catch (const std::exception &e) {
@@ -1445,7 +1453,7 @@ Response Controller::handle_get_preset_config(const std::string &body)
             std::string v = p->config.opt_serialize(k);
             if (is_credential_key(k) && !v.empty())
                 v = k_redacted;
-            else if (k == "print_host" || k == "print_host_webui")
+            else if (is_host_url_key(k))
                 v = strip_url_userinfo(v);
             cfg[k] = v;
         }
