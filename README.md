@@ -1,7 +1,7 @@
 > [!NOTE]
 > **This is the OrcaSlicer MCP fork.** It adds a token-authenticated local Remote API so AI assistants can work the slicer: load models, edit settings, slice, read per-feature breakdowns, and render the plate. Download binaries from the [Releases page](https://github.com/MaxEllis/OrcaSlicer/releases) and pair them with the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. Issues are disabled on this repo; report problems on the [orcaslicer-mcp issue tracker](https://github.com/MaxEllis/orcaslicer-mcp/issues). Everything below this note is the upstream OrcaSlicer README.
 >
-> Enable the API in **Preferences → Remote API** (Ctrl+P): tick **Enable Remote API**, copy the token, and tick **Allow LAN access** only if the MCP server runs on another machine.
+> Enable the API in **Preferences → Remote API** (Ctrl+P): tick **Enable Remote API**, copy the token, and tick **Allow LAN access** only if the MCP server runs on another machine. Leave **Allow script, G-code and connection edits** off. With it off, the API cannot change post-processing scripts, custom G-code, the printer connection or its credentials, so text an assistant reads cannot turn into a command on your computer or printer.
 >
 > <img src="doc/images/remote-api-preferences.png" width="480" alt="Preferences, Remote API page: Enable Remote API, Allow LAN access, port and API token fields">
 >
