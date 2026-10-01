@@ -2304,6 +2304,17 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         "remote_api_notify");
     g_sizer->Add(item_notify);
 
+    // Read by RemoteAPIController (is_sensitive_config_key) on every write. Absent = off.
+    auto item_sensitive = create_item_checkbox(
+        _L("Allow script, G-code and connection edits"),
+        _L("Off (recommended): the API cannot change post-processing scripts, custom G-code, "
+           "the printer connection and its credentials, the printer model or the output "
+           "filename format. These can run commands on this computer or the printer, and an "
+           "AI agent can be steered by text it reads, so change them here in OrcaSlicer "
+           "instead. Writing back a value that is already set is always allowed."),
+        "remote_api_allow_sensitive");
+    g_sizer->Add(item_sensitive);
+
     // Port row (bespoke). The stock create_item_input() unconditionally writes the
     // field's raw text back to AppConfig on every Enter/focus-loss (see the
     // handlers in create_item_input) with no empty/range guard, and shows a blank

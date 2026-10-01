@@ -116,6 +116,7 @@ static std::string api_config_unit(const std::string &key)
 }
 
 static int find_object_index(const Model &model, uint64_t id); // defined with the M4b object handlers below
+static bool sensitive_writes_allowed(); // defined with the sensitive-key policy below
 
 
 void Controller::notify_config_changed(int preset_type)
@@ -273,7 +274,8 @@ Response Controller::handle_status()
             {"app", SLIC3R_APP_NAME},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy"}},
+            {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
             {"presets", {
@@ -347,6 +349,63 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
         return ss.str();
     }
     throw std::runtime_error("unsupported value type");
+}
+
+// ---------------------------------------------------------------------------
+// Sensitive keys
+//
+// PUT /config reaches every preset key, and some of them are not slicing settings:
+// post_process runs shell commands after export, the *_gcode templates go straight to
+// the printer, and the physical-printer options (print_host, printhost_*, host_type,
+// printer_agent, ...) decide where and how a print is sent and with which credentials.
+// printer_model / printer_technology move OrcaSlicer onto other code paths and
+// filename_format names the exported file. An AI agent holding the token can be steered
+// by text it reads, so changing any of these is refused unless the user ticks
+// Preferences > Remote API > "Allow script, G-code and connection edits". Writing a key
+// back to the value it already has is not a change and passes. The MCP server keeps the
+// same rule in its guard.py as a second check; keep the two in step.
+static bool is_sensitive_config_key(const std::string &key)
+{
+    static const std::string gcode_suffix = "_gcode";
+    if (key == "post_process" || key == "printer_model" || key == "filename_format" ||
+        key.rfind("printhost_", 0) == 0)
+        return true;
+    if (key.size() > gcode_suffix.size() &&
+        key.compare(key.size() - gcode_suffix.size(), gcode_suffix.size(), gcode_suffix) == 0)
+        return key != "emit_machine_limits_to_gcode"; // a toggle, not a template
+    const std::vector<std::string> &pp = PhysicalPrinter::printer_options();
+    return std::find(pp.begin(), pp.end(), key) != pp.end();
+}
+
+// GUI thread only (AppConfig).
+static bool sensitive_writes_allowed()
+{
+    return wxGetApp().app_config->get_bool("remote_api_allow_sensitive");
+}
+
+// What POST /preset/config hides. GET /config already drops the whole host block
+// (full_config_secure), but a named preset's config is returned as stored, so the
+// credentials are replaced and any user:password inside a host URL (the print_host
+// tooltip documents https://user:password@host/) is cut out. The host, CA file path and
+// port stay visible so upload problems can still be diagnosed.
+static const char *const k_redacted = "<redacted>";
+
+static bool is_credential_key(const std::string &key)
+{
+    return key == "printhost_apikey" || key == "printhost_user" || key == "printhost_password";
+}
+
+static std::string strip_url_userinfo(const std::string &url)
+{
+    // Only a "://" that ends the scheme counts, i.e. one that comes before any other '/'.
+    const size_t sep   = url.find("://");
+    const size_t start = (sep != std::string::npos && url.find('/') == sep + 1) ? sep + 3 : 0;
+    const size_t slash = url.find('/', start);
+    // The LAST '@' before the path, so a password containing '@' is covered too.
+    const size_t at    = url.rfind('@', slash);
+    if (at == std::string::npos || at < start)
+        return url;
+    return url.substr(0, start) + k_redacted + url.substr(at);
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +596,7 @@ Response Controller::handle_put_config(const std::string &body)
     // of this function's stack lifetime.
     nlohmann::json result = run_on_ui([in = std::move(in)]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
+        const bool allow_sensitive = sensitive_writes_allowed();
 
         struct Target {
             Preset::Type        type;
@@ -630,12 +690,30 @@ Response Controller::handle_put_config(const std::string &body)
             try {
                 std::string oldv = tgt->cfg.opt_serialize(key);
                 std::string sval = json_value_to_config_string(it.value());
+                const bool sensitive = is_sensitive_config_key(key);
+                if (sensitive && sval.find(k_redacted) != std::string::npos) {
+                    // A client writing back POST /preset/config output would replace a
+                    // real credential with the placeholder.
+                    errors[key] = "redacted_placeholder";
+                    continue;
+                }
                 // Orca's own validation: throws BadOptionTypeException /
                 // BadOptionValueException on garbage.
                 tgt->cfg.set_deserialize_strict(key, sval);
+                std::string newv = tgt->cfg.opt_serialize(key);
+                if (sensitive && !allow_sensitive && newv != oldv) {
+                    // Judged on the re-serialized value, so writing back the current value
+                    // (snapshot/restore callers) is not a change. The staged copy is thrown
+                    // away with the rest of the batch.
+                    errors[key] = "blocked_by_remote_api_policy";
+                    continue;
+                }
                 tgt->touched = true;
                 applied.push_back(key);
-                changes.push_back({ key, oldv, tgt->cfg.opt_serialize(key) });
+                if (is_credential_key(key))
+                    changes.push_back({ key, "(hidden)", "(hidden)" }); // the notification is on screen
+                else
+                    changes.push_back({ key, oldv, newv });
             } catch (const std::exception &e) {
                 errors[key] = e.what();
             }
@@ -656,6 +734,8 @@ Response Controller::handle_put_config(const std::string &body)
             for (auto it2 = errors.begin(); it2 != errors.end(); ++it2) {
                 emsg += "\n - ";
                 emsg += api_config_label(it2.key());
+                if (it2.value() == "blocked_by_remote_api_policy")
+                    emsg += " (blocked, see Preferences > Remote API)";
             }
             api_notify(emsg, true);
             return {{"applied", nlohmann::json::array()}, {"errors", errors}};
@@ -1361,7 +1441,14 @@ Response Controller::handle_get_preset_config(const std::string &body)
         const Preset *p = presets->find_preset(name, false);
         if (p == nullptr) return {{"error", "unknown_preset"}};
         nlohmann::json cfg = nlohmann::json::object();
-        for (const std::string &k : p->config.keys()) cfg[k] = p->config.opt_serialize(k);
+        for (const std::string &k : p->config.keys()) {
+            std::string v = p->config.opt_serialize(k);
+            if (is_credential_key(k) && !v.empty())
+                v = k_redacted;
+            else if (k == "print_host" || k == "print_host_webui")
+                v = strip_url_userinfo(v);
+            cfg[k] = v;
+        }
         return {{"name", p->name}, {"system", p->is_system}, {"config", cfg}};
     });
     if (r.contains("error")) {
@@ -1709,9 +1796,16 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         DynamicPrintConfig cfg = mo->config.get(); // copy of existing per-object overrides
         nlohmann::json applied = nlohmann::json::array();
         nlohmann::json errors  = nlohmann::json::object();
+        const bool allow_sensitive = sensitive_writes_allowed();
         for (auto it = in.begin(); it != in.end(); ++it) {
             const std::string &key = it.key();
             if (print_config_def.get(key) == nullptr) { errors[key] = "unknown_key"; continue; }
+            // Same policy as PUT /config; a per-object override of these is never a
+            // slicing need, so there is no write-back exemption here.
+            if (!allow_sensitive && is_sensitive_config_key(key)) {
+                errors[key] = "blocked_by_remote_api_policy";
+                continue;
+            }
             try {
                 cfg.set_deserialize_strict(key, json_value_to_config_string(it.value()));
                 applied.push_back(key);
