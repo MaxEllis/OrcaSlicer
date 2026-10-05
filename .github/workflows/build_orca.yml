@@ -248,6 +248,18 @@ jobs:
         run: |
           # Load the `retry` helper (retries flaky commands such as `hdiutil create`).
           source ${{ github.workspace }}/scripts/retry.sh
+          # Unsigned builds are linker-signed on arm64 only, so macOS cannot derive a designated
+          # requirement and never remembers a privacy grant (the ~/Downloads prompt returns on
+          # every launch). Ad-hoc sign any app without a valid signature, then require a DR.
+          for app in OrcaSlicer OrcaSlicer_profile_validator; do
+            APP=${{ github.workspace }}/build/universal/OrcaSlicer/$app.app
+            [ -d "$APP" ] || continue
+            if ! codesign --verify --deep --strict "$APP" 2>/dev/null; then
+              codesign --force --deep --sign - "$APP"
+            fi
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -d -r- "$APP" 2>&1 | grep -q "designated =>" || { echo "::error::$app.app has no designated requirement"; exit 1; }
+          done
           mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
           rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
           cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
