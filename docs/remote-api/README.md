@@ -88,6 +88,32 @@ applied and you get `422` with per-key reasons:
 ```
 Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 
+#### Per-filament keys
+
+`GET /config` returns the **merged** config, so a vector-valued filament key holds
+one run of values per loaded filament slot:
+
+```json
+{ "config": { "hot_plate_temp": "70,100,70,70,35" } }
+```
+
+`PUT /config`, by contrast, writes the single filament preset open in the Filament
+tab. Those two shapes are not interchangeable, so **writing a merged value back is
+rejected**:
+
+```json
+{ "applied": [], "errors": { "hot_plate_temp": "per_filament_length_mismatch: the filament preset open in the Filament tab holds 1 value(s), got 5. ..." } }
+```
+
+Pass only that preset's own value (`{"hot_plate_temp": 70}`), and change the other
+slots by selecting their presets in turn. Writing a key back unchanged still works
+on a single-filament setup, where merged and per-preset shapes coincide.
+
+Earlier builds accepted the merged string and stored all of it in the one preset.
+The next merge then spliced that whole list in at *every* slot using that preset,
+so the value grew on each write (5 entries → 13 → …) and the per-slot settings were
+lost. If you hit that, re-select the filament preset to restore it.
+
 #### Project-scope keys (multi-material / CFS)
 
 Most keys resolve against the edited print, filament or printer preset. A few

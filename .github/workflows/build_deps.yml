@@ -52,14 +52,22 @@ jobs:
           useLocalCache: true         # <--= Use the local cache (default is 'false').
           useCloudCache: true
 
-      - name: Install CMake 3.31.x (Windows ARM64)
-        # windows-11-arm ships CMake 4.x, which removed pre-3.5 policy
-        # compatibility AND has incomplete ASM_ARMASM linker modules
-        # (breaks Boost.Context on ARM64). Pin to the last 3.x release.
+      - name: Install CMake 4.3.x (Windows ARM64)
+        # orca-mcp: this pin was 3.31.6 for Boost.Context's ASM_ARMASM, but since
+        # windows-11-arm moved to the VS2026 image (2026-09-24) that pin BROKE the
+        # deps build outright: build_release_vs.bat detects MSBuild 18 and asks for
+        # the "Visual Studio 18 2026" generator, which CMake 3.31 does not have, so
+        # configure failed, nothing was built, 7z packed an empty tree, and the job
+        # still went green - leaving build_orca.yml to die on fail-on-cache-miss.
+        # build_orca.yml was already moved to 4.3.x for exactly this reason; the
+        # deps job runs the same script and needs the same generator.
+        # CMAKE_POLICY_VERSION_MINIMUM=3.5 (set by build_release_vs.bat) covers the
+        # pre-3.5 policy removal. If ASM_ARMASM regresses, it now fails LOUDLY at
+        # Boost.Context instead of silently producing nothing.
         if: runner.os == 'Windows' && inputs.arch == 'arm64'
         shell: pwsh
         run: |
-          $ver = "3.31.6"
+          $ver = "4.3.4"
           $url = "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-arm64.zip"
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\cmake.zip"
           Expand-Archive -Path "$env:RUNNER_TEMP\cmake.zip" -DestinationPath "$env:RUNNER_TEMP\cmake" -Force

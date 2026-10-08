@@ -19,6 +19,7 @@
 #include "libslic3r/Format/bbs_3mf.hpp" // LoadStrategy (used by Plater::load_files)
 #include "libslic3r/Slicing.hpp"          // M4c: layer_height_profile_adaptive, t_layer_height_range
 #include "slic3r/GUI/GUI_ObjectList.hpp" // M4c: obj_list()->update_info_items
+#include "slic3r/GUI/I18N.hpp"     // _L for the object list's "default" filament label
 #include "slic3r/GUI/GLCanvas3D.hpp"      // plate_render: offscreen thumbnail/gcode render
 #include "slic3r/GUI/Camera.hpp"          // plate_render: ViewAngleType
 #include "libslic3r/GCode/ThumbnailData.hpp" // plate_render: ThumbnailData/ThumbnailsParams
@@ -582,6 +583,34 @@ static std::string project_value_error(const std::string        &key,
     return {};
 }
 
+// GET /config reports the MERGED config, where every vector-valued filament key holds
+// one run of values per loaded filament slot: PresetBundle::full_fff_config walks the
+// filament keys and does set() for the first slot then append() for the rest
+// (src/libslic3r/PresetBundle.cpp), skipping only the two compatibility lists. A write,
+// by contrast, lands in the single preset open in the Filament tab. So echoing a merged
+// value back ("70,100,70,70,35") would store the whole list in that one preset, and the
+// next merge would splice all of it in at every slot using that preset - the list grows
+// on each write and the per-slot values are lost.
+//
+// A preset's own vector length is the authoritative one (normally 1, but more when the
+// printer has extruder variants - full_fff_config reads that length back as
+// filament_variant_count), so rather than hard-coding "exactly one value" we refuse any
+// write that would CHANGE the length. That keeps single-filament write-back working and
+// rejects the merged shape.
+static bool is_merged_per_filament_key(Preset::Type type, const std::string &key, const ConfigOption *opt)
+{
+    return type == Preset::TYPE_FILAMENT && opt != nullptr && opt->is_vector() &&
+           key != "compatible_prints" && key != "compatible_printers";
+}
+
+static size_t config_vector_size(const DynamicPrintConfig &cfg, const std::string &key)
+{
+    const ConfigOption *opt = cfg.option(key);
+    return (opt == nullptr || ! opt->is_vector())
+               ? 0
+               : static_cast<const ConfigOptionVectorBase *>(opt)->size();
+}
+
 Response Controller::handle_put_config(const std::string &body)
 {
     // May throw nlohmann::json::parse_error - caught by the dispatch route
@@ -702,9 +731,28 @@ Response Controller::handle_put_config(const std::string &body)
                     errors[key] = "redacted_placeholder";
                     continue;
                 }
+                // Per-filament vector keys are merged across every loaded filament on
+                // read but written to one preset here; a length change means the caller
+                // handed us the merged shape (see is_merged_per_filament_key).
+                const bool   per_filament = is_merged_per_filament_key(tgt->type, key, tgt->cfg.option(key));
+                const size_t len_before   = per_filament ? config_vector_size(tgt->cfg, key) : 0;
                 // Orca's own validation: throws BadOptionTypeException /
                 // BadOptionValueException on garbage.
                 tgt->cfg.set_deserialize_strict(key, sval);
+                if (per_filament) {
+                    const size_t len_after = config_vector_size(tgt->cfg, key);
+                    if (len_after != len_before) {
+                        // The batch is atomic and bails out below without applying, so the
+                        // already-mutated staged copy needs no restore.
+                        errors[key] = "per_filament_length_mismatch: the filament preset open in the "
+                                      "Filament tab holds " + std::to_string(len_before) + " value(s), got " +
+                                      std::to_string(len_after) +
+                                      ". GET /config reports this key merged across every loaded filament "
+                                      "slot; PUT /config writes one preset. Pass just that preset's value(s), "
+                                      "and change the other slots by selecting their presets in turn.";
+                        continue;
+                    }
+                }
                 std::string newv = tgt->cfg.opt_serialize(key);
                 if (sensitive && !allow_sensitive && newv != oldv) {
                     // Judged on the re-serialized value, so writing back the current value
@@ -1204,16 +1252,27 @@ Response Controller::handle_select_preset(const std::string &body)
         // pops a modal UnsavedChangesDialog that would wedge the GUI thread with no
         // remote way to dismiss it. Discarding is acceptable for an automation API
         // (callers apply changes deliberately via PUT /config).
-        auto discard_if_dirty = [](PresetCollection &c) {
-            if (c.current_is_dirty()) c.discard_current_changes();
+        //
+        // It is, however, a bigger side effect than "switch this group" suggests: a
+        // filament switch also drops unsaved print/printer edits, including ones made
+        // by hand in the GUI. Narrowing it to the selected collection is not an option
+        // (that is exactly the modal deadlock above), so instead report every group we
+        // discarded, and name them in the on-screen notification, so the loss is
+        // visible to both the caller and whoever is at the machine.
+        nlohmann::json discarded = nlohmann::json::array();
+        auto discard_if_dirty = [&discarded](PresetCollection &c, const char *group) {
+            if (c.current_is_dirty()) {
+                c.discard_current_changes();
+                discarded.push_back(group);
+            }
         };
-        discard_if_dirty(bundle->prints);
-        discard_if_dirty(bundle->filaments);
-        discard_if_dirty(bundle->sla_materials);
-        discard_if_dirty(bundle->printers);
+        discard_if_dirty(bundle->prints, "print");
+        discard_if_dirty(bundle->filaments, "filament");
+        discard_if_dirty(bundle->sla_materials, "sla_material");
+        discard_if_dirty(bundle->printers, "printer");
         bool ok = tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true);
         if (!ok) return {{"error", "select_cancelled"}};
-        return {{"selected", name}};
+        return {{"selected", name}, {"discarded_changes", discarded}};
     });
     if (r.contains("error")) {
         if (r["error"] == "unknown_preset") {
@@ -1222,7 +1281,13 @@ Response Controller::handle_select_preset(const std::string &body)
         }
         return { 500, r };
     }
-    api_notify("Switched to " + type_s + " preset '" + name + "'");
+    std::string msg = "Switched to " + type_s + " preset '" + name + "'";
+    if (r.contains("discarded_changes") && ! r["discarded_changes"].empty()) {
+        msg += " - discarded unsaved changes in:";
+        for (const auto &g : r["discarded_changes"])
+            msg += " " + g.get<std::string>();
+    }
+    api_notify(msg);
     return { 200, r };
 }
 
@@ -1825,6 +1890,26 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         }
         mo->config.assign_config(std::move(cfg));
         plater->changed_object(idx);
+        // changed_object() reschedules the background slice and repaints the 3D scene, but
+        // it does not touch the object list's filament column. That column is written by
+        // ObjectList itself (set_extruder_for_selected_items / update_filament_values_for_items
+        // both do SetExtruder + Refresh), so an extruder set through this endpoint sliced
+        // with the new filament while the list still showed the old one - the API and the
+        // window disagreed with no way to tell which was right. Mirror what the GUI does.
+        if (in.contains("extruder") && mo->config.has("extruder")) {
+            ObjectList *obj_list = wxGetApp().obj_list();
+            ObjectDataViewModel *om = obj_list == nullptr ? nullptr : obj_list->GetModel();
+            if (om != nullptr) {
+                wxDataViewItem item = om->GetItemById(idx);
+                if (item.IsOk()) {
+                    // 0 means "use the object/printer default" and the list spells that
+                    // out rather than showing a slot number (ObjectDataViewModel.cpp).
+                    const int ext = mo->config.extruder();
+                    om->SetExtruder(ext == 0 ? _L("default") : wxString::Format("%d", ext), item);
+                    obj_list->Refresh(); // BBS: repaint the filament column
+                }
+            }
+        }
         if (!applied.empty())
             api_notify("Updated " + std::to_string(applied.size()) + " setting(s) on '" + mo->name + "'");
         return {{"applied", applied}, {"errors", errors}, {"object", mo->name}};
