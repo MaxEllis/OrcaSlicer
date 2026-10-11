@@ -189,6 +189,7 @@ Each message is a JSON object with an `event` field:
 | `slice.done` | `state:"done",percent:100,stats{…}` |
 | `slice.error` | `state:"error",message` |
 | `slice.cancelled` | `state:"idle",message:"cancelled"` |
+| `slice.plate_changed` | the current plate's state after a plate route: `done` + `stats`, or `idle` + `message` |
 | `config.changed` | `tabs:[print\|filament\|printer\|sla_print\|sla_material\|other]` |
 | `project.opened` | `project:"<filename>"` |
 
@@ -197,13 +198,22 @@ Each message is a JSON object with an `event` field:
 
 ## Plates
 
-`slice`, `gcode`, `plate/render` and `jobs/status` all act on the **current** plate,
-and `arrange` only opens a new plate when the objects do not fit on one. The plate
+`slice`, `gcode`, `plate/render` and `jobs/status` all act on the **current** plate.
+`arrange` is the toolbar's "Arrange all": it re-packs the objects of every unlocked
+plate together and deletes plates left empty at the end, so it undoes a
+one-part-per-plate layout (locked plates are left alone). The plate
 routes let a client build a multi-plate project the way the toolbar does: every
 mutation goes through the same `Plater` calls as a click, so undo, the sidebar plate
 list, the background process and the preview follow along. `GET /status` reports
 `plates: {count, current}` and lists `plates` in `capabilities`; `GET /objects` adds
 a `plate` field per object (0-based, `-1` when it sits off every plate).
+
+`GET /slice/status` follows the current plate. After a plate is selected, added
+with `select`, deleted, or an object moves, it reports the current plate's own
+result (`done` with its stats when that plate is still sliced, otherwise `idle`
+with the message `plate N is not sliced`), and `POST /slice` on a plate that is
+already sliced (`already_valid`) refreshes it the same way. Without that, the
+status would keep describing whichever plate was sliced last.
 
 ### GET /plates
 
@@ -270,9 +280,11 @@ curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 `instance` (default 0) picks the copy when the object has several. An object coming
 from another plate keeps its position relative to that plate (front-left of plate 1
 lands front-left of plate 2); one coming from off-plate goes to the target's centre.
-Already on that plate: `200 {"moved": false, "already_on_plate": true}`. Errors:
-`404 unknown_object | unknown_plate | unknown_instance`, `422 plate_locked |
-move_failed`, `409 slicing`, `400 missing_plate`.
+Already on that plate: `200 {"moved": false, "already_on_plate": true}`. The plate
+it left is marked unsliced, as a drag in the window does. Errors:
+`404 unknown_object | unknown_plate | unknown_instance`, `422 plate_locked` (the
+target or the plate it sits on is locked; `plate` names which) `| move_failed`,
+`409 slicing`, `400 missing_plate`.
 
 ## Notes & limits
 

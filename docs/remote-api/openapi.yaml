@@ -168,7 +168,7 @@ paths:
         Each message is a JSON object with an `event` field. See the
         `Event` schema for the payload shapes:
         `slice.started`, `slice.progress`, `slice.done`, `slice.error`,
-        `slice.cancelled`, `config.changed`, `project.opened`.
+        `slice.cancelled`, `slice.plate_changed`, `config.changed`, `project.opened`.
 
         Note: `slice.*` event payloads carry `stats` (on done) but NOT the slice
         `warnings` array — fetch `GET /slice/status` for warnings.
@@ -549,7 +549,7 @@ components:
       properties:
         event:
           type: string
-          enum: [slice.started, slice.progress, slice.done, slice.error, slice.cancelled, config.changed, project.opened]
+          enum: [slice.started, slice.progress, slice.done, slice.error, slice.cancelled, slice.plate_changed, config.changed, project.opened]
         state: { type: string, description: "slice.* events: idle|slicing|done|error." }
         percent: { type: integer, description: "slice.* events." }
         message: { type: string, description: "slice.* events." }
