@@ -181,6 +181,231 @@ paths:
       responses:
         "101": { description: Switching Protocols (WebSocket handshake accepted). }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /plates:
+    get:
+      summary: List the plates
+      operationId: getPlates
+      description: |
+        Every plate in the project with its index (0-based), name, whether it is the
+        current one (the plate `slice`, `gcode`, `plate/render` and `jobs/status`
+        act on), lock state, build volume and the objects it holds. Also reports
+        `max` (the plate limit) and whether a plate can be added or deleted now.
+      responses:
+        "200":
+          description: Plate list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlateList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    post:
+      summary: Add a plate
+      operationId: createPlate
+      description: |
+        Same steps as the toolbar's "Add plate": a new empty plate is appended and,
+        unless `select` is false, becomes the current plate.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                select: { type: boolean, default: true, description: "Make the new plate current." }
+      responses:
+        "200":
+          description: Plate created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created: { type: boolean, enum: [true] }
+                  index: { type: integer, description: "0-based index of the new plate." }
+                  count: { type: integer }
+                  current: { type: integer }
+                  plate: { $ref: "#/components/schemas/Plate" }
+        "409":
+          description: A slice is running; plates cannot be added until it ends.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "slicing" }
+        "422":
+          description: The plate limit is reached (`max` says what it is).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "max_plates", max: 36 }
+        "400":
+          description: Malformed body.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /plates/{index}:
+    delete:
+      summary: Delete a plate
+      operationId: deletePlate
+      description: |
+        Removes plate `index`. The objects it held are not deleted: they are parked
+        beside the bed, as the toolbar's delete does, and `objects_moved_off_plate`
+        reports how many. Later plates shift down one index.
+      parameters:
+        - name: index
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Plate deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean, enum: [true] }
+                  index: { type: integer }
+                  count: { type: integer }
+                  current: { type: integer }
+                  objects_moved_off_plate: { type: integer }
+        "404":
+          description: No plate with that index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_plate", count: 2 }
+        "409":
+          description: A slice is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "slicing" }
+        "422":
+          description: The only plate cannot be deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "last_plate" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /plates/{index}/select:
+    post:
+      summary: Make a plate the current one
+      operationId: selectPlate
+      description: |
+        Equivalent to clicking the plate: `slice`, `gcode`, `plate/render` and
+        `jobs/status` then act on it. Selecting the current plate again is a no-op.
+      parameters:
+        - name: index
+          in: path
+          required: true
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Plate selected.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  selected: { type: boolean, enum: [true] }
+                  current: { type: integer }
+                  plate: { $ref: "#/components/schemas/Plate" }
+        "404":
+          description: No plate with that index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unknown_plate", count: 2 }
+        "409":
+          description: A slice is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "slicing" }
+        "422":
+          description: The slicer refused the switch.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "select_failed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /objects/{id}/plate:
+    post:
+      summary: Move an object onto a plate
+      operationId: setObjectPlate
+      description: |
+        Moves one instance of the object (default instance 0) onto plate `plate`.
+        From another plate it keeps its position relative to that plate; from
+        off-plate it lands at the target plate's centre. The move takes an undo
+        snapshot and refreshes the object list and background process like a drag.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+          description: Object id as reported by GET /objects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plate]
+              properties:
+                plate: { type: integer, minimum: 0, description: "0-based plate index from GET /plates." }
+                instance: { type: integer, minimum: 0, default: 0 }
+            example: { plate: 1 }
+      responses:
+        "200":
+          description: Moved (or already there, with `moved` false and `already_on_plate` true).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moved: { type: boolean }
+                  already_on_plate: { type: boolean }
+                  id: { type: integer }
+                  instance: { type: integer }
+                  plate: { type: integer }
+                  from_plate: { type: integer, description: "-1 when it was off every plate." }
+                  offset: { $ref: "#/components/schemas/Vec3" }
+              example: { moved: true, id: 832, instance: 0, plate: 1, from_plate: 0, offset: [409, 128, 6] }
+        "400":
+          description: Missing or malformed `plate` / `instance`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_plate" }
+        "404":
+          description: Unknown object, instance or plate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                object:   { value: { error: "unknown_object" } }
+                plate:    { value: { error: "unknown_plate", count: 2 } }
+                instance: { value: { error: "unknown_instance", instances: 1 } }
+        "409":
+          description: A slice is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "slicing" }
+        "422":
+          description: The plate is locked, or the slicer refused the move.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                locked: { value: { error: "plate_locked" } }
+                failed: { value: { error: "move_failed" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -221,7 +446,13 @@ components:
         capabilities:
           type: array
           items: { type: string }
-          example: [status, config, slice, events]
+          example: [status, config, slice, events, plates]
+        plates:
+          type: object
+          description: How many plates the project has and which one is current.
+          properties:
+            count: { type: integer }
+            current: { type: integer }
         project: { type: string, description: "Current project filename (may be empty)." }
         objects:
           type: array
@@ -245,6 +476,38 @@ components:
             printer: { type: array, items: { type: string } }
         slice_result_valid: { type: boolean }
         slicing: { type: boolean, description: "True while a slice is in progress." }
+    Plate:
+      type: object
+      properties:
+        index: { type: integer, description: "0-based; shifts down when an earlier plate is deleted." }
+        name: { type: string }
+        current: { type: boolean, description: "The plate slice/gcode/render act on." }
+        locked: { type: boolean }
+        empty: { type: boolean }
+        slice_result_valid: { type: boolean }
+        origin: { $ref: "#/components/schemas/Vec3" }
+        bbox_min: { $ref: "#/components/schemas/Vec3" }
+        bbox_max: { $ref: "#/components/schemas/Vec3" }
+        objects:
+          type: array
+          description: Instances the plate holds, from the plate's own bookkeeping.
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              instance: { type: integer }
+              name: { type: string }
+    PlateList:
+      type: object
+      properties:
+        plates:
+          type: array
+          items: { $ref: "#/components/schemas/Plate" }
+        count: { type: integer }
+        current: { type: integer }
+        max: { type: integer, description: "Plate limit of this build." }
+        can_add: { type: boolean }
+        can_delete: { type: boolean }
     ConfigApplyResult:
       type: object
       properties:

@@ -270,12 +270,15 @@ Response Controller::handle_status()
             objects.push_back({{"name", mo->name},
                                {"size_mm", {sz.x(), sz.y(), sz.z()}}});
         }
-        auto plate_valid = plater->get_partplate_list().get_curr_plate()->is_slice_result_valid();
+        PartPlateList &plates = plater->get_partplate_list();
+        auto plate_valid = plates.get_curr_plate()->is_slice_result_valid();
         return {
             {"app", SLIC3R_APP_NAME},
+            // plates: how many there are and which one slice/gcode/render act on.
+            {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
@@ -1730,6 +1733,9 @@ Response Controller::handle_get_objects()
                 {"name", mo->name},
                 {"size_mm", {sz.x(), sz.y(), sz.z()}},
                 {"instances", (unsigned) mo->instances.size()},
+                // plates: 0-based index of the plate holding instance 0, -1 when it
+                // sits off every plate (parked beside the bed, or on a deleted plate).
+                {"plate", plater->get_partplate_list().find_instance((int) i, 0)},
             };
             if (!mo->instances.empty()) {
                 const ModelInstance *mi = mo->instances.front();
@@ -1955,6 +1961,220 @@ Response Controller::handle_jobs_status()
     return { 200, r };
 }
 
+// --- plates ------------------------------------------------------------------
+// GET /plates, POST /plates, POST /plates/{i}/select, DELETE /plates/{i} and
+// POST /objects/{id}/plate. Every mutation goes through the same Plater /
+// PartPlateList calls the toolbar uses (Plater::priv::on_action_add_plate,
+// Plater::select_plate, Plater::delete_plate), so undo snapshots, the sidebar
+// plate list, the background process and the preview follow the change exactly
+// as they do for a click.
+
+// One plate as JSON. `objects` is read back through PartPlate::contain_instance,
+// i.e. from the plate's own bookkeeping, not from positions.
+static nlohmann::json plate_json(PartPlateList &plates, int index, const Model &model)
+{
+    PartPlate *p = plates.get_plate(index);
+    nlohmann::json objs = nlohmann::json::array();
+    for (size_t oi = 0; oi < model.objects.size(); ++oi) {
+        const ModelObject *mo = model.objects[oi];
+        for (size_t ii = 0; ii < mo->instances.size(); ++ii)
+            if (p->contain_instance((int) oi, (int) ii))
+                objs.push_back({{"id", (uint64_t) mo->id().id}, {"instance", ii}, {"name", mo->name}});
+    }
+    const BoundingBoxf3 bb  = p->get_build_volume();
+    const Vec3d         org = p->get_origin();
+    return {
+        {"index", index},
+        {"name", p->get_plate_name()},
+        {"current", index == plates.get_curr_plate_index()},
+        {"locked", p->is_locked()},
+        {"empty", p->empty()},
+        {"slice_result_valid", p->is_slice_result_valid()},
+        {"origin", {org.x(), org.y(), org.z()}},
+        {"bbox_min", {bb.min.x(), bb.min.y(), bb.min.z()}},
+        {"bbox_max", {bb.max.x(), bb.max.y(), bb.max.z()}},
+        {"objects", objs},
+    };
+}
+
+Response Controller::handle_get_plates()
+{
+    nlohmann::json r = run_on_ui([]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        nlohmann::json arr = nlohmann::json::array();
+        for (int i = 0; i < plates.get_plate_count(); ++i)
+            arr.push_back(plate_json(plates, i, plater->model()));
+        return {{"plates", arr},
+                {"count", plates.get_plate_count()},
+                {"current", plates.get_curr_plate_index()},
+                {"max", (int) PartPlateList::MAX_PLATES_COUNT},
+                {"can_add", plater->can_add_plate()},
+                {"can_delete", plater->can_delete_plate()}};
+    });
+    return { 200, r };
+}
+
+// POST /plates  body (optional) {"select": true}
+Response Controller::handle_create_plate(const std::string &body)
+{
+    bool select = true;
+    if (!body.empty()) {
+        nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
+        if (!in.is_object()) return { 400, {{"error", "body_must_be_object"}} };
+        if (in.contains("select")) {
+            if (!in["select"].is_boolean()) return { 400, {{"error", "select_must_be_boolean"}} };
+            select = in["select"].get<bool>();
+        }
+    }
+    nlohmann::json r = run_on_ui([select]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        if (!plater->can_add_plate()) {
+            if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+            return {{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}};
+        }
+        // Same steps as the toolbar's "Add plate" (Plater::priv::on_action_add_plate).
+        plater->take_snapshot("add partplate");
+        const int idx = plates.create_plate();
+        if (idx < 0) return {{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}};
+        if (select) plater->select_plate(idx, false);
+        plater->update();
+        plater->get_camera().requires_zoom_to_plate = REQUIRES_ZOOM_TO_ALL_PLATE;
+        api_notify("Added plate " + std::to_string(idx + 1));
+        return {{"created", true}, {"index", idx},
+                {"count", plates.get_plate_count()},
+                {"current", plates.get_curr_plate_index()},
+                {"plate", plate_json(plates, idx, plater->model())}};
+    });
+    if (r.contains("error")) return { r["error"] == "slicing" ? 409 : 422, r };
+    return { 200, r };
+}
+
+// POST /plates/{i}/select - makes plate i the one slice, gcode, plate/render and
+// jobs/status act on, exactly like clicking it.
+Response Controller::handle_select_plate(int index)
+{
+    nlohmann::json r = run_on_ui([index]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        if (index < 0 || index >= plates.get_plate_count())
+            return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
+        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        if (plates.get_curr_plate_index() != index) {
+            if (plater->select_plate(index, false) != 0) return {{"error", "select_failed"}};
+            api_notify("Selected plate " + std::to_string(index + 1));
+        }
+        return {{"selected", true},
+                {"current", plates.get_curr_plate_index()},
+                {"plate", plate_json(plates, index, plater->model())}};
+    });
+    if (r.contains("error")) {
+        if (r["error"] == "unknown_plate") return { 404, r };
+        if (r["error"] == "slicing")       return { 409, r };
+        return { 422, r };
+    }
+    return { 200, r };
+}
+
+// DELETE /plates/{i} - the objects it held are not deleted: Plater::delete_plate
+// parks them beside the bed, as the toolbar does. The count is reported back.
+Response Controller::handle_delete_plate(int index)
+{
+    nlohmann::json r = run_on_ui([index]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        if (index < 0 || index >= plates.get_plate_count())
+            return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
+        if (!plater->can_delete_plate()) return {{"error", "last_plate"}};
+        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        int held = 0;
+        {
+            PartPlate *p = plates.get_plate(index);
+            const Model &model = plater->model();
+            for (size_t oi = 0; oi < model.objects.size(); ++oi)
+                for (size_t ii = 0; ii < model.objects[oi]->instances.size(); ++ii)
+                    if (p->contain_instance((int) oi, (int) ii)) ++held;
+        }
+        if (plater->delete_plate(index) != 0) return {{"error", "delete_failed"}};
+        api_notify("Deleted plate " + std::to_string(index + 1) +
+                   (held > 0 ? " (" + std::to_string(held) + " object(s) moved off-plate)" : std::string()));
+        return {{"deleted", true}, {"index", index},
+                {"count", plates.get_plate_count()},
+                {"current", plates.get_curr_plate_index()},
+                {"objects_moved_off_plate", held}};
+    });
+    if (r.contains("error")) {
+        if (r["error"] == "unknown_plate") return { 404, r };
+        if (r["error"] == "slicing")       return { 409, r };
+        return { 422, r };
+    }
+    return { 200, r };
+}
+
+// POST /objects/{id}/plate  body {"plate": <index>, "instance": 0}
+// Moves one instance onto a plate. Coming from another plate it keeps its
+// position relative to that plate (front-left of plate 1 -> front-left of
+// plate 2); coming from off-plate it lands at the target's centre, which is
+// what PartPlateList::add_to_plate does on its own.
+Response Controller::handle_put_object_plate(uint64_t id, const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 in dispatch
+    if (!in.is_object() || !in.contains("plate") || !in["plate"].is_number_integer())
+        return { 400, {{"error", "missing_plate"},
+                       {"detail", "body {\"plate\": <0-based index from GET /plates>, \"instance\": 0}"}} };
+    const int plate_idx = in["plate"].get<int>();
+    if (in.contains("instance") && !in["instance"].is_number_integer())
+        return { 400, {{"error", "instance_must_be_integer"}} };
+    const int inst_idx = in.value("instance", 0);
+    if (plate_idx < 0 || inst_idx < 0) return { 400, {{"error", "negative_index"}} };
+
+    nlohmann::json r = run_on_ui([=]() -> nlohmann::json {
+        Plater *plater = wxGetApp().plater();
+        PartPlateList &plates = plater->get_partplate_list();
+        const int oi = find_object_index(plater->model(), id);
+        if (oi < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
+        ModelObject *mo = plater->model().objects[oi];
+        if (inst_idx >= (int) mo->instances.size())
+            return {{"error", "unknown_instance"}, {"instances", (unsigned) mo->instances.size()}};
+        PartPlate *target = plates.get_plate(plate_idx);
+        if (target == nullptr) return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
+        if (target->is_locked()) return {{"error", "plate_locked"}};
+        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+
+        const int from = plates.find_instance(oi, inst_idx);   // -1: off every plate
+        ModelInstance *mi = mo->instances[inst_idx];
+        if (from == plate_idx) {
+            auto off = mi->get_offset();
+            return {{"moved", false}, {"already_on_plate", true}, {"id", id}, {"instance", inst_idx},
+                    {"plate", plate_idx}, {"offset", {off.x(), off.y(), off.z()}}};
+        }
+        plater->take_snapshot("move to plate");
+        const bool relative = from >= 0;
+        Vec3d keep = mi->get_offset();
+        if (relative) keep -= plates.get_plate(from)->get_origin();
+        if (plates.add_to_plate(oi, inst_idx, plate_idx) != 0) return {{"error", "move_failed"}};
+        if (relative) {
+            mi->set_offset(target->get_origin() + keep);
+            mo->invalidate_bounding_box();
+        }
+        plates.notify_instance_update(oi, inst_idx); // re-check inside/outside on the new plate
+        plater->changed_object(oi);
+        api_notify("Moved '" + mo->name + "' to plate " + std::to_string(plate_idx + 1));
+        auto off = mi->get_offset();
+        return {{"moved", true}, {"id", id}, {"instance", inst_idx},
+                {"plate", plates.find_instance(oi, inst_idx)}, {"from_plate", from},
+                {"offset", {off.x(), off.y(), off.z()}}};
+    });
+    if (r.contains("error")) {
+        const std::string e = r["error"].get<std::string>();
+        if (e == "unknown_object" || e == "unknown_plate" || e == "unknown_instance") return { 404, r };
+        if (e == "slicing") return { 409, r };
+        return { 422, r };
+    }
+    return { 200, r };
+}
+
 Response Controller::dispatch(const Request &req)
 {
     try {
@@ -2020,6 +2240,33 @@ Response Controller::dispatch(const Request &req)
         if (is("POST", "/api/v1/arrange"))      return handle_arrange();
         if (is("POST", "/api/v1/orient"))       return handle_orient();
         if (is("GET",  "/api/v1/jobs/status"))  return handle_jobs_status();
+        if (is("GET",  "/api/v1/plates"))       return handle_get_plates();
+        if (is("POST", "/api/v1/plates")) {
+            try { return handle_create_plate(req.body); }
+            catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+        }
+        {
+            // plate sub-routes: /api/v1/plates/<index> and /api/v1/plates/<index>/<action>
+            // ("plates/", distinct from the GET /api/v1/plate/render route above)
+            static const std::string pfx = "/api/v1/plates/";
+            std::string path = t.substr(0, t.find('?'));
+            if (path.size() > pfx.size() && path.compare(0, pfx.size(), pfx) == 0) {
+                std::string rest = path.substr(pfx.size());
+                size_t slash = rest.find('/');
+                std::string idx_str = (slash == std::string::npos) ? rest : rest.substr(0, slash);
+                std::string action  = (slash == std::string::npos) ? std::string() : rest.substr(slash + 1);
+                int idx = -1;
+                try {
+                    size_t used = 0;
+                    idx = std::stoi(idx_str, &used);
+                    if (used != idx_str.size() || idx < 0) idx = -1;
+                } catch (...) { idx = -1; }
+                if (idx < 0) return { 400, {{"error", "bad_plate_index"}} };
+                if (req.method == "DELETE" && action.empty())  return handle_delete_plate(idx);
+                if (req.method == "POST"   && action == "select") return handle_select_plate(idx);
+                return { 404, {{"error", "not_found"}} };
+            }
+        }
         {
             // M4b object sub-routes: /api/v1/objects/<id> and /api/v1/objects/<id>/<action>
             static const std::string pfx = "/api/v1/objects/";
@@ -2040,6 +2287,10 @@ Response Controller::dispatch(const Request &req)
                 }
                 if (req.method == "POST" && action == "duplicate")
                     return handle_duplicate_object(oid);
+                if (req.method == "POST" && action == "plate") {
+                    try { return handle_put_object_plate(oid, req.body); }
+                    catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+                }
                 if (req.method == "PUT" && action == "config") {
                     try { return handle_put_object_config(oid, req.body); }
                     catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }

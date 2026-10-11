@@ -40,6 +40,11 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/slice` | Start slicing the current plate |
 | GET | `/slice/status` | Current/last slice state + stats + warnings |
 | WS | `/events?token=…` | Live event stream |
+| GET | `/plates` | List the plates: index, name, current, locked, objects on each |
+| POST | `/plates` | Add a plate (`{"select": true}` by default) |
+| POST | `/plates/{i}/select` | Make plate `i` the current one |
+| DELETE | `/plates/{i}` | Delete plate `i` (its objects are parked beside the bed, not deleted) |
+| POST | `/objects/{id}/plate` | Move an object onto plate `i` |
 
 ### GET /status
 
@@ -189,6 +194,85 @@ Each message is a JSON object with an `event` field:
 
 > `slice.*` events carry `stats` (on done) but not the slice `warnings` array —
 > call `GET /slice/status` for warnings.
+
+## Plates
+
+`slice`, `gcode`, `plate/render` and `jobs/status` all act on the **current** plate,
+and `arrange` only opens a new plate when the objects do not fit on one. The plate
+routes let a client build a multi-plate project the way the toolbar does: every
+mutation goes through the same `Plater` calls as a click, so undo, the sidebar plate
+list, the background process and the preview follow along. `GET /status` reports
+`plates: {count, current}` and lists `plates` in `capabilities`; `GET /objects` adds
+a `plate` field per object (0-based, `-1` when it sits off every plate).
+
+### GET /plates
+
+```bash
+curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/plates
+```
+```json
+{
+  "plates": [
+    { "index": 0, "name": "", "current": true, "locked": false, "empty": false,
+      "slice_result_valid": false,
+      "origin": [0,0,0], "bbox_min": [0,0,0], "bbox_max": [256,256,250],
+      "objects": [ { "id": 794, "instance": 0, "name": "box_base.stl" } ] },
+    { "index": 1, "name": "", "current": false, "locked": false, "empty": true,
+      "slice_result_valid": false,
+      "origin": [281,0,0], "bbox_min": [281,0,0], "bbox_max": [537,256,250],
+      "objects": [] }
+  ],
+  "count": 2, "current": 0, "max": 36, "can_add": true, "can_delete": true
+}
+```
+Indices are 0-based and shift down when an earlier plate is deleted, exactly as in
+the GUI (plate "2" on screen is index 1).
+
+### POST /plates
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"select": true}' http://localhost:13130/api/v1/plates
+```
+```json
+{ "created": true, "index": 1, "count": 2, "current": 1, "plate": { "...": "as in GET /plates" } }
+```
+The body is optional; `select` defaults to `true` (the new plate becomes current,
+as with the toolbar button). Errors: `422 max_plates` (the limit is reported in
+`max`), `409 slicing`.
+
+### POST /plates/{i}/select
+
+```json
+{ "selected": true, "current": 1, "plate": { "...": "as in GET /plates" } }
+```
+Errors: `404 unknown_plate`, `409 slicing`, `422 select_failed`.
+
+### DELETE /plates/{i}
+
+```json
+{ "deleted": true, "index": 1, "count": 1, "current": 0, "objects_moved_off_plate": 2 }
+```
+The objects the plate held are **not** deleted: `Plater::delete_plate` parks them
+beside the bed, as the toolbar does, and `objects_moved_off_plate` says how many.
+Errors: `404 unknown_plate`, `422 last_plate` (the only plate cannot be deleted),
+`409 slicing`.
+
+### POST /objects/{id}/plate
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"plate": 1}' http://localhost:13130/api/v1/objects/832/plate
+```
+```json
+{ "moved": true, "id": 832, "instance": 0, "plate": 1, "from_plate": 0, "offset": [409,128,6] }
+```
+`instance` (default 0) picks the copy when the object has several. An object coming
+from another plate keeps its position relative to that plate (front-left of plate 1
+lands front-left of plate 2); one coming from off-plate goes to the target's centre.
+Already on that plate: `200 {"moved": false, "already_on_plate": true}`. Errors:
+`404 unknown_object | unknown_plate | unknown_instance`, `422 plate_locked |
+move_failed`, `409 slicing`, `400 missing_plate`.
 
 ## Notes & limits
 
