@@ -4,6 +4,10 @@
 #include <boost/system/error_code.hpp>
 
 #include <algorithm>
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <stdexcept>
 
 namespace Slic3r::ElegooMqtt {
@@ -172,36 +176,31 @@ public:
     TcpTransport(const std::string &host, uint16_t port, std::chrono::milliseconds timeout)
         : m_timeout(timeout), m_socket(m_io)
     {
-        boost::system::error_code ec;
-        bool                      done = false;
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        auto remaining = [&]() {
+            return std::max(std::chrono::milliseconds(0),
+                            std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()));
+        };
+
         std::vector<tcp::endpoint> endpoints;
-
-        tcp::resolver resolver(m_io);
-        resolver.async_resolve(host, std::to_string(port), [&](const boost::system::error_code &e, tcp::resolver::results_type r) {
-            ec   = e;
-            done = true;
-            for (const auto &entry : r)
-                endpoints.push_back(entry.endpoint());
-        });
-        run_until(timeout);
-        if (!done) {
-            resolver.cancel();
-            m_io.restart();
-            m_io.run();
-            throw std::runtime_error("mqtt: timeout resolving " + host);
+        boost::system::error_code  ec;
+        const auto                 addr = asio::ip::make_address(host, ec);
+        if (!ec) {
+            endpoints.push_back(tcp::endpoint(addr, port)); // an IP literal needs no resolver
+        } else {
+            endpoints = resolve_with_deadline(host, port, remaining());
         }
-        if (ec || endpoints.empty())
-            throw std::runtime_error("mqtt: cannot resolve " + host + (ec ? ": " + ec.message() : ""));
 
-        done = false;
-        ec   = {};
+        bool done = false;
+        ec        = {};
         asio::async_connect(m_socket, endpoints, [&](const boost::system::error_code &e, const tcp::endpoint &) {
             ec   = e;
             done = true;
         });
-        run_until(timeout);
+        run_until(remaining());
         if (!done) {
-            m_socket.close(ec);
+            boost::system::error_code ignored;
+            m_socket.close(ignored);
             m_io.restart();
             m_io.run();
             throw std::runtime_error("mqtt: timeout connecting to " + host);
@@ -265,6 +264,50 @@ public:
     }
 
 private:
+    // getaddrinfo cannot be interrupted, so resolve on a detached thread that owns its state; on timeout the
+    // thread is left to finish by itself and nothing here waits for it.
+    static std::vector<tcp::endpoint> resolve_with_deadline(const std::string &host, uint16_t port, std::chrono::milliseconds timeout)
+    {
+        struct Shared
+        {
+            std::mutex                 m;
+            std::condition_variable    cv;
+            bool                       done = false;
+            std::string                error;
+            std::vector<tcp::endpoint> endpoints;
+        };
+        auto shared = std::make_shared<Shared>();
+        std::thread([shared, host, port]() {
+            std::string                error;
+            std::vector<tcp::endpoint> eps;
+            try {
+                asio::io_context          io;
+                tcp::resolver             resolver(io);
+                boost::system::error_code ec;
+                auto                      results = resolver.resolve(host, std::to_string(port), ec);
+                if (ec)
+                    error = ec.message();
+                else
+                    for (const auto &entry : results)
+                        eps.push_back(entry.endpoint());
+            } catch (const std::exception &e) {
+                error = e.what();
+            }
+            std::lock_guard<std::mutex> lock(shared->m);
+            shared->error     = std::move(error);
+            shared->endpoints = std::move(eps);
+            shared->done      = true;
+            shared->cv.notify_all();
+        }).detach();
+
+        std::unique_lock<std::mutex> lock(shared->m);
+        if (!shared->cv.wait_for(lock, timeout, [&] { return shared->done; }))
+            throw std::runtime_error("mqtt: timeout resolving " + host);
+        if (!shared->error.empty() || shared->endpoints.empty())
+            throw std::runtime_error("mqtt: cannot resolve " + host + (shared->error.empty() ? "" : ": " + shared->error));
+        return std::move(shared->endpoints);
+    }
+
     void run_until(std::chrono::milliseconds timeout)
     {
         m_io.restart();
@@ -335,15 +378,19 @@ std::optional<Packet> Client::read_packet(Clock::time_point deadline)
         } catch (const std::invalid_argument &e) {
             fail(e.what()); // already "mqtt: malformed packet ..."
         }
-        const auto now = Clock::now();
-        if (now >= deadline)
-            return std::nullopt;
+        // Always try at least one read, even with no time left, so data already queued is never missed.
+        const auto now       = Clock::now();
+        const auto remaining = now >= deadline ? std::chrono::milliseconds(0) :
+                                                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
+        size_t     got       = 0;
         try {
-            m_transport->recv_some(m_buf, std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now));
+            got = m_transport->recv_some(m_buf, remaining);
         } catch (...) {
             close_transport();
             throw;
         }
+        if (got == 0 && Clock::now() >= deadline)
+            return std::nullopt;
     }
 }
 
@@ -384,7 +431,9 @@ void Client::subscribe(const std::vector<std::string> &topics, std::chrono::mill
     const auto     deadline = Clock::now() + timeout;
     const uint16_t id       = next_id();
     send_or_close(encode_subscribe(id, topics));
-    expect(9, id, deadline, "SUBACK");
+    const Packet ack = expect(9, id, deadline, "SUBACK");
+    if (ack.return_code == 0x80)
+        fail("mqtt: subscribe refused for " + (topics.empty() ? std::string() : topics.front()));
 }
 
 void Client::publish(const std::string &topic, const std::string &payload, std::chrono::milliseconds timeout)
