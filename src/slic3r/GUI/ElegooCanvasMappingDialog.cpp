@@ -137,7 +137,7 @@ ElegooCanvasMappingDialog::ElegooCanvasMappingDialog(wxWindow                   
     const int em  = em_unit();
     auto     *top = new wxBoxSizer(wxVERTICAL);
 
-    auto *intro = new wxStaticText(this, wxID_ANY, _L("Choose the CANVAS tray that feeds each filament of this project."));
+    auto *intro = new wxStaticText(this, wxID_ANY, _L("Choose the CANVAS tray that feeds each filament this plate uses."));
     top->Add(intro, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, em);
 
     m_rows_panel = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL);

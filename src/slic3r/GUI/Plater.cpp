@@ -17288,10 +17288,13 @@ void Plater::reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &
     // and let the background processing start.
     this->p->restart_background_process(state | priv::UPDATE_BACKGROUND_PROCESS_FORCE_RESTART);
 }
-// Elegoo CANVAS: read the printer's trays (worker thread, busy GUI), let the user map every project filament to a
+// Elegoo CANVAS: read the printer's trays (worker thread, busy GUI), let the user map every filament the plate uses to a
 // ready tray, and put the result into the upload as slot_map. Returns false when the send must stop: the slot read
 // failed (hard error: the job cannot be mapped) or the user cancelled the mapping.
-static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig &printer_cfg, PrintHostUpload &upload_data)
+// `plate_filaments` = the sent plate's filaments as PartPlate::get_extruders() returns them (1-based); only those get
+// rows and slot_map entries. Empty = every project filament.
+static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig &printer_cfg, const std::vector<int> &plate_filaments,
+                                        PrintHostUpload &upload_data)
 {
     PresetBundle *preset_bundle = wxGetApp().preset_bundle;
 
@@ -17299,20 +17302,26 @@ static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig
     wxString           error;
     if (!elegoo_canvas_read_info(printer_cfg, info, error)) {
         show_error(plater, format_wxstr(_L("Could not read the CANVAS trays from the printer, so the filaments cannot be mapped and "
-                                           "the job was not sent.
-%1%"),
+                                           "the job was not sent.\n%1%"),
                                         error),
                    false);
         return false;
     }
 
-    // Project filaments, index = position in the project.
+    // The plate's filaments; index = position in the project (= the G-code T number slot_map's t refers to).
     const std::vector<std::string> &names    = preset_bundle->filament_presets;
     const auto                     *colours  = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
     const PresetCollection         &fil_coll = preset_bundle->filaments;
+    std::vector<size_t>             positions;
+    for (int id : plate_filaments) // 1-based, sorted and unique
+        if (id >= 1 && static_cast<size_t>(id) <= names.size())
+            positions.push_back(static_cast<size_t>(id - 1));
+    if (positions.empty())
+        for (size_t i = 0; i < names.size(); ++i)
+            positions.push_back(i);
     std::vector<ElegooCanvas::ProjectFilament> filaments;
-    filaments.reserve(names.size());
-    for (size_t i = 0; i < names.size(); ++i) {
+    filaments.reserve(positions.size());
+    for (size_t i : positions) {
         ElegooCanvas::ProjectFilament f;
         f.index = static_cast<int>(i);
         f.name  = names[i];
@@ -17334,7 +17343,7 @@ static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig
 
     // Pre-fill: the API-set mapping for this project, else saved choices and the matcher.
     CanvasState &state = CanvasState::get();
-    state.reset_if_project_changed(CanvasState::make_project_key(into_u8(plater->get_project_filename(".3mf")), filaments.size()));
+    state.reset_if_project_changed(CanvasState::make_project_key(into_u8(plater->get_project_filename(".3mf")), names.size()));
     std::vector<ElegooCanvas::Mapping> initial = !state.api_mapping.empty() ? state.api_mapping
                                                                              : ElegooCanvas::auto_match(filaments, info, store);
 
@@ -17348,10 +17357,11 @@ static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig
     // Remember each choice against the slot list the dialog showed (it may have been refreshed).
     const ElegooCanvas::Info &shown = dlg.info();
     for (const ElegooCanvas::SlotMapEntry &e : slots) {
-        if (e.t < 0 || static_cast<size_t>(e.t) >= filaments.size())
+        auto f = std::find_if(filaments.begin(), filaments.end(), [&e](const ElegooCanvas::ProjectFilament &pf) { return pf.index == e.t; });
+        if (f == filaments.end())
             continue;
         if (const ElegooCanvas::Tray *tray = shown.find(e.canvas_id, e.tray_id); tray != nullptr)
-            store.remember(filaments[static_cast<size_t>(e.t)], *tray);
+            store.remember(*f, *tray);
     }
     store.save();
     state.api_mapping.clear();
@@ -17546,7 +17556,12 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         // upload-only sends skip this and carry no slot_map.
         if (host_type == htElegooLink && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint &&
             preset_bundle->filament_presets.size() > 1 && elegoo_canvas_enabled(*physical_printer_config)) {
-            if (!elegoo_canvas_map_filaments(this, *physical_printer_config, upload_job.upload_data))
+            // The plate being sent: as for plateindex above, "All plates" means the current plate.
+            const int        map_plate_idx = plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx;
+            std::vector<int> plate_filaments;
+            if (PartPlate *plate = get_partplate_list().get_plate(map_plate_idx); plate != nullptr)
+                plate_filaments = plate->get_extruders(true); // 1-based, includes custom G-code tool changes
+            if (!elegoo_canvas_map_filaments(this, *physical_printer_config, plate_filaments, upload_job.upload_data))
                 return;
         }
     }
