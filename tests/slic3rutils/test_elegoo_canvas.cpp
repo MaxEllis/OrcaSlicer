@@ -2,6 +2,7 @@
 
 #define ELEGOO_CANVAS_GATE_NO_CONFIG
 #include "slic3r/GUI/ElegooCanvasGate.hpp"
+#include "slic3r/GUI/ElegooCanvasState.hpp"
 #include "slic3r/Utils/ElegooCanvas.hpp"
 
 #include <nlohmann/json.hpp>
@@ -180,4 +181,36 @@ TEST_CASE("elegoo_canvas_enabled gates on host type, CC2 model and the multi-fil
     CHECK_FALSE(elegoo_canvas_enabled("elegoolink", true, "\"0\""));
     CHECK_FALSE(elegoo_canvas_enabled("octoprint", true, "1"));
     CHECK_FALSE(elegoo_canvas_enabled("", true, "1"));
+}
+
+TEST_CASE("CanvasState drops the API mapping when the project key changes", "[elegoo_canvas]")
+{
+    Slic3r::GUI::CanvasState state;
+    const std::string key_a = Slic3r::GUI::CanvasState::make_project_key("/p/a.3mf", 2);
+    state.reset_if_project_changed(key_a);
+    Mapping m;
+    m.index  = 0;
+    m.tray   = std::make_pair(0, 1);
+    m.source = MatchSource::Api;
+    state.api_mapping = {m};
+
+    // Same project, same filament count: kept.
+    state.reset_if_project_changed(Slic3r::GUI::CanvasState::make_project_key("/p/a.3mf", 2));
+    REQUIRE(state.api_mapping.size() == 1);
+    CHECK(state.project_key == key_a);
+
+    // Another filament count: cleared, key follows.
+    const std::string key_a3 = Slic3r::GUI::CanvasState::make_project_key("/p/a.3mf", 3);
+    CHECK(key_a3 != key_a);
+    state.reset_if_project_changed(key_a3);
+    CHECK(state.api_mapping.empty());
+    CHECK(state.project_key == key_a3);
+
+    // Another project: cleared.
+    state.api_mapping = {m};
+    state.reset_if_project_changed(Slic3r::GUI::CanvasState::make_project_key("/p/b.3mf", 3));
+    CHECK(state.api_mapping.empty());
+
+    // Unsaved project ("") is its own key.
+    CHECK(Slic3r::GUI::CanvasState::make_project_key("", 2) != key_a);
 }

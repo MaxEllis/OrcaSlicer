@@ -8,6 +8,8 @@
 #include <mutex>
 #include <set>
 
+namespace Slic3r { namespace ElegooCanvas { struct Info; } }
+
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
 // Snapshot of the last/current slice, maintained on the GUI thread by wx event
@@ -74,6 +76,15 @@ private:
     Response handle_arrange();                              // M4b: POST /arrange (async)
     Response handle_orient();                               // M4b: POST /orient (async)
     Response handle_jobs_status();                          // M4b: GET /jobs/status
+    Response handle_printer_slots();                        // CANVAS: GET /printer/slots
+    Response handle_get_slot_mapping();                     // CANVAS: GET /printer/slot_mapping
+    Response handle_put_slot_mapping(const std::string &body); // CANVAS: PUT /printer/slot_mapping
+
+    // CANVAS: the slot list for the selected printer preset. use_cached = take CanvasState::last_info when there is
+    // one, else read the printer (MQTT on the calling io thread, never on the GUI thread) and store a good read in
+    // last_info. Returns false with `unsupported` = {"supported":false,"reason","message"} when the preset is not a
+    // gated CC2, the read fails or no CANVAS is connected.
+    bool read_canvas_slots(bool use_cached, Slic3r::ElegooCanvas::Info &info, nlohmann::json &unsupported);
 
     // Mutate m_slice under the lock and broadcast a snapshot (event_name) to WS clients.
     void set_slice_state(const std::function<void(SliceState&)> &mut, const char *event_name);
