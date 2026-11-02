@@ -3,6 +3,7 @@
 #include "slic3r/Utils/ElegooMqtt.hpp"
 #include "elegoo_fake_transport.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <stdexcept>
@@ -316,6 +317,8 @@ TEST_CASE("Client keeps a PUBLISH that arrives while waiting for an ack", "[eleg
     auto m = r.client.wait_message(10ms);
     REQUIRE(m.has_value());
     CHECK(m->second == "early");
+    const auto ack = encode_puback(5);
+    CHECK(std::search(r.state.outbound.begin(), r.state.outbound.end(), ack.begin(), ack.end()) != r.state.outbound.end());
 }
 
 TEST_CASE("Client turns a corrupt stream into mqtt: runtime_error and closes", "[elegoo_mqtt][client]")
@@ -342,4 +345,24 @@ TEST_CASE("Client::disconnect sends DISCONNECT once and is idempotent", "[elegoo
     CHECK(r.state.closed);
     r.client.disconnect();
     CHECK(r.state.outbound == encode_disconnect());
+}
+
+TEST_CASE("Client::subscribe fails on a SUBACK refusal (0x80)", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.feed({0x90, 0x03, 0x00, 0x01, 0x80});
+    CHECK_THROWS_WITH(r.client.subscribe({"nope/topic"}, 50ms), "mqtt: subscribe refused for nope/topic");
+    CHECK(r.state.closed);
+}
+
+TEST_CASE("Client polls already-queued data even with a zero timeout", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.state.feed({0x20, 0x02, 0x00, 0x00});
+    CHECK_NOTHROW(r.client.connect("h", 1, "c", "u", "p", 0ms));
+    r.state.feed(publish_qos1(2, "t", "now"));
+    auto m = r.client.wait_message(0ms);
+    REQUIRE(m.has_value());
+    CHECK(m->second == "now");
 }
