@@ -32,6 +32,25 @@ namespace GUI {
 // On success stores the result in CanvasState::last_info too. On failure returns false with a message in `error`.
 bool elegoo_canvas_read_info(const DynamicPrintConfig &printer_cfg, ElegooCanvas::Info &out, wxString &error);
 
+// Shared by the send flow and the Remote API (GUI thread only: they read the preset bundle and the plater).
+//
+// The project's filaments as matcher input; index = position in the project (the G-code T number). `plate_filaments`
+// (1-based, as PartPlate::get_extruders() returns them) limits the list to a plate's filaments; empty = all of them.
+std::vector<ElegooCanvas::ProjectFilament> elegoo_canvas_project_filaments(const std::vector<int> &plate_filaments);
+// CanvasState::project_key of the open project (project file + filament count).
+std::string elegoo_canvas_project_key();
+// The remembered-mapping file (<data_dir>/user/filament_mms_mapping.json), loaded.
+ElegooCanvas::MappingStore elegoo_canvas_mapping_store();
+// One mapping per filament, in the order of `filaments`, taken from `initial` by index (none when absent).
+std::vector<ElegooCanvas::Mapping> elegoo_canvas_rows(const std::vector<ElegooCanvas::ProjectFilament> &filaments,
+                                                      const std::vector<ElegooCanvas::Mapping>         &initial);
+// Nozzle temperature of the named filament preset, 0 when unknown.
+int elegoo_canvas_nozzle_temp(const std::string &filament_preset_name);
+// Warning codes for filament `f` fed from tray `t`: "type_mismatch" (auto_match's rule) and "temp_out_of_range"
+// (`nozzle_temp` outside the tray's range, when all three are known).
+std::vector<std::string> elegoo_canvas_mapping_warnings(const ElegooCanvas::ProjectFilament &f, const ElegooCanvas::Tray &t,
+                                                        int nozzle_temp);
+
 class ElegooCanvasMappingDialog : public DPIDialog
 {
 public:

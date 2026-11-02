@@ -22,6 +22,7 @@
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Utils.hpp" // data_dir()
 #include "slic3r/Utils/ElegooLink.hpp"
 
 #include "ElegooCanvasState.hpp"
@@ -29,6 +30,7 @@
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "MsgDialog.hpp"
+#include "Plater.hpp"
 #include "format.hpp"
 
 namespace Slic3r { namespace GUI {
@@ -99,6 +101,92 @@ bool elegoo_canvas_read_info(const DynamicPrintConfig &printer_cfg, ElegooCanvas
     return true;
 }
 
+std::vector<ElegooCanvas::ProjectFilament> elegoo_canvas_project_filaments(const std::vector<int> &plate_filaments)
+{
+    const PresetBundle             *preset_bundle = wxGetApp().preset_bundle;
+    const std::vector<std::string> &names         = preset_bundle->filament_presets;
+    const auto                     *colours       = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    const PresetCollection         &fil_coll      = preset_bundle->filaments;
+    std::vector<size_t>             positions;
+    for (int id : plate_filaments) // 1-based, sorted and unique
+        if (id >= 1 && static_cast<size_t>(id) <= names.size())
+            positions.push_back(static_cast<size_t>(id - 1));
+    if (positions.empty())
+        for (size_t i = 0; i < names.size(); ++i)
+            positions.push_back(i);
+    std::vector<ElegooCanvas::ProjectFilament> filaments;
+    filaments.reserve(positions.size());
+    for (size_t i : positions) {
+        ElegooCanvas::ProjectFilament f;
+        f.index = static_cast<int>(i);
+        f.name  = names[i];
+        if (const Preset *preset = fil_coll.find_preset(names[i], false); preset != nullptr) {
+            f.filament_id = preset->filament_id;
+            f.setting_id  = preset->setting_id;
+            f.vendor      = preset->vendor != nullptr ? preset->vendor->name : std::string();
+            f.alias       = preset->alias;
+            if (const auto *type = preset->config.option<ConfigOptionStrings>("filament_type"); type != nullptr && !type->values.empty())
+                f.type = type->values.front();
+        }
+        if (colours != nullptr && i < colours->values.size())
+            f.color = colours->values[i];
+        filaments.push_back(std::move(f));
+    }
+    return filaments;
+}
+
+std::string elegoo_canvas_project_key()
+{
+    return CanvasState::make_project_key(into_u8(wxGetApp().plater()->get_project_filename(".3mf")),
+                                         wxGetApp().preset_bundle->filament_presets.size());
+}
+
+ElegooCanvas::MappingStore elegoo_canvas_mapping_store()
+{
+    ElegooCanvas::MappingStore store(boost::filesystem::path(data_dir()) / "user" / "filament_mms_mapping.json");
+    store.load();
+    return store;
+}
+
+std::vector<ElegooCanvas::Mapping> elegoo_canvas_rows(const std::vector<ElegooCanvas::ProjectFilament> &filaments,
+                                                      const std::vector<ElegooCanvas::Mapping>         &initial)
+{
+    std::vector<ElegooCanvas::Mapping> rows;
+    rows.reserve(filaments.size());
+    for (const ElegooCanvas::ProjectFilament &f : filaments) {
+        ElegooCanvas::Mapping m;
+        m.index = f.index;
+        auto it = std::find_if(initial.begin(), initial.end(), [&f](const ElegooCanvas::Mapping &im) { return im.index == f.index; });
+        if (it != initial.end()) {
+            m.tray     = it->tray;
+            m.source   = it->source;
+            m.warnings = it->warnings;
+        }
+        rows.push_back(std::move(m));
+    }
+    return rows;
+}
+
+int elegoo_canvas_nozzle_temp(const std::string &filament_preset_name)
+{
+    if (const Preset *preset = wxGetApp().preset_bundle->filaments.find_preset(filament_preset_name, false); preset != nullptr)
+        if (const auto *opt = preset->config.option<ConfigOptionInts>("nozzle_temperature"); opt != nullptr && !opt->values.empty())
+            return opt->values.front();
+    return 0;
+}
+
+std::vector<std::string> elegoo_canvas_mapping_warnings(const ElegooCanvas::ProjectFilament &f, const ElegooCanvas::Tray &t,
+                                                        int nozzle_temp)
+{
+    std::vector<std::string> warnings;
+    if (upper_trim(t.filament_type) != upper_trim(f.type))
+        warnings.push_back("type_mismatch");
+    if (nozzle_temp > 0 && t.min_nozzle_temp > 0 && t.max_nozzle_temp > 0 &&
+        (nozzle_temp < t.min_nozzle_temp || nozzle_temp > t.max_nozzle_temp))
+        warnings.push_back("temp_out_of_range");
+    return warnings;
+}
+
 ElegooCanvasMappingDialog::ElegooCanvasMappingDialog(wxWindow                                         *parent,
                                                      const std::vector<ElegooCanvas::ProjectFilament> &filaments,
                                                      const ElegooCanvas::Info                         &info,
@@ -109,29 +197,12 @@ ElegooCanvasMappingDialog::ElegooCanvasMappingDialog(wxWindow                   
     , m_info(info)
 {
     // Nozzle temperature of each filament's preset, for the tray range warning.
-    const PresetCollection &filament_presets = wxGetApp().preset_bundle->filaments;
     m_nozzle_temps.reserve(m_filaments.size());
-    for (const ElegooCanvas::ProjectFilament &f : m_filaments) {
-        int temp = 0;
-        if (const Preset *preset = filament_presets.find_preset(f.name, false); preset != nullptr)
-            if (const auto *opt = preset->config.option<ConfigOptionInts>("nozzle_temperature"); opt != nullptr && !opt->values.empty())
-                temp = opt->values.front();
-        m_nozzle_temps.push_back(temp);
-    }
+    for (const ElegooCanvas::ProjectFilament &f : m_filaments)
+        m_nozzle_temps.push_back(elegoo_canvas_nozzle_temp(f.name));
 
     // One mapping per filament, in project order, taken from `initial` by index.
-    m_mappings.reserve(m_filaments.size());
-    for (const ElegooCanvas::ProjectFilament &f : m_filaments) {
-        ElegooCanvas::Mapping m;
-        m.index = f.index;
-        auto it = std::find_if(initial.begin(), initial.end(), [&f](const ElegooCanvas::Mapping &im) { return im.index == f.index; });
-        if (it != initial.end()) {
-            m.tray     = it->tray;
-            m.source   = it->source;
-            m.warnings = it->warnings;
-        }
-        m_mappings.push_back(std::move(m));
-    }
+    m_mappings = elegoo_canvas_rows(m_filaments, initial);
     drop_unusable_trays();
 
     const int em  = em_unit();
@@ -297,17 +368,16 @@ void ElegooCanvasMappingDialog::update_row_warning(size_t row)
     m.warnings.clear();
     wxString text;
     if (t != nullptr) {
-        if (upper_trim(t->filament_type) != upper_trim(f.type)) {
-            m.warnings.push_back("type_mismatch");
-            text = format_wxstr(_L("Type mismatch: the project uses %1%, the tray holds %2%."), f.type, t->filament_type);
-        }
         const int temp = m_nozzle_temps[row];
-        if (temp > 0 && t->min_nozzle_temp > 0 && t->max_nozzle_temp > 0 && (temp < t->min_nozzle_temp || temp > t->max_nozzle_temp)) {
-            m.warnings.push_back("temp_out_of_range");
+        m.warnings     = elegoo_canvas_mapping_warnings(f, *t, temp);
+        for (const std::string &w : m.warnings) {
             if (!text.empty())
                 text += "\n";
-            text += format_wxstr(_L("Nozzle temperature %1%℃ is outside the tray's range (%2%-%3%℃)."), temp, t->min_nozzle_temp,
-                                 t->max_nozzle_temp);
+            if (w == "type_mismatch")
+                text += format_wxstr(_L("Type mismatch: the project uses %1%, the tray holds %2%."), f.type, t->filament_type);
+            else if (w == "temp_out_of_range")
+                text += format_wxstr(_L("Nozzle temperature %1%℃ is outside the tray's range (%2%-%3%℃)."), temp, t->min_nozzle_temp,
+                                     t->max_nozzle_temp);
         }
     }
     Row &r = m_rows[row];

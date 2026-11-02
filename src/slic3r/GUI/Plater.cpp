@@ -16233,8 +16233,6 @@ void Plater::reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &
 static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig &printer_cfg, const std::vector<int> &plate_filaments,
                                         PrintHostUpload &upload_data)
 {
-    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
-
     ElegooCanvas::Info info;
     wxString           error;
     if (!elegoo_canvas_read_info(printer_cfg, info, error)) {
@@ -16246,41 +16244,12 @@ static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig
     }
 
     // The plate's filaments; index = position in the project (= the G-code T number slot_map's t refers to).
-    const std::vector<std::string> &names    = preset_bundle->filament_presets;
-    const auto                     *colours  = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
-    const PresetCollection         &fil_coll = preset_bundle->filaments;
-    std::vector<size_t>             positions;
-    for (int id : plate_filaments) // 1-based, sorted and unique
-        if (id >= 1 && static_cast<size_t>(id) <= names.size())
-            positions.push_back(static_cast<size_t>(id - 1));
-    if (positions.empty())
-        for (size_t i = 0; i < names.size(); ++i)
-            positions.push_back(i);
-    std::vector<ElegooCanvas::ProjectFilament> filaments;
-    filaments.reserve(positions.size());
-    for (size_t i : positions) {
-        ElegooCanvas::ProjectFilament f;
-        f.index = static_cast<int>(i);
-        f.name  = names[i];
-        if (const Preset *preset = fil_coll.find_preset(names[i], false); preset != nullptr) {
-            f.filament_id = preset->filament_id;
-            f.setting_id  = preset->setting_id;
-            f.vendor      = preset->vendor != nullptr ? preset->vendor->name : std::string();
-            f.alias       = preset->alias;
-            if (const auto *type = preset->config.option<ConfigOptionStrings>("filament_type"); type != nullptr && !type->values.empty())
-                f.type = type->values.front();
-        }
-        if (colours != nullptr && i < colours->values.size())
-            f.color = colours->values[i];
-        filaments.push_back(std::move(f));
-    }
-
-    ElegooCanvas::MappingStore store(boost::filesystem::path(data_dir()) / "user" / "filament_mms_mapping.json");
-    store.load();
+    const std::vector<ElegooCanvas::ProjectFilament> filaments = elegoo_canvas_project_filaments(plate_filaments);
+    ElegooCanvas::MappingStore                       store     = elegoo_canvas_mapping_store();
 
     // Pre-fill: the API-set mapping for this project, else saved choices and the matcher.
     CanvasState &state = CanvasState::get();
-    state.reset_if_project_changed(CanvasState::make_project_key(into_u8(plater->get_project_filename(".3mf")), names.size()));
+    state.reset_if_project_changed(elegoo_canvas_project_key());
     std::vector<ElegooCanvas::Mapping> initial = !state.api_mapping.empty() ? state.api_mapping
                                                                              : ElegooCanvas::auto_match(filaments, info, store);
 

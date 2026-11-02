@@ -26,17 +26,26 @@
 #include <miniz.h>                        // plate_render: RGBA -> PNG in memory
 #include "libslic3r/FlushVolCalc.hpp"      // project scope: g_max_flush_volume bound
 #include "slic3r/GUI/WipeTowerDialog.hpp"  // project scope: is_flush_config_modified
+#include "slic3r/GUI/ElegooCanvasGate.hpp"          // CANVAS: elegoo_canvas_enabled
+#include "slic3r/GUI/ElegooCanvasMappingDialog.hpp" // CANVAS: shared project-filament/mapping helpers
+#include "slic3r/GUI/ElegooCanvasState.hpp"         // CANVAS: last slot read + API-set mapping
+#include "slic3r/Utils/ElegooCanvas.hpp"
+#include "slic3r/Utils/ElegooCanvasMatch.hpp"
+#include "slic3r/Utils/ElegooLink.hpp"              // CANVAS: get_canvas_info
 
 #include <algorithm>
 #include <cmath>
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cstdint>
 #include <deque>
 #include <fstream>
 #include <future>
+#include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -278,7 +287,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
             {"objects", objects},
@@ -2281,6 +2290,252 @@ Response Controller::handle_put_object_plate(uint64_t id, const std::string &bod
     return { 200, r };
 }
 
+// --- Elegoo CANVAS: printer slots and the filament slot mapping ----------------
+// The MQTT read runs on the io thread (dispatch is never on the GUI thread); run_on_ui only reads the presets and the
+// project and reads/writes CanvasState, which is GUI-thread-only.
+
+static const char *canvas_source_name(ElegooCanvas::MatchSource s)
+{
+    switch (s) {
+    case ElegooCanvas::MatchSource::Saved:   return "saved";
+    case ElegooCanvas::MatchSource::Matched: return "matched";
+    case ElegooCanvas::MatchSource::User:    return "user";
+    case ElegooCanvas::MatchSource::Api:     return "api";
+    case ElegooCanvas::MatchSource::None:    break;
+    }
+    return "none";
+}
+
+// A JSON integer that fits an int.
+static bool canvas_json_int(const nlohmann::json &v, int &out)
+{
+    if (v.is_number_unsigned()) {
+        const uint64_t u = v.get<uint64_t>();
+        if (u > static_cast<uint64_t>(std::numeric_limits<int>::max()))
+            return false;
+        out = static_cast<int>(u);
+        return true;
+    }
+    if (v.is_number_integer()) {
+        const int64_t i = v.get<int64_t>();
+        if (i < std::numeric_limits<int>::min() || i > std::numeric_limits<int>::max())
+            return false;
+        out = static_cast<int>(i);
+        return true;
+    }
+    return false;
+}
+
+// GET /printer/slot_mapping body for `info`: every project filament with its tray. The API-set mapping when it
+// belongs to the open project (the send flow's rule), else saved choices and the matcher. Warnings are recomputed
+// against the tray each row points at. GUI thread only.
+static nlohmann::json canvas_mapping_json(const ElegooCanvas::Info &info)
+{
+    const std::vector<ElegooCanvas::ProjectFilament> filaments = elegoo_canvas_project_filaments({});
+    const CanvasState                               &state     = CanvasState::get();
+    std::vector<ElegooCanvas::Mapping>               mappings;
+    if (state.project_key == elegoo_canvas_project_key() && !state.api_mapping.empty())
+        mappings = elegoo_canvas_rows(filaments, state.api_mapping);
+    else
+        mappings = elegoo_canvas_rows(filaments, ElegooCanvas::auto_match(filaments, info, elegoo_canvas_mapping_store()));
+
+    nlohmann::json rows = nlohmann::json::array();
+    for (size_t i = 0; i < filaments.size(); ++i) {
+        const ElegooCanvas::ProjectFilament &f    = filaments[i];
+        ElegooCanvas::Mapping               &m    = mappings[i];
+        nlohmann::json                       tray = nullptr;
+        m.warnings.clear();
+        if (m.tray) {
+            const ElegooCanvas::Tray *t = info.find(m.tray->first, m.tray->second);
+            if (t != nullptr)
+                m.warnings = elegoo_canvas_mapping_warnings(f, *t, elegoo_canvas_nozzle_temp(f.name));
+            tray = {{"canvas_id", m.tray->first},
+                    {"tray_id", m.tray->second},
+                    {"label", t != nullptr ? nlohmann::json(t->label()) : nlohmann::json(nullptr)}};
+        }
+        rows.push_back({{"index", f.index},
+                        {"type", f.type},
+                        {"name", f.name},
+                        {"color", f.color},
+                        {"tray", tray},
+                        {"source", canvas_source_name(m.source)},
+                        {"warnings", m.warnings}});
+    }
+    const std::vector<std::string> problems = ElegooCanvas::validate(mappings, info);
+    return {{"supported", true}, {"filaments", rows}, {"valid", problems.empty()}, {"problems", problems}};
+}
+
+bool Controller::read_canvas_slots(bool use_cached, ElegooCanvas::Info &info, nlohmann::json &unsupported)
+{
+    auto unsupported_json = [](const std::string &reason, const std::string &message) {
+        return nlohmann::json{{"supported", false}, {"reason", reason}, {"message", message}};
+    };
+
+    // Gate + a copy of the printer config (and the cached read) from the GUI thread. Shared pointers, not references:
+    // a timed-out run_on_ui must not leave the GUI lambda writing into this frame.
+    auto cfg    = std::make_shared<DynamicPrintConfig>();
+    auto cached = std::make_shared<std::optional<ElegooCanvas::Info>>();
+    nlohmann::json pre = run_on_ui([cfg, cached, use_cached]() -> nlohmann::json {
+        const DynamicPrintConfig &printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+        if (!elegoo_canvas_enabled(printer))
+            return {{"gated", false}};
+        *cfg = printer;
+        if (use_cached)
+            *cached = CanvasState::get().last_info;
+        return {{"gated", true}};
+    });
+    if (!pre.value("gated", false)) {
+        unsupported = unsupported_json("not_elegoo_cc2",
+                                       "The selected printer profile is not an Elegoo Centauri Carbon 2 with multi-filament (CANVAS) support.");
+        return false;
+    }
+
+    if (cached->has_value() && (*cached)->connected()) {
+        info = **cached;
+        return true;
+    }
+
+    // Network read on this (io) thread: MQTT plus maybe the HTTP serial lookup, bounded by the session's timeouts.
+    ElegooCanvas::Session::Result result;
+    try {
+        ElegooLink link(cfg.get());
+        result = link.get_canvas_info(info);
+    } catch (const std::exception &e) {
+        result.ok         = false;
+        result.error_code = "unreachable";
+        result.message    = e.what();
+    } catch (...) {
+        result.ok         = false;
+        result.error_code = "unreachable";
+        result.message    = "unknown error";
+    }
+    if (!result.ok) {
+        unsupported = unsupported_json(result.error_code.empty() ? "unreachable" : result.error_code,
+                                       result.message.empty() ? "The printer did not answer." : result.message);
+        return false;
+    }
+    if (!info.connected()) {
+        unsupported = unsupported_json("no_canvas", "The printer reports no connected CANVAS unit.");
+        return false;
+    }
+
+    auto stored = std::make_shared<ElegooCanvas::Info>(info);
+    try {
+        run_on_ui([stored]() -> nlohmann::json {
+            CanvasState::get().last_info = *stored;
+            return nullptr;
+        });
+    } catch (const std::runtime_error &) {
+        // ui_timeout: the read itself succeeded, so answer with it; the next call reads the printer again.
+    }
+    return true;
+}
+
+// GET /printer/slots - a fresh read of the CANVAS trays.
+Response Controller::handle_printer_slots()
+{
+    ElegooCanvas::Info info;
+    nlohmann::json     unsupported;
+    if (!read_canvas_slots(false, info, unsupported))
+        return { 200, unsupported };
+    nlohmann::json j = ElegooCanvas::info_json(info);
+    j["supported"]   = true;
+    return { 200, j };
+}
+
+// GET /printer/slot_mapping - the mapping the next send pre-fills, against the last slot read (read now when none).
+Response Controller::handle_get_slot_mapping()
+{
+    ElegooCanvas::Info info;
+    nlohmann::json     unsupported;
+    if (!read_canvas_slots(true, info, unsupported))
+        return { 200, unsupported };
+    auto shared = std::make_shared<ElegooCanvas::Info>(std::move(info));
+    nlohmann::json r = run_on_ui([shared]() -> nlohmann::json { return canvas_mapping_json(*shared); });
+    return { 200, r };
+}
+
+// PUT /printer/slot_mapping  body {"mapping":[{"filament":<0-based index>,"canvas_id":int,"tray_id":int}]}
+// Replaces the API-set mapping of the open project (an empty array clears it, so the send falls back to saved choices
+// and the matcher). Drives nothing until the user sends, so it is not a sensitive write.
+Response Controller::handle_put_slot_mapping(const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 invalid_json in dispatch
+    if (!in.is_object())
+        return { 400, {{"error", "body_must_be_object"}} };
+    auto list = in.find("mapping");
+    if (list == in.end() || !list->is_array())
+        return { 400, {{"error", "mapping_must_be_array"}} };
+
+    struct Entry
+    {
+        int            filament  = 0;
+        int            canvas_id = 0;
+        int            tray_id   = 0;
+        nlohmann::json raw;
+    };
+    std::vector<Entry> entries;
+    std::set<int>      seen_filaments;
+    for (const nlohmann::json &e : *list) {
+        if (!e.is_object())
+            return { 400, {{"error", "entry_must_be_object"}, {"entry", e}} };
+        Entry entry;
+        entry.raw = e;
+        const std::pair<const char *, int *> fields[] = {{"filament", &entry.filament},
+                                                         {"canvas_id", &entry.canvas_id},
+                                                         {"tray_id", &entry.tray_id}};
+        for (const auto &field : fields) {
+            auto v = e.find(field.first);
+            if (v == e.end() || !canvas_json_int(*v, *field.second))
+                return { 400, {{"error", std::string(field.first) + "_must_be_integer"}, {"entry", e}} };
+        }
+        if (!seen_filaments.insert(entry.filament).second)
+            return { 400, {{"error", "duplicate_filament"}, {"entry", e}} };
+        entries.push_back(std::move(entry));
+    }
+
+    ElegooCanvas::Info info;
+    nlohmann::json     unsupported;
+    if (!read_canvas_slots(true, info, unsupported)) {
+        unsupported["error"] = "slots_unavailable";
+        return { 422, unsupported };
+    }
+
+    auto shared = std::make_shared<ElegooCanvas::Info>(std::move(info));
+    nlohmann::json r = run_on_ui([shared, entries]() -> nlohmann::json {
+        const ElegooCanvas::Info                         &slots     = *shared;
+        const std::vector<ElegooCanvas::ProjectFilament>  filaments = elegoo_canvas_project_filaments({}); // index = position
+        std::set<std::pair<int, int>>                     used;
+        std::vector<ElegooCanvas::Mapping>                mapping;
+        for (const Entry &e : entries) {
+            if (e.filament < 0 || static_cast<size_t>(e.filament) >= filaments.size())
+                return {{"error", "unknown_filament_index"}, {"entry", e.raw}};
+            const ElegooCanvas::Tray *t = slots.find(e.canvas_id, e.tray_id);
+            if (t == nullptr)
+                return {{"error", "unknown_tray"}, {"entry", e.raw}};
+            if (!t->ready())
+                return {{"error", "tray_not_ready"}, {"entry", e.raw}};
+            if (!used.insert({e.canvas_id, e.tray_id}).second)
+                return {{"error", "duplicate_tray"}, {"entry", e.raw}};
+            const ElegooCanvas::ProjectFilament &f = filaments[static_cast<size_t>(e.filament)];
+            ElegooCanvas::Mapping                m;
+            m.index    = e.filament;
+            m.tray     = std::make_pair(e.canvas_id, e.tray_id);
+            m.source   = ElegooCanvas::MatchSource::Api;
+            m.warnings = elegoo_canvas_mapping_warnings(f, *t, elegoo_canvas_nozzle_temp(f.name));
+            mapping.push_back(std::move(m));
+        }
+        CanvasState &state = CanvasState::get();
+        state.reset_if_project_changed(elegoo_canvas_project_key());
+        state.api_mapping = std::move(mapping);
+        api_notify(state.api_mapping.empty() ? "CANVAS slot mapping cleared" : "CANVAS slot mapping set for the next send");
+        return canvas_mapping_json(slots);
+    });
+    if (r.contains("error"))
+        return { 422, r };
+    return { 200, r };
+}
+
 Response Controller::dispatch(const Request &req)
 {
     try {
@@ -2347,6 +2602,12 @@ Response Controller::dispatch(const Request &req)
         if (is("POST", "/api/v1/orient"))       return handle_orient();
         if (is("GET",  "/api/v1/jobs/status"))  return handle_jobs_status();
         if (is("GET",  "/api/v1/plates"))       return handle_get_plates();
+        if (is("GET",  "/api/v1/printer/slots"))        return handle_printer_slots();
+        if (is("GET",  "/api/v1/printer/slot_mapping")) return handle_get_slot_mapping();
+        if (is("PUT",  "/api/v1/printer/slot_mapping")) {
+            try { return handle_put_slot_mapping(req.body); }
+            catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+        }
         if (is("POST", "/api/v1/plates")) {
             try { return handle_create_plate(req.body); }
             catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
