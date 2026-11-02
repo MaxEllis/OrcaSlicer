@@ -1,5 +1,7 @@
 #include "ElegooMqtt.hpp"
 
+#include <stdexcept>
+
 namespace Slic3r::ElegooMqtt {
 
 namespace {
@@ -78,6 +80,11 @@ std::vector<uint8_t> encode_pingreq() { return {0xC0, 0x00}; }
 
 std::vector<uint8_t> encode_disconnect() { return {0xE0, 0x00}; }
 
+[[noreturn]] static void malformed(const char *what)
+{
+    throw std::invalid_argument(std::string("mqtt: malformed packet: ") + what);
+}
+
 std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed)
 {
     consumed = 0;
@@ -90,7 +97,7 @@ std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed)
     size_t pos = 1;
     for (int i = 0;; ++i) {
         if (i == 4)
-            return std::nullopt; // malformed
+            malformed("remaining length over 4 bytes");
         if (pos >= buf.size())
             return std::nullopt;
         uint8_t digit = buf[pos++];
@@ -112,21 +119,22 @@ std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed)
 
     switch (p.type) {
     case 2: // CONNACK: session-present, return code
-        if (remaining >= 2)
-            p.return_code = body[1];
+        if (remaining < 2)
+            malformed("CONNACK too short");
+        p.return_code = body[1];
         break;
     case 3: { // PUBLISH
         if (remaining < 2)
-            break;
+            malformed("PUBLISH too short");
         const size_t tlen = u16_at(0);
         size_t off = 2;
         if (off + tlen > remaining)
-            break;
+            malformed("PUBLISH topic overruns body");
         p.topic.assign(reinterpret_cast<const char *>(body + off), tlen);
         off += tlen;
         if (((flags >> 1) & 0x03) > 0) {
             if (off + 2 > remaining)
-                break;
+                malformed("PUBLISH packet id missing");
             p.packet_id = u16_at(off);
             off += 2;
         }
@@ -135,9 +143,10 @@ std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed)
     }
     case 4: // PUBACK
     case 9: // SUBACK: packet id, then one return code per topic (first is kept)
-        if (remaining >= 2)
-            p.packet_id = u16_at(0);
-        if (p.type == 9 && remaining >= 3)
+        if (remaining < (p.type == 9 ? 3u : 2u))
+            malformed(p.type == 9 ? "SUBACK too short" : "PUBACK too short");
+        p.packet_id = u16_at(0);
+        if (p.type == 9)
             p.return_code = body[2];
         break;
     default:
