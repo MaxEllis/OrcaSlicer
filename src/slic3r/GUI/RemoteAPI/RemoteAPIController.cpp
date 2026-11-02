@@ -1974,15 +1974,17 @@ bool Controller::read_canvas_slots(bool use_cached, ElegooCanvas::Info &info, nl
 
     // Gate + a copy of the printer config (and the cached read) from the GUI thread. Shared pointers, not references:
     // a timed-out run_on_ui must not leave the GUI lambda writing into this frame.
-    auto cfg    = std::make_shared<DynamicPrintConfig>();
-    auto cached = std::make_shared<std::optional<ElegooCanvas::Info>>();
-    nlohmann::json pre = run_on_ui([cfg, cached, use_cached]() -> nlohmann::json {
+    auto cfg         = std::make_shared<DynamicPrintConfig>();
+    auto cached      = std::make_shared<std::optional<ElegooCanvas::Info>>();
+    auto printer_key = std::make_shared<std::string>();
+    nlohmann::json pre = run_on_ui([cfg, cached, printer_key, use_cached]() -> nlohmann::json {
         const DynamicPrintConfig &printer = wxGetApp().preset_bundle->printers.get_edited_preset().config;
         if (!elegoo_canvas_enabled(printer))
             return {{"gated", false}};
-        *cfg = printer;
-        if (use_cached)
-            *cached = CanvasState::get().last_info;
+        *cfg         = printer;
+        *printer_key = elegoo_canvas_printer_key(printer);
+        if (use_cached) // only a read from this printer counts; another printer's slots are no cache
+            *cached = CanvasState::get().cached_info(*printer_key);
         return {{"gated", true}};
     });
     if (!pre.value("gated", false)) {
@@ -2022,8 +2024,8 @@ bool Controller::read_canvas_slots(bool use_cached, ElegooCanvas::Info &info, nl
 
     auto stored = std::make_shared<ElegooCanvas::Info>(info);
     try {
-        run_on_ui([stored]() -> nlohmann::json {
-            CanvasState::get().last_info = *stored;
+        run_on_ui([stored, printer_key]() -> nlohmann::json {
+            CanvasState::get().store_info(*printer_key, *stored);
             return nullptr;
         });
     } catch (const std::runtime_error &) {

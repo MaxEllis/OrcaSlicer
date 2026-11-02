@@ -244,3 +244,31 @@ TEST_CASE("CanvasState drops the API mapping when the project key changes", "[el
     // Unsaved project ("") is its own key.
     CHECK(Slic3r::GUI::CanvasState::make_project_key("", 2) != key_a);
 }
+
+TEST_CASE("CanvasState slot cache is per printer", "[elegoo_canvas]")
+{
+    using Slic3r::GUI::CanvasState;
+    CanvasState state;
+    const std::string cc2_a = CanvasState::make_printer_key("Elegoo-CC2", "192.0.2.10");
+    const std::string cc2_b = CanvasState::make_printer_key("Elegoo-CC2", "192.0.2.11");
+    CHECK(cc2_a != cc2_b);
+    CHECK(CanvasState::make_printer_key("Elegoo-CC", "192.0.2.10") != cc2_a);
+
+    CHECK_FALSE(state.cached_info(cc2_a).has_value()); // nothing read yet
+
+    Info a = parse_canvas_info(one_tray_info(tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")));
+    state.store_info(cc2_a, a);
+    REQUIRE(state.cached_info(cc2_a).has_value());
+    CHECK(state.cached_info(cc2_a)->find(0, 1) != nullptr);
+    CHECK_FALSE(state.cached_info(cc2_b).has_value()); // another printer: no cache
+
+    // A read from the other printer replaces the cache; the first printer's is gone.
+    Info b = parse_canvas_info(one_tray_info(tray(3, 2, "PETG", "PETG", "#112233")));
+    state.store_info(cc2_b, b);
+    CHECK_FALSE(state.cached_info(cc2_a).has_value());
+    REQUIRE(state.cached_info(cc2_b).has_value());
+    CHECK(state.cached_info(cc2_b)->find(0, 3) != nullptr);
+
+    state.clear_info();
+    CHECK_FALSE(state.cached_info(cc2_b).has_value());
+}
