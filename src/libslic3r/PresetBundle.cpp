@@ -3205,6 +3205,13 @@ void PresetBundle::get_ams_cobox_infos(AMSComboInfo& combox_info)
         }
         auto iter = std::find_if(filaments.begin(), filaments.end(),
                                  [this, &filament_id](auto &f) { return f.is_compatible && filaments.get_preset_base(f) == &f && f.filament_id == filament_id; });
+        // Orca: same exact-preset preference as sync_ams_list (CANVAS sync names the preset; ids can be shared).
+        if (const auto *hint = ams.option<ConfigOptionStrings>("filament_preset_name"); hint != nullptr && !hint->values.empty() && !hint->values.front().empty()) {
+            auto named = std::find_if(filaments.begin(), filaments.end(), [this, &filament_id, &hint](auto &f) {
+                return f.name == hint->values.front() && f.is_compatible && filaments.get_preset_base(f) == &f && f.filament_id == filament_id; });
+            if (named != filaments.end())
+                iter = named;
+        }
         if (iter == filaments.end()) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": filament_id %1% not found or system or compatible") % filament_id;
             auto filament_type = ams.opt_string("filament_type", 0u);
@@ -3307,6 +3314,14 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto iter = std::find_if(filaments.begin(), filaments.end(), [this, &filament_id, &has_type, filament_type](auto &f) {
             has_type |= f.config.opt_string("filament_type", 0u) == filament_type;
             return f.is_compatible && filaments.get_preset_base(f) == &f && f.filament_id == filament_id; });
+        // Orca: a filament_id can be shared by several presets (Elegoo uses one per family). An entry that names the
+        // exact preset (CANVAS sync: "filament_preset_name") gets that one when it is a compatible base with this id.
+        if (const auto *hint = ams.option<ConfigOptionStrings>("filament_preset_name"); hint != nullptr && !hint->values.empty() && !hint->values.front().empty()) {
+            auto named = std::find_if(filaments.begin(), filaments.end(), [this, &filament_id, &hint](auto &f) {
+                return f.name == hint->values.front() && f.is_compatible && filaments.get_preset_base(f) == &f && f.filament_id == filament_id; });
+            if (named != filaments.end())
+                iter = named;
+        }
         if (iter == filaments.end()) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament_id %1% not found or system or compatible") % filament_id;
             if (!filament_type.empty()) {

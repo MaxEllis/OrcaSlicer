@@ -4625,6 +4625,9 @@ void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
     // Trays rarely carry a filament_code the presets know (the printer often sends ""), and PresetBundle::sync_ams_list
     // skips an entry with an empty filament_id. So resolve each tray to a preset by name/type with the matcher's rules,
     // among the printer-compatible base presets (the ones sync_ams_list looks a filament_id up in).
+    // A filament_id is NOT unique: Elegoo's profiles share one per family (every "Elegoo PETG*" and "Elegoo PET-CF"
+    // preset is EPETGB00), and sync_ams_list / the filament combo take the FIRST compatible preset with the id. So the
+    // matched preset's name travels with the tray as "filament_preset_name", which both prefer.
     std::vector<ElegooCanvas::ProjectFilament> candidates;
     for (const Preset &preset : preset_bundle->filaments) {
         if (!preset.is_compatible || preset.filament_id.empty() || preset_bundle->filaments.get_preset_base(preset) != &preset)
@@ -4632,9 +4635,15 @@ void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
         ElegooCanvas::ProjectFilament c;
         c.filament_id = preset.filament_id;
         c.setting_id  = preset.setting_id;
-        c.vendor      = preset.vendor != nullptr ? preset.vendor->name : std::string();
-        c.name        = preset.name;
-        c.alias       = preset.alias;
+        // The filament's own vendor ("Elegoo", "Generic"), not the profile bundle's: an Orca filament library preset
+        // belongs to the "OrcaFilamentLibrary" bundle whatever brand it describes.
+        if (const auto *fv = preset.config.option<ConfigOptionStrings>("filament_vendor"); fv != nullptr && !fv->values.empty())
+            c.vendor = fv->values.front();
+        if (c.vendor.empty() && preset.vendor != nullptr)
+            c.vendor = preset.vendor->name;
+        c.name    = preset.name;
+        c.alias   = preset.alias;
+        c.library = preset.m_from_orca_filament_lib;
         if (const auto *type = preset.config.option<ConfigOptionStrings>("filament_type"); type != nullptr && !type->values.empty())
             c.type = type->values.front();
         candidates.push_back(std::move(c));
@@ -4645,7 +4654,7 @@ void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
         for (const auto &tray : unit.trays) {
             if (!tray.ready())
                 continue;
-            std::string filament_id;
+            std::string filament_id, preset_name;
             std::optional<FilamentBaseInfo> base;
             if (!tray.filament_code.empty()) {
                 base = preset_bundle->get_filament_by_filament_id(tray.filament_code);
@@ -4655,6 +4664,7 @@ void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
             if (filament_id.empty()) {
                 if (const auto hit = ElegooCanvas::match_tray_preset(tray, candidates); hit.has_value()) {
                     filament_id = candidates[*hit].filament_id;
+                    preset_name = candidates[*hit].name;
                     base        = preset_bundle->get_filament_by_filament_id(filament_id);
                 } else {
                     // Nothing matches: sync_ams_list falls back to "Generic <type>" and lists it as unknown.
@@ -4663,6 +4673,8 @@ void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
             }
             DynamicPrintConfig tray_config;
             tray_config.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
+            if (!preset_name.empty())
+                tray_config.set_key_value("filament_preset_name", new ConfigOptionStrings{preset_name});
             tray_config.set_key_value("tag_uid", new ConfigOptionStrings{std::string()});
             tray_config.set_key_value("ams_id", new ConfigOptionStrings{std::to_string(tray.canvas_id)});
             tray_config.set_key_value("slot_id", new ConfigOptionStrings{std::to_string(tray.tray_id)});

@@ -350,3 +350,89 @@ TEST_CASE("match_tray_preset resolves a tray to a filament preset", "[elegoo][ca
         CHECK_FALSE(match_tray_preset(make_tray(0, 0, "Elegoo", "PLA", "PLA", "#FF0000"), {}).has_value());
     }
 }
+
+// Candidates as Sidebar::load_canvas_list builds them for a Centauri Carbon 2 (sorted by name, as the preset collection
+// is): the printer vendor's ECC2 presets, the vendor's generic preset and Orca filament library presets. Vendor = the
+// preset's filament_vendor; `library` marks Orca filament library presets. Types are the profiles' own (Elegoo's
+// PLA-CF and PETG-CF profiles inherit plain PLA / PETG), plus a PLA-CF typed generic.
+TEST_CASE("match_tray_preset on the Centauri Carbon 2 filament set", "[elegoo][canvas]")
+{
+    auto preset = [](const std::string &vendor, const std::string &name, const std::string &type, bool library = false) {
+        ProjectFilament p;
+        p.vendor  = vendor;
+        p.name    = name;
+        p.alias   = name.substr(0, name.find(" @"));
+        p.type    = type;
+        p.library = library;
+        return p;
+    };
+    const std::vector<ProjectFilament> ecc2 = {
+        preset("Elegoo", "Elegoo PET-CF @ECC2", "PET-CF"),             // 0
+        preset("Elegoo", "Elegoo PET-CF @System", "PET-CF", true),     // 1
+        preset("Elegoo", "Elegoo PETG @ECC2", "PETG"),                 // 2
+        preset("Elegoo", "Elegoo PETG @System", "PETG", true),         // 3
+        preset("Elegoo", "Elegoo PETG-CF @ECC2", "PETG"),              // 4
+        preset("Elegoo", "Elegoo PLA @ECC2", "PLA"),                   // 5
+        preset("Elegoo", "Elegoo PLA @System", "PLA", true),           // 6
+        preset("Elegoo", "Elegoo PLA Basic @ECC2", "PLA"),             // 7
+        preset("Elegoo", "Elegoo PLA+ @ECC2", "PLA"),                  // 8
+        preset("Elegoo", "Elegoo PLA-CF @ECC2", "PLA"),                // 9
+        preset("Generic", "Generic PET-CF @Elegoo Centauri", "PET-CF"), // 10
+        preset("Generic", "Generic PLA @Elegoo Centauri", "PLA"),      // 11
+        preset("Generic", "Generic PLA @System", "PLA", true),         // 12
+        preset("Generic", "Generic PLA-CF @System", "PLA-CF", true),   // 13
+    };
+    auto hit = [&](const std::string &brand, const std::string &type, const std::string &name) -> std::string {
+        const auto i = match_tray_preset(make_tray(0, 0, brand, type, name, "#FF0000"), ecc2);
+        return i ? ecc2[*i].name : std::string("<none>");
+    };
+
+    SECTION("the rig's trays (fake CC2): exact names")
+    {
+        CHECK(hit("Elegoo", "PLA", "Elegoo PLA") == "Elegoo PLA @ECC2");
+        CHECK(hit("Elegoo", "PETG", "Elegoo PETG") == "Elegoo PETG @ECC2");
+    }
+    SECTION("name with or without the vendor word, any case, dashes as spaces")
+    {
+        CHECK(hit("Elegoo", "PLA", "PLA") == "Elegoo PLA @ECC2");
+        CHECK(hit("", "PLA", "Elegoo PLA") == "Elegoo PLA @ECC2");
+        CHECK(hit("ELEGOO", "pla", "elegoo pla") == "Elegoo PLA @ECC2");
+        CHECK(hit("Elegoo", "PLA", "Elegoo PLA+") == "Elegoo PLA+ @ECC2");
+        CHECK(hit("Elegoo", "PET-CF", "Elegoo PET CF") == "Elegoo PET-CF @ECC2");
+        CHECK(hit("Elegoo", "PETG", "Elegoo PETG CF") == "Elegoo PETG-CF @ECC2");
+    }
+    SECTION("an exact name keeps within the type family (Elegoo labels its CF profiles PLA / PETG)")
+    {
+        CHECK(hit("Elegoo", "PLA-CF", "Elegoo PLA-CF") == "Elegoo PLA-CF @ECC2");
+        CHECK(hit("Elegoo", "PETG-CF", "Elegoo PETG-CF") == "Elegoo PETG-CF @ECC2");
+        // A name that belongs to another type never wins: PETG is not the PET family.
+        CHECK(hit("Elegoo", "PETG", "Elegoo PET-CF") == "Elegoo PETG @ECC2");
+        CHECK(hit("Elegoo", "PLA", "Elegoo PETG") == "Elegoo PLA @ECC2");
+    }
+    SECTION("type tier: the tray's brand, then generic; exact types only")
+    {
+        CHECK(hit("Elegoo", "PLA", "Mystery Rainbow") == "Elegoo PLA @ECC2");
+        CHECK(hit("", "PLA", "Mystery Rainbow") == "Generic PLA @Elegoo Centauri");
+        CHECK(hit("Sunlu", "PLA", "Sunlu Rainbow") == "Generic PLA @Elegoo Centauri");
+        CHECK(hit("Sunlu", "PETG", "Sunlu Rapid") == "Elegoo PETG @ECC2"); // no generic PETG here: first PETG
+        CHECK(hit("", "PLA-CF", "Something CF") == "Generic PLA-CF @System");
+        CHECK(hit("", "PET-CF", "Something") == "Generic PET-CF @Elegoo Centauri");
+    }
+    SECTION("no candidate of the tray's type")
+    {
+        CHECK(hit("Elegoo", "ASA", "Elegoo ASA") == "<none>");
+        CHECK(hit("", "ASA", "ASA") == "<none>");
+    }
+    SECTION("every hit has the tray's type or its family")
+    {
+        for (const std::string type : {"PLA", "PETG", "PET-CF", "PLA-CF"})
+            for (const std::string name : {"PLA", "PETG", "PET-CF", "Elegoo PLA", "Elegoo PETG", "Elegoo PET-CF", "X"}) {
+                const auto i = match_tray_preset(make_tray(0, 0, "Elegoo", type, name, "#FF0000"), ecc2);
+                if (!i)
+                    continue;
+                const std::string &pt = ecc2[*i].type;
+                INFO(type << " / " << name << " -> " << ecc2[*i].name);
+                CHECK((pt == type || type.rfind(pt + "-", 0) == 0 || pt.rfind(type + "-", 0) == 0));
+            }
+    }
+}
