@@ -384,6 +384,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/Plater.cpp
     GUI/Plater.hpp
     GUI/ElegooCanvasGate.hpp
+    GUI/ElegooCanvasMappingDialog.cpp
+    GUI/ElegooCanvasMappingDialog.hpp
+    GUI/ElegooCanvasState.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
     GUI/Preferences.cpp
