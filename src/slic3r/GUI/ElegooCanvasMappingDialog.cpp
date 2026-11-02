@@ -79,6 +79,17 @@ bool elegoo_canvas_read_info(const DynamicPrintConfig &printer_cfg, ElegooCanvas
         }
         shared->done.store(true);
     });
+    // If pumping the event loop below throws, the unwinding must not destroy a joinable std::thread (that calls
+    // std::terminate). Detaching is safe: the worker owns its config copy and the shared state.
+    struct DetachGuard
+    {
+        std::thread &t;
+        ~DetachGuard()
+        {
+            if (t.joinable())
+                t.detach();
+        }
+    } detach_guard{worker};
 
     {
         // Busy state: no input reaches any window (so the send cannot be re-entered), but the UI keeps painting.
@@ -93,13 +104,19 @@ bool elegoo_canvas_read_info(const DynamicPrintConfig &printer_cfg, ElegooCanvas
     worker.join();
 
     if (!shared->result.ok) {
+        CanvasState::get().clear_info();
         const std::string &msg = shared->result.message.empty() ? shared->result.error_code : shared->result.message;
         error = msg.empty() ? _L("The printer did not answer.") : from_u8(msg);
         return false;
     }
-    out                          = shared->info;
-    CanvasState::get().last_info = shared->info;
+    out = shared->info;
+    CanvasState::get().store_info(elegoo_canvas_printer_key(printer_cfg), shared->info);
     return true;
+}
+
+std::string elegoo_canvas_printer_key(const DynamicPrintConfig &printer_cfg)
+{
+    return CanvasState::make_printer_key(printer_cfg.opt_string("printer_model"), printer_cfg.opt_string("print_host"));
 }
 
 std::vector<ElegooCanvas::ProjectFilament> elegoo_canvas_project_filaments(const std::vector<int> &plate_filaments)

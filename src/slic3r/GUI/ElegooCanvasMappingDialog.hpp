@@ -29,8 +29,11 @@ namespace GUI {
 
 // Reads the CANVAS slot list for `printer_cfg` on a worker thread. The calling (GUI) thread shows a busy cursor,
 // disables every window and keeps repainting until the worker ends; nothing modal is shown from the worker.
-// On success stores the result in CanvasState::last_info too. On failure returns false with a message in `error`.
+// On success stores the result in the CanvasState slot cache too (under elegoo_canvas_printer_key(printer_cfg)); on
+// failure clears that cache and returns false with a message in `error`.
 bool elegoo_canvas_read_info(const DynamicPrintConfig &printer_cfg, ElegooCanvas::Info &out, wxString &error);
+// CanvasState::make_printer_key() for a printer config (printer_model + print_host).
+std::string elegoo_canvas_printer_key(const DynamicPrintConfig &printer_cfg);
 
 // Shared by the send flow and the Remote API (GUI thread only: they read the preset bundle and the plater).
 //

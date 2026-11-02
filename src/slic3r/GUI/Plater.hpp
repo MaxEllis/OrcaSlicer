@@ -1,6 +1,7 @@
 #ifndef slic3r_Plater_hpp_
 #define slic3r_Plater_hpp_
 
+#include <atomic>
 #include <memory>
 #include <vector>
 #include <boost/filesystem/path.hpp>
@@ -144,6 +145,8 @@ class Sidebar : public wxPanel
     bool                                    m_begin_sync_printer_status{false};
     SyncAmsInfoDialog*                      m_sync_dlg{nullptr};
     bool                                    m_canvas_sync_running{false};
+    // Cleared by ~Sidebar: a CANVAS sync result that arrives after the sidebar is gone is dropped.
+    std::shared_ptr<std::atomic<bool>>      m_alive{std::make_shared<std::atomic<bool>>(true)};
 
     void update_sync_ams_btn_enable(wxUpdateUIEvent &e);
 

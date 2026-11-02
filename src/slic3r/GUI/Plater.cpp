@@ -90,6 +90,7 @@
 #include "../Utils/ElegooCanvasMatch.hpp"
 #include "ElegooCanvasMappingDialog.hpp"
 #include "ElegooCanvasState.hpp"
+#include <atomic>
 #include <thread>
 #include "MainFrame.hpp"
 #include "format.hpp"
@@ -2302,7 +2303,7 @@ Sidebar::Sidebar(Plater *parent)
     SetSizer(sizer);
 }
 
-Sidebar::~Sidebar() {}
+Sidebar::~Sidebar() { m_alive->store(false); }
 
 void Sidebar::on_enter_image_printer_bed(wxMouseEvent &evt) {
     //p->image_printer_bed->Bind(wxEVT_LEAVE_WINDOW, &Sidebar::on_leave_image_printer_bed, this);
@@ -3845,42 +3846,65 @@ void Sidebar::sync_canvas_list()
 {
     if (m_canvas_sync_running)
         return;
-    m_canvas_sync_running = true;
     // The ElegooLink is built from a copy of the edited printer preset; the network work (MQTT, HTTP serial lookup)
     // runs on a worker thread and only the result comes back to the GUI thread.
-    DynamicPrintConfig cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    const Preset            &printer      = wxGetApp().preset_bundle->printers.get_edited_preset();
+    DynamicPrintConfig       cfg          = printer.config;
+    const std::string        printer_name = printer.name;                    // a switch meanwhile drops the result
+    const std::string        printer_key  = elegoo_canvas_printer_key(cfg); // CanvasState slot cache identity
+    std::shared_ptr<std::atomic<bool>> alive = m_alive;
+
+    m_canvas_sync_running = true;
     wxBeginBusyCursor(); // ended on the GUI thread in the CallAfter below
-    std::thread([this, cfg]() mutable {
-        auto info   = std::make_shared<ElegooCanvas::Info>();
-        auto result = std::make_shared<ElegooCanvas::Session::Result>();
-        try {
-            ElegooLink link(&cfg);
-            *result = link.get_canvas_info(*info);
-        } catch (const std::exception &e) {
-            result->ok         = false;
-            result->error_code = "unreachable";
-            result->message    = e.what();
-        } catch (...) {
-            result->ok         = false;
-            result->error_code = "unreachable";
-            result->message    = "unknown error";
-        }
-        wxGetApp().CallAfter([this, info, result]() {
-            wxEndBusyCursor();
-            m_canvas_sync_running = false;
-            if (!result->ok) {
-                MessageDialog dlg(this, from_u8(result->message), _L("Sync printer information"), wxOK);
-                dlg.ShowModal();
-                return;
+    try {
+        // Detached straight away: no code runs between creating the thread and detaching it, so no path leaves
+        // a joinable std::thread behind.
+        std::thread([this, cfg, alive, printer_name, printer_key]() mutable {
+            auto info   = std::make_shared<ElegooCanvas::Info>();
+            auto result = std::make_shared<ElegooCanvas::Session::Result>();
+            try {
+                ElegooLink link(&cfg);
+                *result = link.get_canvas_info(*info);
+            } catch (const std::exception &e) {
+                result->ok         = false;
+                result->error_code = "unreachable";
+                result->message    = e.what();
+            } catch (...) {
+                result->ok         = false;
+                result->error_code = "unreachable";
+                result->message    = "unknown error";
             }
-            load_canvas_list(*info);
-            if (wxGetApp().preset_bundle->filament_ams_list.empty()) {
-                p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::EMPTY_FILAMENT, _L("Sync printer information"));
-                return;
-            }
-            apply_synced_ams_list(nullptr, false);
-        });
-    }).detach();
+            wxGetApp().CallAfter([this, alive, info, result, printer_name, printer_key]() {
+                wxEndBusyCursor();
+                // App teardown: the sidebar (`this`) may be gone. Nothing touches `this` before these checks.
+                if (!alive->load() || wxGetApp().mainframe == nullptr || wxGetApp().plater() == nullptr ||
+                    wxGetApp().preset_bundle == nullptr)
+                    return;
+                m_canvas_sync_running = false;
+                if (wxGetApp().preset_bundle->printers.get_edited_preset().name != printer_name) {
+                    BOOST_LOG_TRIVIAL(info) << "CANVAS sync result dropped: the printer changed from " << printer_name;
+                    return;
+                }
+                if (!result->ok) {
+                    CanvasState::get().clear_info();
+                    MessageDialog dlg(this, from_u8(result->message), _L("Sync printer information"), wxOK);
+                    dlg.ShowModal();
+                    return;
+                }
+                CanvasState::get().store_info(printer_key, *info);
+                load_canvas_list(*info);
+                if (wxGetApp().preset_bundle->filament_ams_list.empty()) {
+                    p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::EMPTY_FILAMENT, _L("Sync printer information"));
+                    return;
+                }
+                apply_synced_ams_list(nullptr, false);
+            });
+        }).detach();
+    } catch (const std::exception &e) { // std::system_error: the thread could not be started
+        m_canvas_sync_running = false;
+        wxEndBusyCursor();
+        BOOST_LOG_TRIVIAL(error) << "CANVAS sync could not start: " << e.what();
+    }
 }
 
 bool Sidebar::should_show_SEMM_buttons()
