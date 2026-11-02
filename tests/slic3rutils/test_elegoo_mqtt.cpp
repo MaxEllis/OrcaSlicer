@@ -2,6 +2,7 @@
 
 #include "slic3r/Utils/ElegooMqtt.hpp"
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -162,9 +163,28 @@ TEST_CASE("remaining length uses two bytes from 128", "[elegoo_mqtt]")
     CHECK(b2[2] == 0x02);
 }
 
-TEST_CASE("decode rejects malformed remaining length", "[elegoo_mqtt]")
+TEST_CASE("decode throws on malformed packets", "[elegoo_mqtt]")
 {
     size_t consumed = 99;
-    CHECK_FALSE(decode({0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0x01}, consumed));
-    CHECK(consumed == 0);
+    // remaining length over 4 bytes
+    CHECK_THROWS_AS(decode({0x30, 0xFF, 0xFF, 0xFF, 0xFF, 0x01}, consumed), std::invalid_argument);
+    // CONNACK body too short
+    CHECK_THROWS_AS(decode({0x20, 0x01, 0x00}, consumed), std::invalid_argument);
+    // SUBACK body too short
+    CHECK_THROWS_AS(decode({0x90, 0x02, 0x00, 0x01}, consumed), std::invalid_argument);
+    // PUBACK body too short
+    CHECK_THROWS_AS(decode({0x40, 0x01, 0x00}, consumed), std::invalid_argument);
+    // PUBLISH topic length overruns body
+    CHECK_THROWS_AS(decode({0x30, 0x04, 0x00, 0x09, 'a', 'b'}, consumed), std::invalid_argument);
+    // PUBLISH body under 2 bytes
+    CHECK_THROWS_AS(decode({0x30, 0x01, 0x00}, consumed), std::invalid_argument);
+    // PUBLISH QoS 1 with packet id missing
+    CHECK_THROWS_AS(decode({0x32, 0x04, 0x00, 0x02, 'a', 'b'}, consumed), std::invalid_argument);
+
+    try {
+        decode({0x20, 0x01, 0x00}, consumed);
+        FAIL("expected throw");
+    } catch (const std::invalid_argument &e) {
+        CHECK(std::string(e.what()).rfind("mqtt: malformed packet", 0) == 0);
+    }
 }

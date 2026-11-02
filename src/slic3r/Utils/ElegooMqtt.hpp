@@ -26,8 +26,11 @@ std::vector<uint8_t> encode_puback(uint16_t packet_id);
 std::vector<uint8_t> encode_pingreq();
 std::vector<uint8_t> encode_disconnect();
 
-// Decodes the first packet in buf. Returns nullopt (consumed = 0) when buf holds less than one whole
-// packet, or when the remaining-length field is malformed (more than 4 bytes).
+// Decodes the first packet in buf.
+// - Returns nullopt (consumed = 0) ONLY when buf holds less than one whole packet (need more bytes).
+// - Throws std::invalid_argument ("mqtt: malformed packet: ...") for a corrupt stream: remaining
+//   length over 4 bytes, a CONNACK/SUBACK/PUBACK body shorter than its fixed part, or a PUBLISH whose
+//   topic or packet id overruns its body.
 std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed);
 
 } // namespace Slic3r::ElegooMqtt
