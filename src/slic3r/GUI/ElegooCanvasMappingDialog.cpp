@@ -30,6 +30,7 @@
 #include "GUI_App.hpp"
 #include "I18N.hpp"
 #include "MsgDialog.hpp"
+#include "PartPlate.hpp"
 #include "Plater.hpp"
 #include "format.hpp"
 
@@ -133,6 +134,19 @@ std::vector<ElegooCanvas::ProjectFilament> elegoo_canvas_project_filaments(const
         filaments.push_back(std::move(f));
     }
     return filaments;
+}
+
+int elegoo_canvas_send_plate_index(int plate_idx)
+{
+    return plate_idx == PLATE_ALL_IDX || plate_idx == PLATE_CURRENT_IDX ? wxGetApp().plater()->get_partplate_list().get_curr_plate_index()
+                                                                        : plate_idx;
+}
+
+std::vector<int> elegoo_canvas_send_plate_filaments(int plate_idx)
+{
+    if (PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_plate(elegoo_canvas_send_plate_index(plate_idx)); plate != nullptr)
+        return plate->get_extruders(true);
+    return {};
 }
 
 std::string elegoo_canvas_project_key()

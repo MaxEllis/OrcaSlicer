@@ -2326,12 +2326,20 @@ static bool canvas_json_int(const nlohmann::json &v, int &out)
     return false;
 }
 
-// GET /printer/slot_mapping body for `info`: every project filament with its tray. The API-set mapping when it
-// belongs to the open project (the send flow's rule), else saved choices and the matcher. Warnings are recomputed
-// against the tray each row points at. GUI thread only.
+// The filaments the next Send would map: the current plate's (the plate an API-driven Send acts on), as the send flow
+// picks them; every project filament when the plate reports none. GUI thread only.
+static std::vector<ElegooCanvas::ProjectFilament> canvas_send_filaments()
+{
+    return elegoo_canvas_project_filaments(elegoo_canvas_send_plate_filaments(PLATE_CURRENT_IDX));
+}
+
+// GET /printer/slot_mapping body for `info`: the filaments the next Send would map (canvas_send_filaments), each with
+// its tray, so "valid" means that Send can go. The API-set mapping when it belongs to the open project (the send
+// flow's rule), else saved choices and the matcher. Warnings are recomputed against the tray each row points at.
+// GUI thread only.
 static nlohmann::json canvas_mapping_json(const ElegooCanvas::Info &info)
 {
-    const std::vector<ElegooCanvas::ProjectFilament> filaments = elegoo_canvas_project_filaments({});
+    const std::vector<ElegooCanvas::ProjectFilament> filaments = canvas_send_filaments();
     const CanvasState                               &state     = CanvasState::get();
     std::vector<ElegooCanvas::Mapping>               mappings;
     if (state.project_key == elegoo_canvas_project_key() && !state.api_mapping.empty())
@@ -2362,7 +2370,11 @@ static nlohmann::json canvas_mapping_json(const ElegooCanvas::Info &info)
                         {"warnings", m.warnings}});
     }
     const std::vector<std::string> problems = ElegooCanvas::validate(mappings, info);
-    return {{"supported", true}, {"filaments", rows}, {"valid", problems.empty()}, {"problems", problems}};
+    return {{"supported", true},
+            {"plate", elegoo_canvas_send_plate_index(PLATE_CURRENT_IDX)}, // 0-based plate the next Send would use
+            {"filaments", rows},
+            {"valid", problems.empty()},
+            {"problems", problems}};
 }
 
 bool Controller::read_canvas_slots(bool use_cached, ElegooCanvas::Info &info, nlohmann::json &unsupported)
@@ -2504,11 +2516,14 @@ Response Controller::handle_put_slot_mapping(const std::string &body)
     auto shared = std::make_shared<ElegooCanvas::Info>(std::move(info));
     nlohmann::json r = run_on_ui([shared, entries]() -> nlohmann::json {
         const ElegooCanvas::Info                         &slots     = *shared;
-        const std::vector<ElegooCanvas::ProjectFilament>  filaments = elegoo_canvas_project_filaments({}); // index = position
+        // Only the filaments the next Send would map (current plate) are accepted, looked up by project index.
+        const std::vector<ElegooCanvas::ProjectFilament>  filaments = canvas_send_filaments();
         std::set<std::pair<int, int>>                     used;
         std::vector<ElegooCanvas::Mapping>                mapping;
         for (const Entry &e : entries) {
-            if (e.filament < 0 || static_cast<size_t>(e.filament) >= filaments.size())
+            auto fit = std::find_if(filaments.begin(), filaments.end(),
+                                    [&e](const ElegooCanvas::ProjectFilament &pf) { return pf.index == e.filament; });
+            if (fit == filaments.end())
                 return {{"error", "unknown_filament_index"}, {"entry", e.raw}};
             const ElegooCanvas::Tray *t = slots.find(e.canvas_id, e.tray_id);
             if (t == nullptr)
@@ -2517,7 +2532,7 @@ Response Controller::handle_put_slot_mapping(const std::string &body)
                 return {{"error", "tray_not_ready"}, {"entry", e.raw}};
             if (!used.insert({e.canvas_id, e.tray_id}).second)
                 return {{"error", "duplicate_tray"}, {"entry", e.raw}};
-            const ElegooCanvas::ProjectFilament &f = filaments[static_cast<size_t>(e.filament)];
+            const ElegooCanvas::ProjectFilament &f = *fit;
             ElegooCanvas::Mapping                m;
             m.index    = e.filament;
             m.tray     = std::make_pair(e.canvas_id, e.tray_id);
