@@ -84,6 +84,10 @@
 #include "GUI_Factories.hpp"
 #include "wxExtensions.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "../Utils/ElegooLink.hpp"
+#include "../Utils/ElegooCanvas.hpp"
+#include "ElegooCanvasGate.hpp"
+#include <thread>
 #include "MainFrame.hpp"
 #include "format.hpp"
 #include "3DScene.hpp"
@@ -2461,6 +2465,7 @@ void Sidebar::update_all_preset_comboboxes()
         //p->btn_connect_printer->Hide();
         p->m_printer_connect->Hide();
         //only show sync-ams button for BBL printer
+        p->m_bpButton_ams_filament->SetToolTip(_L("Synchronize filament list from AMS"));
         p->m_bpButton_ams_filament->Show();
         //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
@@ -2470,7 +2475,10 @@ void Sidebar::update_all_preset_comboboxes()
 
         // ORCA: show/hide sync-ams button based on filament sync mode
         auto agent = wxGetApp().getAgent();
-        if (agent && agent->get_filament_sync_mode() != FilamentSyncMode::none)
+        const bool canvas_sync = elegoo_canvas_enabled(cfg);
+        p->m_bpButton_ams_filament->SetToolTip(canvas_sync ? _L("Synchronize filament list from CANVAS") :
+                                                             _L("Synchronize filament list from AMS"));
+        if (canvas_sync || (agent && agent->get_filament_sync_mode() != FilamentSyncMode::none))
             p->m_bpButton_ams_filament->Show();
         else
             p->m_bpButton_ams_filament->Hide();
@@ -3500,6 +3508,11 @@ void Sidebar::load_ams_list(MachineObject* obj)
 
 void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
 {
+    if (!wxGetApp().preset_bundle->use_bbl_network() &&
+        elegoo_canvas_enabled(wxGetApp().preset_bundle->printers.get_edited_preset().config)) {
+        sync_canvas_list();
+        return;
+    }
     wxBusyCursor cursor;
     // Force load ams list
     auto obj = wxGetApp().getDeviceManager()->get_selected_machine();
@@ -3513,6 +3526,12 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         p->plater->pop_warning_and_go_to_device_page(printer_name, Plater::PrinterWarningType::NOT_CONNECTED, _L("Sync printer information"));
         return;
     }
+    apply_synced_ams_list(obj, is_from_big_sync_btn);
+}
+
+void Sidebar::apply_synced_ams_list(MachineObject *obj, bool is_from_big_sync_btn)
+{
+    auto & list = wxGetApp().preset_bundle->filament_ams_list;
     bool exist_at_list_one_filament =false;
     for (auto &cur : list) {
         auto temp_config    = cur.second;
@@ -3524,14 +3543,14 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         }
     }
     if (!exist_at_list_one_filament) {
-        if (!obj->is_filament_installed()) {
+        if (obj && !obj->is_filament_installed()) {
             p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::UNINSTALL_FILAMENT, _L("Sync printer information"));
             return;
         }
         p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::EMPTY_FILAMENT, _L("Sync printer information"));
         return;
     }
-    if (!wxGetApp().plater()->is_same_printer_for_connected_and_selected()) {
+    if (obj && !wxGetApp().plater()->is_same_printer_for_connected_and_selected()) {
         return;
     }
     std::string ams_filament_ids = wxGetApp().app_config->get("ams_filament_ids", p->ams_list_device);
@@ -3539,34 +3558,38 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     if (!ams_filament_ids.empty()) {
         boost::algorithm::split(list2, ams_filament_ids, boost::algorithm::is_any_of(","));
     }
-    wxGetApp().plater()->update_all_plate_thumbnails(true);//preview thumbnail for sync_dlg
-    SyncAmsInfoDialog::SyncInfo temp_info;
-    temp_info.use_dialog_pos = false;
-    temp_info.cancel_text_to_later = is_from_big_sync_btn;
-    if (m_sync_dlg == nullptr) {
-        m_sync_dlg = new SyncAmsInfoDialog(this, temp_info);
-    } else {
-        m_sync_dlg->set_info(temp_info);
-    }
-    int dlg_res{(int) wxID_CANCEL};
-    if (m_sync_dlg->is_need_show()) {
-        m_sync_dlg->deal_only_exist_ext_spool(obj);
-        if (m_sync_dlg->is_dirty_filament()) {
-            wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", false, true);
-            wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
-            dynamic_filament_list.update();
+    SyncAmsInfoDialog::SyncResult sync_result; // CANVAS (no obj): default result, direct sync, no dialog
+    int dlg_res{(int) wxID_YES};
+    if (obj) {
+        wxGetApp().plater()->update_all_plate_thumbnails(true);//preview thumbnail for sync_dlg
+        SyncAmsInfoDialog::SyncInfo temp_info;
+        temp_info.use_dialog_pos = false;
+        temp_info.cancel_text_to_later = is_from_big_sync_btn;
+        if (m_sync_dlg == nullptr) {
+            m_sync_dlg = new SyncAmsInfoDialog(this, temp_info);
+        } else {
+            m_sync_dlg->set_info(temp_info);
         }
-        m_sync_dlg->set_check_dirty_fialment(false);
-        dlg_res = m_sync_dlg->ShowModal();
-    } else {
-        dlg_res =(int) wxID_YES;
-    }
-    if (dlg_res == wxID_CANCEL)
-        return;
-    auto sync_result = m_sync_dlg->get_result();
-    if (!sync_result.is_same_printer) {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "check error: sync_result.is_same_printer value is false";
-        return;
+        dlg_res = wxID_CANCEL;
+        if (m_sync_dlg->is_need_show()) {
+            m_sync_dlg->deal_only_exist_ext_spool(obj);
+            if (m_sync_dlg->is_dirty_filament()) {
+                wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", false, true);
+                wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+                dynamic_filament_list.update();
+            }
+            m_sync_dlg->set_check_dirty_fialment(false);
+            dlg_res = m_sync_dlg->ShowModal();
+        } else {
+            dlg_res =(int) wxID_YES;
+        }
+        if (dlg_res == wxID_CANCEL)
+            return;
+        sync_result = m_sync_dlg->get_result();
+        if (!sync_result.is_same_printer) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "check error: sync_result.is_same_printer value is false";
+            return;
+        }
     }
     list2.resize(list.size());
     auto iter = list.begin();
@@ -3740,6 +3763,95 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish pop_finsish_sync_ams_dialog";
 }
 
+
+void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
+{
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    std::map<int, DynamicPrintConfig> filament_ams_list;
+    for (const auto &unit : info.units) {
+        for (const auto &tray : unit.trays) {
+            if (!tray.ready())
+                continue;
+            std::string filament_id;
+            std::optional<FilamentBaseInfo> base;
+            if (!tray.filament_code.empty()) {
+                base = preset_bundle->get_filament_by_filament_id(tray.filament_code);
+                if (base.has_value())
+                    filament_id = tray.filament_code;
+            }
+            DynamicPrintConfig tray_config;
+            tray_config.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
+            tray_config.set_key_value("tag_uid", new ConfigOptionStrings{std::string()});
+            tray_config.set_key_value("ams_id", new ConfigOptionStrings{std::to_string(tray.canvas_id)});
+            tray_config.set_key_value("slot_id", new ConfigOptionStrings{std::to_string(tray.tray_id)});
+            tray_config.set_key_value("filament_type", new ConfigOptionStrings{tray.filament_type});
+            tray_config.set_key_value("tray_name", new ConfigOptionStrings{tray.label()});
+            tray_config.set_key_value("filament_colour", new ConfigOptionStrings{tray.filament_color});
+            tray_config.set_key_value("filament_multi_colour", new ConfigOptionStrings{});
+            tray_config.set_key_value("filament_colour_type", new ConfigOptionStrings{std::string("0")});
+            tray_config.set_key_value("filament_exist", new ConfigOptionBools{true});
+            tray_config.set_key_value("filament_slot_placeholder", new ConfigOptionBools{false});
+            tray_config.set_key_value("filament_is_support", new ConfigOptionBools{base.has_value() ? base->is_support : false});
+            filament_ams_list.emplace(tray.canvas_id * 4 + tray.tray_id, std::move(tray_config));
+        }
+    }
+
+    const std::string device = "elegoo-canvas:" + into_u8(p->plater->get_selected_printer_name_in_combox());
+    const bool device_change = p->ams_list_device != device;
+    p->ams_list_device       = device;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": %1% items") % filament_ams_list.size();
+    if (preset_bundle->filament_ams_list == filament_ams_list && !device_change)
+        return;
+    preset_bundle->filament_ams_list = filament_ams_list;
+    for (auto c : p->combos_filament) {
+        c->update();
+        if (device_change)
+            c->ShowBadge(false);
+    }
+    p->combo_printer->update();
+}
+
+void Sidebar::sync_canvas_list()
+{
+    if (m_canvas_sync_running)
+        return;
+    m_canvas_sync_running = true;
+    // The ElegooLink is built from a copy of the edited printer preset; the network work (MQTT, HTTP serial lookup)
+    // runs on a worker thread and only the result comes back to the GUI thread.
+    DynamicPrintConfig cfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
+    wxBeginBusyCursor(); // ended on the GUI thread in the CallAfter below
+    std::thread([this, cfg]() mutable {
+        auto info   = std::make_shared<ElegooCanvas::Info>();
+        auto result = std::make_shared<ElegooCanvas::Session::Result>();
+        try {
+            ElegooLink link(&cfg);
+            *result = link.get_canvas_info(*info);
+        } catch (const std::exception &e) {
+            result->ok         = false;
+            result->error_code = "unreachable";
+            result->message    = e.what();
+        } catch (...) {
+            result->ok         = false;
+            result->error_code = "unreachable";
+            result->message    = "unknown error";
+        }
+        wxGetApp().CallAfter([this, info, result]() {
+            wxEndBusyCursor();
+            m_canvas_sync_running = false;
+            if (!result->ok) {
+                MessageDialog dlg(this, from_u8(result->message), _L("Sync printer information"), wxOK);
+                dlg.ShowModal();
+                return;
+            }
+            load_canvas_list(*info);
+            if (wxGetApp().preset_bundle->filament_ams_list.empty()) {
+                p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::EMPTY_FILAMENT, _L("Sync printer information"));
+                return;
+            }
+            apply_synced_ams_list(nullptr, false);
+        });
+    }).detach();
+}
 
 bool Sidebar::should_show_SEMM_buttons()
 {

@@ -1,5 +1,7 @@
 #include <catch2/catch_all.hpp>
 
+#define ELEGOO_CANVAS_GATE_NO_CONFIG
+#include "slic3r/GUI/ElegooCanvasGate.hpp"
 #include "slic3r/Utils/ElegooCanvas.hpp"
 
 #include <nlohmann/json.hpp>
@@ -165,4 +167,17 @@ TEST_CASE("info_json has the API shape", "[elegoo_canvas]")
     CHECK(word(1) == "preloaded");
     CHECK(word(2) == "loaded");
     CHECK(word(9) == "error");
+}
+
+TEST_CASE("elegoo_canvas_enabled gates on host type, CC2 model and the multi-filament flag", "[ElegooCanvas]")
+{
+    using Slic3r::elegoo_canvas_enabled;
+    CHECK(elegoo_canvas_enabled("elegoolink", true, "1"));
+    CHECK(elegoo_canvas_enabled("elegoolink", true, "\"1\""));
+    CHECK(elegoo_canvas_enabled("elegoolink", true, ""));          // key not loaded into the preset
+    CHECK_FALSE(elegoo_canvas_enabled("elegoolink", false, "1"));  // original Centauri Carbon
+    CHECK_FALSE(elegoo_canvas_enabled("elegoolink", true, "0"));
+    CHECK_FALSE(elegoo_canvas_enabled("elegoolink", true, "\"0\""));
+    CHECK_FALSE(elegoo_canvas_enabled("octoprint", true, "1"));
+    CHECK_FALSE(elegoo_canvas_enabled("", true, "1"));
 }
