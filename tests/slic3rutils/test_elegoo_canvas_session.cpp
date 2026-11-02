@@ -18,7 +18,7 @@ const char *CID = "1_PC_4242";
 
 struct Rig
 {
-    // One state per connection the session opens (get_canvas_info opens two).
+    // One state per connection the session opens (one per call; get_canvas_info uses one for both requests).
     std::vector<std::unique_ptr<FakeTransportState>> states;
     size_t                                           opened = 0;
 
@@ -36,7 +36,7 @@ struct Rig
         o.connect_timeout  = 100ms;
         o.register_timeout = 100ms;
         o.request_timeout  = 100ms;
-        return Session(Endpoint{"printer", 1883, "123456", "SN1"},
+        return Session(Endpoint{"printer", 1883, "123456", "SN1", ""},
                        [this]() -> std::unique_ptr<Transport> {
                            REQUIRE(opened < states.size());
                            return std::make_unique<FakeTransport>(states[opened++].get());
@@ -245,7 +245,7 @@ TEST_CASE("Session: connect failure is unreachable", "[elegoo_canvas_session]")
     {
         Session::Options o;
         o.client_id = CID;
-        Session s(Endpoint{"printer", 1883, "123456", "SN1"},
+        Session s(Endpoint{"printer", 1883, "123456", "SN1", ""},
                   []() -> std::unique_ptr<Transport> { throw std::runtime_error("mqtt: connect failed"); }, o);
         auto r = s.get_attributes();
         CHECK(r.error_code == "unreachable");
@@ -253,9 +253,21 @@ TEST_CASE("Session: connect failure is unreachable", "[elegoo_canvas_session]")
     }
     SECTION("unknown serial")
     {
-        Session s(Endpoint{"printer", 1883, "123456", ""},
+        Session s(Endpoint{"printer", 1883, "123456", "", ""},
                   []() -> std::unique_ptr<Transport> { FAIL("must not connect"); return nullptr; });
-        CHECK(s.get_attributes().error_code == "unreachable");
+        auto r = s.get_attributes();
+        CHECK(r.error_code == "unreachable");
+        CHECK(r.message.find("Run Test") != std::string::npos);
+    }
+    SECTION("unknown serial because the HTTP lookup failed: that reason is shown")
+    {
+        Session s(Endpoint{"printer", 1883, "123456", "", "Couldn't connect to server"},
+                  []() -> std::unique_ptr<Transport> { FAIL("must not connect"); return nullptr; });
+        auto r = s.get_attributes();
+        CHECK(r.error_code == "unreachable");
+        CHECK(r.message.find("Could not reach the printer") != std::string::npos);
+        CHECK(r.message.find("Couldn't connect to server") != std::string::npos);
+        CHECK(r.message.find("Run Test") == std::string::npos);
     }
 }
 
@@ -283,7 +295,7 @@ TEST_CASE("Session::start_print publishes 1020 with filename and config", "[eleg
 TEST_CASE("Session uses a fresh request id per call and a random 1_PC_ client id", "[elegoo_canvas_session]")
 {
     Session::Options o;
-    Session          s(Endpoint{"h", 1883, "a", "SN"}, {}, o);
+    Session          s(Endpoint{"h", 1883, "a", "SN", ""}, {}, o);
     const auto      &cid = s.client_id();
     REQUIRE(cid.size() == 9);
     CHECK(cid.rfind("1_PC_", 0) == 0);
@@ -327,16 +339,34 @@ TEST_CASE("firmware_below", "[elegoo_canvas_session]")
     CHECK_FALSE(firmware_below("1", 1, 1)); // no minor: not parsable as major.minor
 }
 
-TEST_CASE("get_canvas_info: attributes then status, firmware filled", "[elegoo_canvas_session]")
+// The second request on a connection is the client's packet 4.
+void script_second_request(FakeTransportState &s) { s.feed({0x40, 0x02, 0x00, 0x04}); }
+
+size_t count_packets(const FakeTransportState &s, int type)
+{
+    size_t               n   = 0;
+    std::vector<uint8_t> buf = s.outbound;
+    for (;;) {
+        size_t consumed = 0;
+        auto   p        = decode(buf, consumed);
+        if (!p)
+            break;
+        if (p->type == type)
+            ++n;
+        buf.erase(buf.begin(), buf.begin() + std::ptrdiff_t(consumed));
+    }
+    return n;
+}
+
+TEST_CASE("get_canvas_info: attributes then status on one connection, firmware filled", "[elegoo_canvas_session]")
 {
     Rig  rig;
     auto &a = rig.next_state();
     script_registered(a);
     a.feed(encode_publish(101, response_topic(),
                           reply(7, 1001, json{{"error_code", 0}, {"software_version", {{"ota_version", "1.1.2"}}}}).dump()));
-    auto &b = rig.next_state();
-    script_registered(b);
-    b.feed(encode_publish(101, response_topic(), reply(8, 2005, json{{"error_code", 0}, {"canvas_info", canvas_info_sample()}}).dump()));
+    script_second_request(a);
+    a.feed(encode_publish(102, response_topic(), reply(8, 2005, json{{"error_code", 0}, {"canvas_info", canvas_info_sample()}}).dump()));
 
     Info info;
     auto r = rig.make().get_canvas_info(info);
@@ -344,8 +374,18 @@ TEST_CASE("get_canvas_info: attributes then status, firmware filled", "[elegoo_c
     CHECK(info.firmware == "1.1.2");
     REQUIRE(info.units.size() == 1);
     CHECK(info.units[0].trays.size() == 1);
-    CHECK(json::parse(publishes(a)[1].payload)["method"] == 1001);
-    CHECK(json::parse(publishes(b)[1].payload)["method"] == 2005);
+
+    // One CONNECT, one registration, two requests, one DISCONNECT.
+    CHECK(rig.opened == 1);
+    CHECK(count_packets(a, 1) == 1);
+    auto pubs = publishes(a);
+    REQUIRE(pubs.size() == 3);
+    CHECK(pubs[0].topic == "elegoo/SN1/api_register");
+    CHECK(json::parse(pubs[1].payload) == json{{"id", 7}, {"method", 1001}, {"params", json::object()}});
+    CHECK(json::parse(pubs[2].payload) == json{{"id", 8}, {"method", 2005}, {"params", json::object()}});
+    auto disc = encode_disconnect();
+    CHECK(std::vector<uint8_t>(a.outbound.end() - std::ptrdiff_t(disc.size()), a.outbound.end()) == disc);
+    CHECK(a.closed);
 }
 
 TEST_CASE("get_canvas_info: old firmware is firmware_too_old; missing version does not block", "[elegoo_canvas_session]")
@@ -361,7 +401,9 @@ TEST_CASE("get_canvas_info: old firmware is firmware_too_old; missing version do
         auto r = rig.make().get_canvas_info(info);
         CHECK(r.error_code == "firmware_too_old");
         CHECK(r.message.find("1.0.9") != std::string::npos);
-        CHECK(rig.opened == 1); // no status request
+        CHECK(rig.opened == 1);
+        CHECK(publishes(a).size() == 2); // register + 1001, no status request
+        CHECK(a.closed);
     }
     SECTION("no software_version")
     {
@@ -369,9 +411,8 @@ TEST_CASE("get_canvas_info: old firmware is firmware_too_old; missing version do
         auto &a = rig.next_state();
         script_registered(a);
         a.feed(encode_publish(101, response_topic(), reply(7, 1001, json{{"error_code", 0}}).dump()));
-        auto &b = rig.next_state();
-        script_registered(b);
-        b.feed(encode_publish(101, response_topic(), reply(8, 2005, json{{"error_code", 0}, {"canvas_info", canvas_info_sample()}}).dump()));
+        script_second_request(a);
+        a.feed(encode_publish(102, response_topic(), reply(8, 2005, json{{"error_code", 0}, {"canvas_info", canvas_info_sample()}}).dump()));
         Info info;
         auto r = rig.make().get_canvas_info(info);
         REQUIRE(r.ok);
@@ -383,12 +424,52 @@ TEST_CASE("get_canvas_info: old firmware is firmware_too_old; missing version do
         auto &a = rig.next_state();
         script_registered(a);
         a.feed(encode_publish(101, response_topic(), reply(7, 1001, json{{"error_code", 0}}).dump()));
-        auto &b = rig.next_state();
-        script_registered(b);
-        b.feed(encode_publish(101, response_topic(), reply(8, 2005, json{{"error_code", 0}}).dump()));
+        script_second_request(a);
+        a.feed(encode_publish(102, response_topic(), reply(8, 2005, json{{"error_code", 0}}).dump()));
         Info info;
         CHECK(rig.make().get_canvas_info(info).error_code == "printer_error");
+        CHECK(a.closed);
     }
+    SECTION("status request times out after the attributes answered")
+    {
+        Rig  rig;
+        auto &a = rig.next_state();
+        script_registered(a);
+        a.feed(encode_publish(101, response_topic(), reply(7, 1001, json{{"error_code", 0}}).dump()));
+        script_second_request(a);
+        Info info;
+        auto r = rig.make().get_canvas_info(info);
+        CHECK(r.error_code == "timeout");
+        CHECK(r.message.find("2005") != std::string::npos);
+        CHECK(a.closed);
+    }
+}
+
+TEST_CASE("Session: a non-string registration error is registration_refused, not unreachable", "[elegoo_canvas_session]")
+{
+    for (const json &err : {json(5), json::object(), json(nullptr), json::array({"ok"})}) {
+        Rig  rig;
+        auto &s = rig.next_state();
+        script_handshake(s);
+        script_register(s, json{{"client_id", CID}, {"error", err}});
+        auto r = rig.make().get_attributes();
+        CHECK_FALSE(r.ok);
+        CHECK(r.error_code == "registration_refused");
+        CHECK(r.message.find("could not be read") != std::string::npos);
+        CHECK(publishes(s).size() == 1); // no request
+        CHECK(s.closed);
+    }
+}
+
+TEST_CASE("Session: a registration reply without error is refused with no reason given", "[elegoo_canvas_session]")
+{
+    Rig  rig;
+    auto &s = rig.next_state();
+    script_handshake(s);
+    script_register(s, json{{"client_id", CID}});
+    auto r = rig.make().get_attributes();
+    CHECK(r.error_code == "registration_refused");
+    CHECK(r.message.find("no reason given") != std::string::npos);
 }
 
 TEST_CASE("start_print_config maps the send options", "[elegoo_canvas_session]")

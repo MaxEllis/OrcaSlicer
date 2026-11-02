@@ -3,7 +3,10 @@
 
 // Short-lived MQTT sessions with an Elegoo Centauri Carbon 2 (CC2): read printer attributes and
 // CANVAS status, start a print. Standalone: depends on ElegooMqtt, ElegooCanvas, nlohmann and std only.
-// Each call connects, subscribes, registers, sends one request, waits for its reply and disconnects.
+// Each call connects, subscribes, registers, sends its request(s), waits for the reply to each and disconnects.
+// Worst case per call: connect + subscribe (5 s each), registration (3 s), then 10 s per request; get_canvas_info
+// sends two requests on the one connection (about 33 s at most against a printer that stops answering mid-way,
+// 5 s when it is switched off).
 
 #include <chrono>
 #include <cstdint>
@@ -24,6 +27,9 @@ struct Endpoint
     uint16_t    port = 1883;
     std::string access_code;
     std::string serial;
+    // Why `serial` is empty (e.g. the HTTP lookup could not reach the printer); shown instead of the generic
+    // "serial number is unknown" message.
+    std::string serial_error;
 };
 
 class Session
@@ -58,14 +64,21 @@ public:
     // method 1020, params {storage_media:"local", filename, config}
     Result start_print(const std::string &filename, const nlohmann::json &config);
 
-    // Attributes, then CANVAS status: fills `out` (firmware included). Fails with "firmware_too_old"
-    // when the firmware version parses below 1.1; an unknown version does not block.
+    // Attributes, then CANVAS status, on ONE connection and registration: fills `out` (firmware included). Fails
+    // with "firmware_too_old" when the firmware version parses below 1.1 (no status request then); an unknown
+    // version does not block.
     Result get_canvas_info(Info &out);
 
     const std::string &client_id() const { return m_client_id; }
 
 private:
+    // Sends one request on the connected, registered session and waits for its reply.
+    using Request = std::function<Result(int method, const nlohmann::json &params)>;
+
     Result call(int method, const nlohmann::json &params);
+    // Connects, subscribes, registers once, runs `body` (which sends its requests through the Request it is given)
+    // and disconnects on every path. An MQTT failure inside `body` becomes "timeout" / "unreachable".
+    Result run(const std::function<Result(const Request &)> &body);
 
     Endpoint         m_endpoint;
     TransportFactory m_make_transport;

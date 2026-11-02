@@ -422,6 +422,8 @@ namespace Slic3r {
             wxString msg;
             if (elegoo_cc2_test(msg))
                 ep.serial = lookup_cc2_serial_impl(m_printerModel, m_host, m_apikey);
+            else // e.g. the printer is off: say so rather than "serial number is unknown"
+                ep.serial_error = msg.empty() ? _u8L("CC2 device not detected") : GUI::into_u8(msg);
         }
         return ep;
     }
