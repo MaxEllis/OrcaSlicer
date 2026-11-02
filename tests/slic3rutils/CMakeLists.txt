@@ -3,6 +3,7 @@ add_executable(${_TEST_NAME}_tests
     ${_TEST_NAME}_tests_main.cpp
     test_elegoo_mqtt.cpp
     test_elegoo_canvas.cpp
+    test_elegoo_canvas_match.cpp
     )
 
 if (MSVC)
