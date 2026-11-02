@@ -3770,6 +3770,24 @@ void Sidebar::apply_synced_ams_list(MachineObject *obj, bool is_from_big_sync_bt
 void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
 {
     PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    // Trays rarely carry a filament_code the presets know (the printer often sends ""), and PresetBundle::sync_ams_list
+    // skips an entry with an empty filament_id. So resolve each tray to a preset by name/type with the matcher's rules,
+    // among the printer-compatible base presets (the ones sync_ams_list looks a filament_id up in).
+    std::vector<ElegooCanvas::ProjectFilament> candidates;
+    for (const Preset &preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || preset.filament_id.empty() || preset_bundle->filaments.get_preset_base(preset) != &preset)
+            continue;
+        ElegooCanvas::ProjectFilament c;
+        c.filament_id = preset.filament_id;
+        c.setting_id  = preset.setting_id;
+        c.vendor      = preset.vendor != nullptr ? preset.vendor->name : std::string();
+        c.name        = preset.name;
+        c.alias       = preset.alias;
+        if (const auto *type = preset.config.option<ConfigOptionStrings>("filament_type"); type != nullptr && !type->values.empty())
+            c.type = type->values.front();
+        candidates.push_back(std::move(c));
+    }
+
     std::map<int, DynamicPrintConfig> filament_ams_list;
     for (const auto &unit : info.units) {
         for (const auto &tray : unit.trays) {
@@ -3781,6 +3799,15 @@ void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
                 base = preset_bundle->get_filament_by_filament_id(tray.filament_code);
                 if (base.has_value())
                     filament_id = tray.filament_code;
+            }
+            if (filament_id.empty()) {
+                if (const auto hit = ElegooCanvas::match_tray_preset(tray, candidates); hit.has_value()) {
+                    filament_id = candidates[*hit].filament_id;
+                    base        = preset_bundle->get_filament_by_filament_id(filament_id);
+                } else {
+                    // Nothing matches: sync_ams_list falls back to "Generic <type>" and lists it as unknown.
+                    filament_id = UNKNOWN_FILAMENT_ID;
+                }
             }
             DynamicPrintConfig tray_config;
             tray_config.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
@@ -16240,6 +16267,11 @@ static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig
                                            "the job was not sent.\n%1%"),
                                         error),
                    false);
+        return false;
+    }
+    if (!info.connected()) {
+        // Every tray would be "not ready"; a mapping dialog with nothing to pick helps no one.
+        show_error(plater, _L("The printer reports no connected CANVAS. Use Upload only, or send a single-filament project."), false);
         return false;
     }
 

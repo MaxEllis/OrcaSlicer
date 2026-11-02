@@ -61,6 +61,14 @@ std::vector<Mapping>     auto_match(const std::vector<ProjectFilament> &, const 
 // Filament numbers in messages are 1-based (Mapping::index + 1).
 std::vector<std::string> validate(const std::vector<Mapping> &, const Info &);
 
+// The filament preset a tray stands for, for the sidebar sync. `presets` describe the candidate presets
+// (vendor, name, alias, type are read; `index` and the rest are ignored). Same passes as ElegooSlicer's
+// matchFilamentPreset: standardised name, then name-equals-type, then type. Within a pass the best candidate is
+// the one whose vendor equals the tray's brand, then vendor "Elegoo", then a generic preset (vendor
+// "OrcaFilamentLibrary" or "Generic" in the name), then any other; ties keep list order.
+// Returns the position in `presets`, or nullopt (tray without a name, or nothing matches).
+std::optional<size_t> match_tray_preset(const Tray &tray, const std::vector<ProjectFilament> &presets);
+
 }} // namespace Slic3r::ElegooCanvas
 
 #endif
