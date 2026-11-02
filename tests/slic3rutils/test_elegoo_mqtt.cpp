@@ -1,7 +1,10 @@
 #include <catch2/catch_all.hpp>
 
 #include "slic3r/Utils/ElegooMqtt.hpp"
+#include "elegoo_fake_transport.hpp"
 
+#include <chrono>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -187,4 +190,156 @@ TEST_CASE("decode throws on malformed packets", "[elegoo_mqtt]")
     } catch (const std::invalid_argument &e) {
         CHECK(std::string(e.what()).rfind("mqtt: malformed packet", 0) == 0);
     }
+}
+
+namespace {
+
+using namespace std::chrono_literals;
+
+struct ClientRig
+{
+    FakeTransportState state;
+    Client             client;
+    ClientRig() : client(std::make_unique<FakeTransport>(&state)) {}
+    void connect_ok()
+    {
+        state.feed({0x20, 0x02, 0x00, 0x00});
+        client.connect("h", 1883, "cid", "u", "p", 50ms);
+    }
+};
+
+std::vector<uint8_t> publish_qos1(uint16_t id, const std::string &topic, const std::string &payload)
+{
+    // encode_publish builds a QoS 1 PUBLISH (fixed header 0x32).
+    return encode_publish(id, topic, payload);
+}
+
+} // namespace
+
+TEST_CASE("Client::connect sends CONNECT and accepts CONNACK 0", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    CHECK(r.state.outbound == encode_connect("cid", "u", "p", 60));
+}
+
+TEST_CASE("Client::connect throws on refusal and timeout and closes", "[elegoo_mqtt][client]")
+{
+    {
+        ClientRig r;
+        r.state.feed({0x20, 0x02, 0x00, 0x05});
+        CHECK_THROWS_WITH(r.client.connect("h", 1, "c", "u", "p", 50ms), "mqtt: connection refused (5)");
+        CHECK(r.state.closed);
+    }
+    {
+        ClientRig r;
+        CHECK_THROWS_WITH(r.client.connect("h", 1, "c", "u", "p", 50ms), "mqtt: timeout waiting for CONNACK");
+        CHECK(r.state.closed);
+    }
+}
+
+TEST_CASE("Client::subscribe waits for the matching SUBACK", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.outbound.clear();
+    r.state.feed({0x90, 0x03, 0x00, 0x01, 0x01});
+    r.client.subscribe({"a/b"}, 50ms);
+    CHECK(r.state.outbound == encode_subscribe(1, {"a/b"}));
+
+    CHECK_THROWS_WITH(r.client.subscribe({"c"}, 50ms), "mqtt: timeout waiting for SUBACK");
+    CHECK(r.state.closed);
+}
+
+TEST_CASE("Client::publish waits for the matching PUBACK", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.outbound.clear();
+    r.state.feed({0x40, 0x02, 0x00, 0x01});
+    r.client.publish("t", "hello", 50ms);
+    CHECK(r.state.outbound == encode_publish(1, "t", "hello"));
+
+    // wrong packet id is not an ack
+    r.state.feed({0x40, 0x02, 0x00, 0x09});
+    CHECK_THROWS_WITH(r.client.publish("t", "x", 50ms), "mqtt: timeout waiting for PUBACK");
+}
+
+TEST_CASE("Client::wait_message returns a PUBLISH and answers PUBACK", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.outbound.clear();
+    r.state.feed(publish_qos1(7, "x/y", "payload"));
+    auto m = r.client.wait_message(50ms);
+    REQUIRE(m.has_value());
+    CHECK(m->first == "x/y");
+    CHECK(m->second == "payload");
+    CHECK(r.state.outbound == encode_puback(7));
+    CHECK_FALSE(r.client.wait_message(10ms).has_value());
+    CHECK_FALSE(r.state.closed);
+}
+
+TEST_CASE("Client::wait_message skips PINGRESP", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    auto pub = publish_qos1(3, "t", "p");
+    std::vector<uint8_t> chunk = {0xD0, 0x00};
+    chunk.insert(chunk.end(), pub.begin(), pub.end());
+    r.state.feed(chunk);
+    auto m = r.client.wait_message(50ms);
+    REQUIRE(m.has_value());
+    CHECK(m->second == "p");
+}
+
+TEST_CASE("Client reassembles a PUBLISH split across reads", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    auto pub = publish_qos1(4, "topic", "a longer payload");
+    r.state.feed(std::vector<uint8_t>(pub.begin(), pub.begin() + 5));
+    r.state.feed(std::vector<uint8_t>(pub.begin() + 5, pub.end()));
+    auto m = r.client.wait_message(50ms);
+    REQUIRE(m.has_value());
+    CHECK(m->first == "topic");
+    CHECK(m->second == "a longer payload");
+}
+
+TEST_CASE("Client keeps a PUBLISH that arrives while waiting for an ack", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.feed(publish_qos1(5, "t", "early"));
+    r.state.feed({0x90, 0x03, 0x00, 0x01, 0x01});
+    r.client.subscribe({"t"}, 50ms);
+    auto m = r.client.wait_message(10ms);
+    REQUIRE(m.has_value());
+    CHECK(m->second == "early");
+}
+
+TEST_CASE("Client turns a corrupt stream into mqtt: runtime_error and closes", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.feed({0x20, 0x01, 0x00});
+    try {
+        r.client.wait_message(50ms);
+        FAIL("expected throw");
+    } catch (const std::runtime_error &e) {
+        CHECK(std::string(e.what()).rfind("mqtt:", 0) == 0);
+    }
+    CHECK(r.state.closed);
+}
+
+TEST_CASE("Client::disconnect sends DISCONNECT once and is idempotent", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    r.state.outbound.clear();
+    r.client.disconnect();
+    CHECK(r.state.outbound == encode_disconnect());
+    CHECK(r.state.closed);
+    r.client.disconnect();
+    CHECK(r.state.outbound == encode_disconnect());
 }
