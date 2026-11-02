@@ -677,6 +677,9 @@ set(SLIC3R_GUI_SOURCES
     Utils/ElegooLink.hpp
     Utils/ElegooCanvas.cpp
     Utils/ElegooCanvas.hpp
+    Utils/ElegooCanvasMatch.cpp
+    Utils/ElegooCanvasMatch.hpp
+    Utils/ElegooColorBuckets.hpp
     Utils/ElegooMqtt.cpp
     Utils/ElegooMqtt.hpp
     Utils/EmbossStyleManager.cpp
