@@ -129,6 +129,36 @@ TEST_CASE("label letters follow unit order", "[elegoo_canvas]")
     REQUIRE(t != nullptr);
     CHECK(t->label() == "B3");
     CHECK(t->canvas_id == 1);
+    CHECK_FALSE(t->unit_connected); // unit 1 reports connected: 0
+    CHECK_FALSE(t->ready());
+}
+
+TEST_CASE("trays of a disconnected unit are not ready", "[elegoo_canvas]")
+{
+    json b = json{{"canvas_list",
+                   json::array({json{{"canvas_id", 0}, {"connected", 1}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}},
+                                json{{"canvas_id", 1}, {"connected", false}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}},
+                                json{{"canvas_id", 2}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}}})}};
+    Info info = parse_canvas_info(b);
+    CHECK(info.connected());
+    REQUIRE(info.find(0, 1) != nullptr);
+    CHECK(info.find(0, 1)->unit_connected);
+    CHECK(info.find(0, 1)->ready());
+    REQUIRE(info.find(1, 1) != nullptr);
+    CHECK_FALSE(info.find(1, 1)->ready()); // connected: false
+    REQUIRE(info.find(2, 1) != nullptr);
+    CHECK_FALSE(info.find(2, 1)->ready()); // connected missing = false
+
+    json api = info_json(info);
+    REQUIRE(api["trays"].size() == 3);
+    CHECK(api["trays"][0]["ready"] == true);
+    CHECK(api["trays"][1]["ready"] == false);
+    CHECK(api["trays"][2]["ready"] == false);
+
+    json none = json{{"canvas_list", json::array({json{{"canvas_id", 0}, {"connected", 0}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}}})}};
+    Info off  = parse_canvas_info(none);
+    CHECK_FALSE(off.connected());
+    CHECK_FALSE(off.find(0, 1)->ready());
 }
 
 TEST_CASE("slot_map_json", "[elegoo_canvas]")

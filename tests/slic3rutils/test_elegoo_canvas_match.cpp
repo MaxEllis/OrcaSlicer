@@ -20,6 +20,7 @@ Tray make_tray(int canvas, int id, const std::string &brand, const std::string &
     t.filament_name = name;
     t.filament_color = color;
     t.status = st;
+    t.unit_connected = true;
     return t;
 }
 
@@ -300,5 +301,52 @@ TEST_CASE("remember survives a hand-edited file with non-object nodes", "[elegoo
         CHECK_FALSE(s.lookup(f).has_value());
         CHECK_NOTHROW(s.remember(f, t));
         CHECK(s.lookup(f).has_value());
+    }
+}
+
+TEST_CASE("match_tray_preset resolves a tray to a filament preset", "[elegoo][canvas]")
+{
+    auto preset = [](const std::string &vendor, const std::string &name, const std::string &alias, const std::string &type) {
+        ProjectFilament p;
+        p.vendor = vendor;
+        p.name   = name;
+        p.alias  = alias;
+        p.type   = type;
+        return p;
+    };
+    const std::vector<ProjectFilament> presets = {
+        preset("OrcaFilamentLibrary", "Generic PLA @System", "Generic PLA", "PLA"),       // 0
+        preset("Elegoo", "Elegoo PLA @ECC2", "Elegoo PLA", "PLA"),                         // 1
+        preset("OrcaFilamentLibrary", "Generic PETG @System", "Generic PETG", "PETG"),    // 2
+        preset("Acme", "Acme PLA Silk", "Acme PLA Silk", "PLA"),                           // 3
+        preset("Elegoo", "Elegoo PLA Silk @ECC2", "Elegoo PLA Silk", "PLA"),               // 4
+        preset("", "My TPU", "", "TPU"),                                                    // 5
+    };
+
+    SECTION("standardised name wins over type; the tray's brand first")
+    {
+        // "PLA Silk" names both Acme's and Elegoo's silk preset; the tray's brand picks Acme.
+        CHECK(match_tray_preset(make_tray(0, 0, "Acme", "PLA", "Acme PLA Silk", "#FF0000"), presets) == std::optional<size_t>(3));
+        CHECK(match_tray_preset(make_tray(0, 0, "Elegoo", "PLA", "PLA Silk", "#FF0000"), presets) == std::optional<size_t>(4));
+        // No brand: Elegoo before the others.
+        CHECK(match_tray_preset(make_tray(0, 0, "", "PLA", "PLA Silk", "#FF0000"), presets) == std::optional<size_t>(4));
+    }
+    SECTION("name equals type: Elegoo before generic")
+    {
+        // "PLA" standardises to "PLA" = the generic preset's standardised name and the type of several presets.
+        CHECK(match_tray_preset(make_tray(0, 0, "Elegoo", "PLA", "PLA", "#FF0000"), presets) == std::optional<size_t>(1));
+        CHECK(match_tray_preset(make_tray(0, 0, "Sunlu", "PETG", "PETG", "#FF0000"), presets) == std::optional<size_t>(2));
+    }
+    SECTION("type fallback")
+    {
+        CHECK(match_tray_preset(make_tray(0, 0, "Sunlu", "PETG", "PETG Rapid", "#FF0000"), presets) == std::optional<size_t>(2));
+        CHECK(match_tray_preset(make_tray(0, 0, "Sunlu", "TPU", "Flex 95A", "#FF0000"), presets) == std::optional<size_t>(5));
+    }
+    SECTION("no match")
+    {
+        CHECK_FALSE(match_tray_preset(make_tray(0, 0, "Sunlu", "PEEK", "PEEK Pro", "#FF0000"), presets).has_value());
+        CHECK_FALSE(match_tray_preset(make_tray(0, 0, "Elegoo", "PLA", "", "#FF0000"), presets).has_value());
+        CHECK_FALSE(match_tray_preset(make_tray(0, 0, "Sunlu", "", "Mystery", "#FF0000"), presets).has_value());
+        CHECK_FALSE(match_tray_preset(make_tray(0, 0, "Elegoo", "PLA", "PLA", "#FF0000"), {}).has_value());
     }
 }

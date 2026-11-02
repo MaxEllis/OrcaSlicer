@@ -261,4 +261,55 @@ std::vector<std::string> validate(const std::vector<Mapping> &mappings, const In
     return msgs;
 }
 
+std::optional<size_t> match_tray_preset(const Tray &tray, const std::vector<ProjectFilament> &presets)
+{
+    if (upper_trim(tray.filament_name).empty())
+        return std::nullopt;
+    const std::string tray_name  = standardize_name(tray.filament_name, tray.brand);
+    const std::string tray_type  = upper_trim(tray.filament_type);
+    const std::string tray_brand = upper_trim(tray.brand);
+
+    // Lower is better.
+    auto rank = [&](const ProjectFilament &p) {
+        const std::string vendor = upper_trim(p.vendor);
+        if (!tray_brand.empty() && vendor == tray_brand)
+            return 0;
+        if (vendor == "ELEGOO")
+            return 1;
+        if (vendor == "ORCAFILAMENTLIBRARY" || upper_trim(p.name).find("GENERIC") != std::string::npos ||
+            upper_trim(p.alias).find("GENERIC") != std::string::npos)
+            return 2;
+        return 3;
+    };
+    auto best_of = [&](auto accept) -> std::optional<size_t> {
+        std::optional<size_t> best;
+        int                   best_rank = std::numeric_limits<int>::max();
+        for (size_t i = 0; i < presets.size(); ++i) {
+            if (!accept(presets[i]))
+                continue;
+            const int r = rank(presets[i]);
+            if (r < best_rank) {
+                best      = i;
+                best_rank = r;
+            }
+        }
+        return best;
+    };
+    auto preset_name = [](const ProjectFilament &p) { return standardize_name(p.alias.empty() ? p.name : p.alias, p.vendor); };
+
+    // 1. Standardised names equal.
+    if (!tray_name.empty())
+        if (auto hit = best_of([&](const ProjectFilament &p) { return preset_name(p) == tray_name; }))
+            return hit;
+    if (tray_type.empty())
+        return std::nullopt;
+    // 2. Name equals type, either way round.
+    if (auto hit = best_of([&](const ProjectFilament &p) {
+            return preset_name(p) == tray_type || (!tray_name.empty() && tray_name == upper_trim(p.type));
+        }))
+        return hit;
+    // 3. Same type.
+    return best_of([&](const ProjectFilament &p) { return upper_trim(p.type) == tray_type; });
+}
+
 }} // namespace Slic3r::ElegooCanvas

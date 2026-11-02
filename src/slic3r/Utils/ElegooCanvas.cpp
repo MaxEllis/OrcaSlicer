@@ -79,7 +79,7 @@ const char *status_word(TrayStatus s)
 
 bool Tray::ready() const
 {
-    return (status == TrayStatus::Preloaded || status == TrayStatus::Loaded) && !filament_type.empty() &&
+    return unit_connected && (status == TrayStatus::Preloaded || status == TrayStatus::Loaded) && !filament_type.empty() &&
            !filament_name.empty() && !filament_color.empty();
 }
 
@@ -135,6 +135,7 @@ Info parse_canvas_info(const json &canvas_info)
                 Tray t;
                 t.canvas_id       = u.canvas_id;
                 t.unit_index      = unit_index;
+                t.unit_connected  = u.connected;
                 t.tray_id         = get_int(jt, "tray_id", 0);
                 t.brand           = get_str(jt, "brand");
                 t.filament_type   = get_str(jt, "filament_type");

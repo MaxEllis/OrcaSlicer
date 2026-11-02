@@ -24,8 +24,9 @@ struct Tray
     int         max_nozzle_temp = 0;
     TrayStatus  status          = TrayStatus::Disconnected;
     bool        unknown_filament = false;
+    bool        unit_connected   = false; // the owning Unit's `connected` (set by parse_canvas_info)
 
-    // Status Preloaded/Loaded and type, name and colour all known.
+    // Owning unit connected, status Preloaded/Loaded and type, name and colour all known.
     bool ready() const;
     // Unit letter (by unit order) + tray_id, e.g. "A1".
     std::string label() const;
