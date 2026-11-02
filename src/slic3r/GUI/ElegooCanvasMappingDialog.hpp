@@ -37,6 +37,11 @@ bool elegoo_canvas_read_info(const DynamicPrintConfig &printer_cfg, ElegooCanvas
 // The project's filaments as matcher input; index = position in the project (the G-code T number). `plate_filaments`
 // (1-based, as PartPlate::get_extruders() returns them) limits the list to a plate's filaments; empty = all of them.
 std::vector<ElegooCanvas::ProjectFilament> elegoo_canvas_project_filaments(const std::vector<int> &plate_filaments);
+// The plate a Send of `plate_idx` maps: PLATE_ALL_IDX and PLATE_CURRENT_IDX mean the current plate.
+int elegoo_canvas_send_plate_index(int plate_idx);
+// That plate's filaments as PartPlate::get_extruders(true) returns them (1-based, custom G-code tool changes
+// included); empty when there is no such plate.
+std::vector<int> elegoo_canvas_send_plate_filaments(int plate_idx);
 // CanvasState::project_key of the open project (project file + filament count).
 std::string elegoo_canvas_project_key();
 // The remembered-mapping file (<data_dir>/user/filament_mms_mapping.json), loaded.

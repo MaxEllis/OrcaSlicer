@@ -17526,10 +17526,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         if (host_type == htElegooLink && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint &&
             preset_bundle->filament_presets.size() > 1 && elegoo_canvas_enabled(*physical_printer_config)) {
             // The plate being sent: as for plateindex above, "All plates" means the current plate.
-            const int        map_plate_idx = plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx;
-            std::vector<int> plate_filaments;
-            if (PartPlate *plate = get_partplate_list().get_plate(map_plate_idx); plate != nullptr)
-                plate_filaments = plate->get_extruders(true); // 1-based, includes custom G-code tool changes
+            const std::vector<int> plate_filaments = elegoo_canvas_send_plate_filaments(plate_idx);
             if (!elegoo_canvas_map_filaments(this, *physical_printer_config, plate_filaments, upload_job.upload_data))
                 return;
         }
