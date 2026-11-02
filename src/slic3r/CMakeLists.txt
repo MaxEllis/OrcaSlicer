@@ -602,6 +602,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/ElegooCanvas.hpp
     Utils/ElegooCanvasMatch.cpp
     Utils/ElegooCanvasMatch.hpp
+    Utils/ElegooCanvasSession.cpp
+    Utils/ElegooCanvasSession.hpp
     Utils/ElegooColorBuckets.hpp
     Utils/ElegooMqtt.cpp
     Utils/ElegooMqtt.hpp
