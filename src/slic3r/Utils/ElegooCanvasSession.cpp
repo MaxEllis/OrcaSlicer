@@ -78,35 +78,46 @@ Session::Result Session::start_print(const std::string &filename, const nlohmann
 
 Session::Result Session::get_canvas_info(Info &out)
 {
-    Result attrs = get_attributes();
-    if (!attrs.ok)
-        return attrs;
-    const std::string firmware = firmware_from_attributes(attrs.result);
-    if (firmware_below(firmware, 1, 1))
-        return fail("firmware_too_old",
-                    "The printer firmware (" + firmware + ") is too old for CANVAS. Update it to 1.1 or later.");
+    // One connection and one registration for both requests (spec 5.2): halves the round trips and the time a
+    // switched-off printer costs.
+    return run([&](const Request &request) -> Result {
+        Result attrs = request(METHOD_ATTRIBUTES, json::object());
+        if (!attrs.ok)
+            return attrs;
+        const std::string firmware = firmware_from_attributes(attrs.result);
+        if (firmware_below(firmware, 1, 1))
+            return fail("firmware_too_old",
+                        "The printer firmware (" + firmware + ") is too old for CANVAS. Update it to 1.1 or later.");
 
-    Result status = get_canvas_status();
-    if (!status.ok)
+        Result status = request(METHOD_CANVAS_STATUS, json::object());
+        if (!status.ok)
+            return status;
+        const auto it = status.result.find("canvas_info");
+        if (it == status.result.end() || !it->is_object())
+            return fail("printer_error", "The printer's CANVAS status has no canvas_info.");
+        try {
+            out          = parse_canvas_info(*it);
+            out.firmware = firmware;
+        } catch (const std::exception &e) {
+            return fail("printer_error", std::string("The printer's CANVAS status could not be read (") + e.what() + ").");
+        }
         return status;
-    const auto it = status.result.find("canvas_info");
-    if (it == status.result.end() || !it->is_object())
-        return fail("printer_error", "The printer's CANVAS status has no canvas_info.");
-    try {
-        out          = parse_canvas_info(*it);
-        out.firmware = firmware;
-    } catch (const std::exception &e) {
-        return fail("printer_error", std::string("The printer's CANVAS status could not be read (") + e.what() + ").");
-    }
-    return status;
+    });
 }
 
 Session::Result Session::call(int method, const nlohmann::json &params)
 {
-    if (m_endpoint.serial.empty())
-        return fail("unreachable", "The printer's serial number is unknown. Run Test in the printer's connection settings, then try again.");
+    return run([&](const Request &request) { return request(method, params); });
+}
 
-    const int         request_id = m_next_request_id++;
+Session::Result Session::run(const std::function<Result(const Request &)> &body)
+{
+    if (m_endpoint.serial.empty()) {
+        if (!m_endpoint.serial_error.empty())
+            return fail("unreachable", "Could not reach the printer (" + m_endpoint.serial_error + ").");
+        return fail("unreachable", "The printer's serial number is unknown. Run Test in the printer's connection settings, then try again.");
+    }
+
     const std::string base       = "elegoo/" + m_endpoint.serial + "/";
     const std::string t_request  = base + m_client_id + "/api_request";
     const std::string t_response = base + m_client_id + "/api_response";
@@ -146,7 +157,12 @@ Session::Result Session::call(int method, const nlohmann::json &params)
         });
         if (!reg)
             return finish(fail("timeout", "The printer did not answer the registration request."));
-        const std::string reg_error = reg->value("error", std::string());
+        std::string reg_error;
+        if (const auto e = reg->find("error"); e != reg->end()) {
+            if (!e->is_string())
+                return finish(fail("registration_refused", "The printer sent a registration reply that could not be read."));
+            reg_error = e->get<std::string>();
+        }
         if (reg_error == "too many clients")
             return finish(fail("too_many_clients", "The printer refused the connection: too many clients are connected. "
                                                    "Close the Device tab or the other Elegoo slicer, then try again."));
@@ -154,37 +170,41 @@ Session::Result Session::call(int method, const nlohmann::json &params)
             return finish(fail("registration_refused", "The printer refused the registration (" +
                                                            (reg_error.empty() ? std::string("no reason given") : reg_error) + ")."));
 
-        // Request.
-        const auto req_deadline = Clock::now() + m_options.request_timeout;
-        client.publish(t_request, json{{"id", request_id}, {"method", method}, {"params", params}}.dump(), m_options.request_timeout);
-        auto reply = wait_for(client, t_response, req_deadline, [request_id](const json &j) {
-            const auto it = j.find("id");
-            return it != j.end() && it->is_number_integer() && it->get<long long>() == request_id;
-        });
-        if (!reply)
-            return finish(fail("timeout", "The printer did not answer request " + std::to_string(method) + " in time."));
+        // Requests, all on this connection. A throw (MQTT failure) leaves through the catch below.
+        const Request request = [&](int method, const json &params) -> Result {
+            const int  request_id   = m_next_request_id++;
+            const auto req_deadline = Clock::now() + m_options.request_timeout;
+            client.publish(t_request, json{{"id", request_id}, {"method", method}, {"params", params}}.dump(), m_options.request_timeout);
+            auto reply = wait_for(client, t_response, req_deadline, [request_id](const json &j) {
+                const auto it = j.find("id");
+                return it != j.end() && it->is_number_integer() && it->get<long long>() == request_id;
+            });
+            if (!reply)
+                return fail("timeout", "The printer did not answer request " + std::to_string(method) + " in time.");
 
-        const auto res = reply->find("result");
-        if (res == reply->end() || !res->is_object())
-            return finish(fail("printer_error", "The printer sent a reply without a result."));
-        const auto code = res->find("error_code");
-        if (code != res->end()) {
-            if (!code->is_number_integer())
-                return finish(fail("printer_error", "The printer sent an unreadable error code."));
-            const long long c = code->get<long long>();
-            if (c != 0) {
-                std::string msg = "The printer returned error code " + std::to_string(c);
-                const auto  m   = res->find("message");
-                if (m != res->end() && m->is_string() && !m->get<std::string>().empty())
-                    msg += ": " + m->get<std::string>();
-                return finish(fail("printer_error", msg + "."));
+            const auto res = reply->find("result");
+            if (res == reply->end() || !res->is_object())
+                return fail("printer_error", "The printer sent a reply without a result.");
+            const auto code = res->find("error_code");
+            if (code != res->end()) {
+                if (!code->is_number_integer())
+                    return fail("printer_error", "The printer sent an unreadable error code.");
+                const long long c = code->get<long long>();
+                if (c != 0) {
+                    std::string msg = "The printer returned error code " + std::to_string(c);
+                    const auto  m   = res->find("message");
+                    if (m != res->end() && m->is_string() && !m->get<std::string>().empty())
+                        msg += ": " + m->get<std::string>();
+                    return fail("printer_error", msg + ".");
+                }
             }
-        }
 
-        Result ok;
-        ok.ok     = true;
-        ok.result = *res;
-        return finish(std::move(ok));
+            Result ok;
+            ok.ok     = true;
+            ok.result = *res;
+            return ok;
+        };
+        return finish(body(request));
     } catch (const std::exception &e) {
         const std::string what = e.what();
         const bool        is_timeout = what.find("timeout") != std::string::npos;
