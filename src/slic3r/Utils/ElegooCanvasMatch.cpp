@@ -2,13 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
-#include <filesystem>
-#include <fstream>
 #include <limits>
 #include <map>
 #include <stdexcept>
 
+#include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/fstream.hpp>
 
 namespace Slic3r { namespace ElegooCanvas {
 
@@ -52,27 +52,25 @@ std::string standardize_name(const std::string &name, const std::string &vendor)
     const size_t at = s.find('@');
     if (at != std::string::npos)
         s = upper_trim(s.substr(0, at));
-    return s;
+    std::replace(s.begin(), s.end(), '-', ' ');
+    return upper_trim(s);
 }
 
 bool usable(const Tray &t) { return t.ready() && !t.unknown_filament; }
 
-// Lower tier is better; -1 = no match. Within a tier a vendor match wins.
-int name_tier(const ProjectFilament &f, const Tray &t, bool &vendor_match)
+// Does this tray match the filament by standardised name, name-equals-type, or type?
+// (Same three passes as ElegooSlicer's matchFilamentPreset with a single candidate.)
+bool tray_matches(const ProjectFilament &f, const Tray &t)
 {
-    vendor_match = !upper_trim(t.brand).empty() && upper_trim(t.brand) == upper_trim(f.vendor);
     const std::string tray_name = standardize_name(t.filament_name, t.brand);
     const std::string fil_name  = standardize_name(f.alias.empty() ? f.name : f.alias, f.vendor);
     const std::string tray_type = upper_trim(t.filament_type);
     const std::string fil_type  = upper_trim(f.type);
     if (!tray_name.empty() && tray_name == fil_name)
-        return 0;
-    // "name equals type": the tray is plain "PLA" and the filament is a PLA, or the reverse.
-    if (!fil_type.empty() && (fil_type == tray_name || fil_name == tray_type))
-        return 1;
-    if (!fil_type.empty() && fil_type == tray_type)
-        return 2;
-    return -1;
+        return true;
+    if (tray_type.empty())
+        return false; // the reference needs the tray's type for both fallbacks
+    return tray_type == fil_name || tray_name == fil_type || tray_type == fil_type;
 }
 
 const char *kMappedType  = "mappedFilamentType";
@@ -81,7 +79,7 @@ const char *kMappedColor = "mappedFilamentColor";
 
 } // namespace
 
-MappingStore::MappingStore(boost::filesystem::path file) : m_file(file.string()) {}
+MappingStore::MappingStore(boost::filesystem::path file) : m_file(std::move(file)) {}
 
 std::optional<SavedMapping> MappingStore::lookup_entry(const ProjectFilament &f) const
 {
@@ -125,6 +123,11 @@ void MappingStore::remember(const ProjectFilament &f, const Tray &t)
     if (!m_json.is_object())
         m_json = nlohmann::json::object();
     // Same record as ElegooSlicer's saveFilamentMmsMapping: type -> alias -> standard colour.
+    // A hand-edited file may hold a non-object node: replace it rather than throw.
+    if (!m_json[f.type].is_object())
+        m_json[f.type] = nlohmann::json::object();
+    if (!m_json[f.type][f.alias].is_object())
+        m_json[f.type][f.alias] = nlohmann::json::object();
     m_json[f.type][f.alias][own->hex] = {
         {kMappedType, t.filament_type},
         {kMappedName, t.filament_name},
@@ -139,17 +142,16 @@ void MappingStore::remember(const ProjectFilament &f, const Tray &t)
 void MappingStore::save() const
 {
     try {
-        const std::filesystem::path p(m_file);
-        if (p.has_parent_path())
-            std::filesystem::create_directories(p.parent_path());
-        std::ofstream out(p, std::ios::binary | std::ios::trunc);
+        if (m_file.has_parent_path())
+            boost::filesystem::create_directories(m_file.parent_path());
+        boost::nowide::ofstream out(m_file.string().c_str(), std::ios::binary | std::ios::trunc);
         if (!out)
             throw std::runtime_error("cannot open for writing");
         out << m_json.dump(4);
         if (!out)
             throw std::runtime_error("write failed");
     } catch (const std::exception &e) {
-        BOOST_LOG_TRIVIAL(error) << "CANVAS mapping file not saved (" << m_file << "): " << e.what();
+        BOOST_LOG_TRIVIAL(error) << "CANVAS mapping file not saved (" << m_file.string() << "): " << e.what();
     }
 }
 
@@ -157,10 +159,9 @@ void MappingStore::load()
 {
     m_json = nlohmann::json::object();
     try {
-        const std::filesystem::path p(m_file);
-        if (!std::filesystem::exists(p))
+        if (!boost::filesystem::exists(m_file))
             return;
-        std::ifstream in(p, std::ios::binary);
+        boost::nowide::ifstream in(m_file.string().c_str(), std::ios::binary);
         if (!in)
             throw std::runtime_error("cannot open for reading");
         nlohmann::json j = nlohmann::json::parse(in);
@@ -168,7 +169,7 @@ void MappingStore::load()
             throw std::runtime_error("top level is not an object");
         m_json = std::move(j);
     } catch (const std::exception &e) {
-        BOOST_LOG_TRIVIAL(warning) << "CANVAS mapping file ignored (" << m_file << "): " << e.what();
+        BOOST_LOG_TRIVIAL(warning) << "CANVAS mapping file ignored (" << m_file.string() << "): " << e.what();
         m_json = nlohmann::json::object();
     }
 }
@@ -205,29 +206,22 @@ std::vector<Mapping> auto_match(const std::vector<ProjectFilament> &filaments, c
             }
         }
 
-        // 2. Same colour bucket, best name tier, vendor match preferred, first tray wins ties.
+        // 2. Same colour bucket. As in ElegooSlicer, trays are scanned in order and the
+        // FIRST usable tray whose name/type matches wins (no ranking across trays), so a
+        // user switching slicers gets the same result.
         const std::string bucket = color_bucket(f.color);
         if (!done && !bucket.empty()) {
-            const Tray *best = nullptr;
-            int         best_tier = std::numeric_limits<int>::max();
-            bool        best_vendor = false;
             for (const Unit &u : info.units) {
                 for (const Tray &t : u.trays) {
-                    if (!usable(t) || color_bucket(t.filament_color) != bucket)
-                        continue;
-                    bool vendor = false;
-                    const int tier = name_tier(f, t, vendor);
-                    if (tier < 0)
-                        continue;
-                    if (!best || tier < best_tier || (tier == best_tier && vendor && !best_vendor)) {
-                        best = &t;
-                        best_tier = tier;
-                        best_vendor = vendor;
+                    if (usable(t) && color_bucket(t.filament_color) == bucket && tray_matches(f, t)) {
+                        set_tray(t, MatchSource::Matched);
+                        done = true;
+                        break;
                     }
                 }
+                if (done)
+                    break;
             }
-            if (best)
-                set_tray(*best, MatchSource::Matched);
         }
         out.push_back(std::move(m));
     }

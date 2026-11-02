@@ -85,14 +85,38 @@ TEST_CASE("auto_match picks a tray in the same colour bucket", "[elegoo][canvas]
     CHECK(m[0].warnings.empty());
 }
 
-TEST_CASE("auto_match prefers the filament's vendor", "[elegoo][canvas]")
+TEST_CASE("auto_match takes the first matching tray in order", "[elegoo][canvas]")
 {
     MappingStore store(boost::filesystem::path(temp_file("none.json").string()));
+    // Both trays match; ElegooSlicer takes the first one scanned, vendor is not ranked across trays.
     Info info = make_info({make_tray(0, 0, "Generic", "PLA", "Generic PLA", "#FF0000"),
                            make_tray(0, 1, "Elegoo", "PLA", "Elegoo PLA", "#FF0000")});
     auto m = auto_match({make_fil(0, "Elegoo", "Elegoo PLA", "PLA", "#FF0000")}, info, store);
     REQUIRE(m[0].tray.has_value());
-    CHECK(*m[0].tray == std::make_pair(0, 1));
+    CHECK(*m[0].tray == std::make_pair(0, 0));
+
+    Info swapped = make_info({make_tray(0, 0, "Elegoo", "PLA", "Elegoo PLA", "#FF0000"),
+                              make_tray(0, 1, "Generic", "PLA", "Generic PLA", "#FF0000")});
+    auto m2 = auto_match({make_fil(0, "Elegoo", "Elegoo PLA", "PLA", "#FF0000")}, swapped, store);
+    CHECK(*m2[0].tray == std::make_pair(0, 0));
+
+    // a type-only match that comes first beats a later exact-name match
+    Info order = make_info({make_tray(0, 0, "Acme", "PLA", "Silk Rainbow", "#FF0000"),
+                            make_tray(0, 1, "Elegoo", "PLA", "Elegoo PLA", "#FF0000")});
+    auto m3 = auto_match({make_fil(0, "Elegoo", "Elegoo PLA", "PLA", "#FF0000")}, order, store);
+    CHECK(*m3[0].tray == std::make_pair(0, 0));
+}
+
+TEST_CASE("names compare with dashes equal to spaces", "[elegoo][canvas]")
+{
+    MappingStore store(boost::filesystem::path(temp_file("none.json").string()));
+    // Different types so only the standardised-name rule can match.
+    Info info = make_info({make_tray(0, 0, "Acme", "PETG", "PLA CF", "#FF0000")});
+    auto m = auto_match({make_fil(0, "Elegoo", "PLA-CF", "ABS", "#FF0000")}, info, store);
+    REQUIRE(m[0].tray.has_value());
+    CHECK(m[0].warnings == std::vector<std::string>{"type_mismatch"});
+    Info other = make_info({make_tray(0, 0, "Acme", "PETG", "PLA CFX", "#FF0000")});
+    CHECK_FALSE(auto_match({make_fil(0, "Elegoo", "PLA-CF", "ABS", "#FF0000")}, other, store)[0].tray.has_value());
 }
 
 TEST_CASE("auto_match falls back to type only, and warns on a mismatching type", "[elegoo][canvas]")
@@ -262,4 +286,19 @@ TEST_CASE("validate reports unmapped, not-ready and shared trays", "[elegoo][can
     auto three = validate({a, e, f}, info);
     REQUIRE(three.size() == 1);
     CHECK(three[0] == "Filaments 1, 5 and 6 are both mapped to tray A0");
+}
+
+TEST_CASE("remember survives a hand-edited file with non-object nodes", "[elegoo][canvas]")
+{
+    ProjectFilament f = make_fil(0, "Elegoo", "Elegoo PLA", "PLA", "#FF0000");
+    Tray t = make_tray(0, 0, "Elegoo", "PLA", "Elegoo PLA", "#FF0000");
+    for (const char *body : {"{\"PLA\": 5}", "{\"PLA\": {\"Elegoo PLA\": [1]}}"}) {
+        auto file = temp_file("handedit.json");
+        { std::ofstream(file) << body; }
+        MappingStore s(boost::filesystem::path(file.string()));
+        s.load();
+        CHECK_FALSE(s.lookup(f).has_value());
+        CHECK_NOTHROW(s.remember(f, t));
+        CHECK(s.lookup(f).has_value());
+    }
 }

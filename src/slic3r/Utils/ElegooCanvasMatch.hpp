@@ -53,7 +53,7 @@ public:
     void load();       // missing file = empty store, corrupt file = empty store + warning
 
 private:
-    std::string           m_file; // native path
+    boost::filesystem::path m_file;
     nlohmann::json        m_json = nlohmann::json::object();
 };
 
