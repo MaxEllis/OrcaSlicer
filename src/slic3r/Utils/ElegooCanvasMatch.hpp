@@ -22,6 +22,7 @@ struct ProjectFilament
 {
     int         index = 0; // 0-based position in the project
     std::string filament_id, setting_id, vendor, name, alias, type, color;
+    bool        library = false; // an Orca filament library preset (match_tray_preset prefers the printer vendor's own)
 };
 
 enum class MatchSource { None, Saved, Matched, User, Api };
@@ -62,10 +63,16 @@ std::vector<Mapping>     auto_match(const std::vector<ProjectFilament> &, const 
 std::vector<std::string> validate(const std::vector<Mapping> &, const Info &);
 
 // The filament preset a tray stands for, for the sidebar sync. `presets` describe the candidate presets
-// (vendor, name, alias, type are read; `index` and the rest are ignored). Same passes as ElegooSlicer's
-// matchFilamentPreset: standardised name, then name-equals-type, then type. Within a pass the best candidate is
-// the one whose vendor equals the tray's brand, then vendor "Elegoo", then a generic preset (vendor
-// "OrcaFilamentLibrary" or "Generic" in the name), then any other; ties keep list order.
+// (vendor = the filament's own vendor, name, alias, type, library are read; the rest is ignored). Passes, as
+// ElegooSlicer's matchFilamentPreset:
+//   1. standardised names equal (upper-case, vendor word and " @..." suffix dropped, '-' as ' '; exact, never a
+//      prefix), preset type equal to the tray's or of its family (PLA / PLA-CF; PETG is not PET-CF); best = vendor
+//      equals the tray's brand, then vendor "Elegoo", then generic, then any other;
+//   2. preset name equals the tray's type or the tray's name equals the preset type, same type only;
+//   3. same type, exactly.
+// Passes 2 and 3 rank the tray's brand, then generic ("Generic" vendor/name, Orca filament library generic), then
+// any other. Within a rank a printer-vendor preset beats an Orca filament library one, then list order.
+// A tray with a known type never resolves to a preset of an unrelated type.
 // Returns the position in `presets`, or nullopt (tray without a name, or nothing matches).
 std::optional<size_t> match_tray_preset(const Tray &tray, const std::vector<ProjectFilament> &presets);
 

@@ -261,55 +261,119 @@ std::vector<std::string> validate(const std::vector<Mapping> &mappings, const In
     return msgs;
 }
 
+namespace {
+
+// Same type, or the same family: one type is the other plus a "-..." suffix (PLA / PLA-CF, PETG / PETG-CF).
+// PETG and PET-CF are different families. Both arguments upper-cased and trimmed.
+bool same_type_family(const std::string &a, const std::string &b)
+{
+    if (a == b)
+        return true;
+    auto extends = [](const std::string &longer, const std::string &base) {
+        return longer.size() > base.size() + 1 && longer.compare(0, base.size(), base) == 0 &&
+               (longer[base.size()] == '-' || longer[base.size()] == ' ');
+    };
+    return !a.empty() && !b.empty() && (extends(a, b) || extends(b, a));
+}
+
+bool is_generic(const ProjectFilament &p)
+{
+    const std::string vendor = upper_trim(p.vendor);
+    return vendor == "GENERIC" || vendor == "ORCAFILAMENTLIBRARY" || upper_trim(p.name).find("GENERIC") != std::string::npos ||
+           upper_trim(p.alias).find("GENERIC") != std::string::npos;
+}
+
+// Preset name without the " @printer" suffix (the alias when the preset has one).
+std::string base_name(const ProjectFilament &p)
+{
+    if (!p.alias.empty())
+        return p.alias;
+    const size_t at = p.name.find('@');
+    return at == std::string::npos ? p.name : p.name.substr(0, at);
+}
+
+} // namespace
+
 std::optional<size_t> match_tray_preset(const Tray &tray, const std::vector<ProjectFilament> &presets)
 {
     if (upper_trim(tray.filament_name).empty())
         return std::nullopt;
-    const std::string tray_name  = standardize_name(tray.filament_name, tray.brand);
-    const std::string tray_type  = upper_trim(tray.filament_type);
     const std::string tray_brand = upper_trim(tray.brand);
+    const std::string tray_type  = upper_trim(tray.filament_type);
+    // The tray's name with and without its brand word ("Elegoo PLA" -> "PLA" and "ELEGOO PLA").
+    const std::string tray_short = standardize_name(tray.filament_name, tray.brand);
+    const std::string tray_full  = standardize_name(tray.filament_name, std::string());
 
-    // Lower is better.
-    auto rank = [&](const ProjectFilament &p) {
-        const std::string vendor = upper_trim(p.vendor);
-        if (!tray_brand.empty() && vendor == tray_brand)
-            return 0;
-        if (vendor == "ELEGOO")
-            return 1;
-        if (vendor == "ORCAFILAMENTLIBRARY" || upper_trim(p.name).find("GENERIC") != std::string::npos ||
-            upper_trim(p.alias).find("GENERIC") != std::string::npos)
-            return 2;
-        return 3;
+    auto vendor_is_brand = [&](const ProjectFilament &p) { return !tray_brand.empty() && upper_trim(p.vendor) == tray_brand; };
+    // Name tiers (as ElegooSlicer): the tray's brand, then the printer vendor's presets (Elegoo), then generic presets,
+    // then any other. Within a rank the printer vendor's own preset beats an Orca filament library copy, then list order.
+    auto name_rank = [&](const ProjectFilament &p) {
+        int r = 3;
+        if (vendor_is_brand(p))
+            r = 0;
+        else if (upper_trim(p.vendor) == "ELEGOO")
+            r = 1;
+        else if (is_generic(p))
+            r = 2;
+        return r * 2 + (p.library ? 1 : 0);
     };
-    auto best_of = [&](auto accept) -> std::optional<size_t> {
+    // Type tier: the tray's brand, then generic presets, then any other.
+    auto type_rank = [&](const ProjectFilament &p) {
+        int r = 2;
+        if (vendor_is_brand(p))
+            r = 0;
+        else if (is_generic(p))
+            r = 1;
+        return r * 2 + (p.library ? 1 : 0);
+    };
+    // A tray with a known type only ever resolves to a preset of that type (or, for a name match, its family).
+    auto type_ok = [&](const ProjectFilament &p, bool family) {
+        if (tray_type.empty())
+            return true;
+        const std::string pt = upper_trim(p.type);
+        return family ? same_type_family(pt, tray_type) : pt == tray_type;
+    };
+    auto best_of = [&](auto accept, auto rank) -> std::optional<size_t> {
         std::optional<size_t> best;
         int                   best_rank = std::numeric_limits<int>::max();
         for (size_t i = 0; i < presets.size(); ++i) {
             if (!accept(presets[i]))
                 continue;
             const int r = rank(presets[i]);
-            if (r < best_rank) {
+            if (r < best_rank) { // strict: ties keep list order
                 best      = i;
                 best_rank = r;
             }
         }
         return best;
     };
-    auto preset_name = [](const ProjectFilament &p) { return standardize_name(p.alias.empty() ? p.name : p.alias, p.vendor); };
 
-    // 1. Standardised names equal.
-    if (!tray_name.empty())
-        if (auto hit = best_of([&](const ProjectFilament &p) { return preset_name(p) == tray_name; }))
+    // 1. Standardised names equal: vendor word dropped on both sides ("PLA" = "Elegoo PLA" of vendor Elegoo), or the
+    //    whole names equal ("ELEGOO PLA" = an Orca library "Elegoo PLA"). Exact equality only, never a prefix.
+    if (!tray_short.empty())
+        if (auto hit = best_of(
+                [&](const ProjectFilament &p) {
+                    if (!type_ok(p, true))
+                        return false;
+                    const std::string name = base_name(p);
+                    const std::string p_short = standardize_name(name, p.vendor);
+                    return (!p_short.empty() && p_short == tray_short) || standardize_name(name, tray.brand) == tray_short ||
+                           standardize_name(name, std::string()) == tray_full;
+                },
+                name_rank))
             return hit;
     if (tray_type.empty())
         return std::nullopt;
-    // 2. Name equals type, either way round.
-    if (auto hit = best_of([&](const ProjectFilament &p) {
-            return preset_name(p) == tray_type || (!tray_name.empty() && tray_name == upper_trim(p.type));
-        }))
+    // 2. Name equals type, either way round ("Generic PLA" for a PLA tray, a tray named "PETG"), same type only.
+    if (auto hit = best_of(
+            [&](const ProjectFilament &p) {
+                return type_ok(p, false) &&
+                       (standardize_name(base_name(p), p.vendor) == tray_type || tray_short == upper_trim(p.type));
+            },
+            type_rank))
         return hit;
-    // 3. Same type.
-    return best_of([&](const ProjectFilament &p) { return upper_trim(p.type) == tray_type; });
+    // 3. Same type, exactly (PETG is not PET-CF, PLA is not PLA-CF).
+    return best_of([&](const ProjectFilament &p) { return upper_trim(p.type) == tray_type; }, type_rank);
 }
 
 }} // namespace Slic3r::ElegooCanvas
