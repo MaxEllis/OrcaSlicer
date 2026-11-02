@@ -1439,6 +1439,15 @@ void PrintHostQueueDialog::on_cancel(Event &evt)
 
 void PrintHostQueueDialog::on_info(Event& evt)
 {
+    // Elegoo CC2: the upload succeeded but the printer refused the MQTT start (ElegooLink::start_print_cc2).
+    // The rest of this handler is disabled in this fork, so surface just this outcome as a notification.
+    // Events are queued to this dialog, so this runs on the GUI thread.
+    if (evt.tag == L"Uploaded") {
+        if (NotificationManager* ntf = wxGetApp().notification_manager(); ntf != nullptr)
+            ntf->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                   into_u8(_L("Uploaded.") + " " + evt.status));
+        return;
+    }
     /*
     wxCHECK_RET(evt.job_id < (size_t)job_list->GetItemCount(), "Out of bounds access to job list");
     

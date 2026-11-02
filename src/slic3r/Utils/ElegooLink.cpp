@@ -409,10 +409,10 @@ namespace Slic3r {
         return is_cc2_model(m_printerModel);
     }
 
-    ElegooCanvas::Endpoint ElegooLink::canvas_endpoint() const
+    ElegooCanvas::Endpoint ElegooLink::canvas_endpoint(const std::string& host_override) const
     {
         ElegooCanvas::Endpoint ep;
-        ep.host = Http::get_host_from_url(m_host);
+        ep.host = Http::get_host_from_url(host_override.empty() ? m_host : host_override);
         if (ep.host.size() > 2 && ep.host.front() == '[' && ep.host.back() == ']') // IPv6 literal
             ep.host = ep.host.substr(1, ep.host.size() - 2);
         ep.access_code = cc2_token();
@@ -432,7 +432,8 @@ namespace Slic3r {
         return session.get_canvas_info(out);
     }
 
-    bool ElegooLink::start_print_cc2(const std::string& filename, const PrintHostUpload& upload_data, ErrorFn error_fn, InfoFn info_fn) const
+    bool ElegooLink::start_print_cc2(const std::string& filename, const PrintHostUpload& upload_data, ErrorFn error_fn, InfoFn info_fn,
+                                     const std::string& host_override) const
     {
         (void) error_fn; // a refused start after a good upload is a soft outcome (spec 11.2)
         std::string failure;
@@ -441,7 +442,7 @@ namespace Slic3r {
             const nlohmann::json config   = ElegooCanvas::start_print_config(upload_data.extended("timeLapse") == "1",
                                                                              upload_data.extended("heatedBedLeveling") == "1", pc_plate,
                                                                              upload_data.extended("slot_map"));
-            ElegooCanvas::Session         session(canvas_endpoint());
+            ElegooCanvas::Session         session(canvas_endpoint(host_override));
             ElegooCanvas::Session::Result r = session.start_print(filename, config);
             if (r.ok) {
                 BOOST_LOG_TRIVIAL(info) << get_name() << ": CC2 print started: " << filename;
@@ -1063,8 +1064,10 @@ namespace Slic3r {
         }
 
         // The upload succeeded either way; a refused start is reported through info_fn, not as an error.
+        // Start over MQTT on the host the chunks went to: on Windows `url` may carry a Bonjour-resolved IP for a
+        // .local print_host, which the system resolver might not find a second time.
         if (res && upload_data.post_action == PrintHostPostUploadAction::StartPrint)
-            start_print_cc2(upload_filename, upload_data, error_fn, info_fn);
+            start_print_cc2(upload_filename, upload_data, error_fn, info_fn, url);
 
         return res;
     }

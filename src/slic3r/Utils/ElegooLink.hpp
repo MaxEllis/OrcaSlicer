@@ -36,13 +36,16 @@ public:
     static bool is_cc2_model(const std::string &printer_model);
     bool is_cc2() const;
     // host from print_host, access code from printhost_apikey (default 123456), serial from the dev_sn cache
-    // (fetched over HTTP when not cached yet).
-    ElegooCanvas::Endpoint canvas_endpoint() const;
+    // (fetched over HTTP when not cached yet). A non-empty `host_override` (a URL or bare host) replaces the MQTT
+    // host only, so the start command reaches the address the upload used (Windows .local resolved by Bonjour).
+    ElegooCanvas::Endpoint canvas_endpoint(const std::string &host_override = {}) const;
     // Attributes then CANVAS status; "firmware_too_old" below 1.1.
     ElegooCanvas::Session::Result get_canvas_info(ElegooCanvas::Info &out) const;
     // MQTT 1020 for an uploaded file. A refusal is reported through info_fn (tag "Uploaded"), never error_fn,
-    // because the upload itself succeeded; returns whether the printer accepted the start.
-    bool start_print_cc2(const std::string &filename, const PrintHostUpload &upload_data, ErrorFn error_fn, InfoFn info_fn) const;
+    // because the upload itself succeeded; returns whether the printer accepted the start. `host_override` as in
+    // canvas_endpoint().
+    bool start_print_cc2(const std::string &filename, const PrintHostUpload &upload_data, ErrorFn error_fn, InfoFn info_fn,
+                         const std::string &host_override = {}) const;
 protected:
 #ifdef WIN32
     virtual bool upload_inner_with_resolved_ip(PrintHostUpload upload_data, ProgressFn prorgess_fn, ErrorFn error_fn, InfoFn info_fn, const boost::asio::ip::address& resolved_addr) const;
