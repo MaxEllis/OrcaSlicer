@@ -17,6 +17,7 @@ add_executable(${_TEST_NAME}_tests
     test_plugin_audit.cpp
     ../fff_print/test_helpers.cpp
     test_elegoo_mqtt.cpp
+    test_elegoo_canvas.cpp
     )
 
 if (MSVC)
