@@ -55,6 +55,7 @@ class SlicingProcessCompletedEvent;
 enum SLAPrintObjectStep : unsigned int;
 enum class ConversionType : int;
 class DevAms;
+namespace ElegooCanvas { struct Info; }
 
 using ModelInstancePtrs = std::vector<ModelInstance*>;
 
@@ -142,6 +143,7 @@ class Sidebar : public wxPanel
     int                                     m_last_combo_bedtype_count{0};
     bool                                    m_begin_sync_printer_status{false};
     SyncAmsInfoDialog*                      m_sync_dlg{nullptr};
+    bool                                    m_canvas_sync_running{false};
 
     void update_sync_ams_btn_enable(wxUpdateUIEvent &e);
 
@@ -197,6 +199,11 @@ public:
     void load_ams_list(MachineObject* obj);
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list(bool is_from_big_sync_btn = false);
+    // Elegoo CANVAS (Centauri Carbon 2): fetch the unit info off the GUI thread, then fill the AMS list from it.
+    void sync_canvas_list();
+    void load_canvas_list(const ElegooCanvas::Info &info);
+    // Shared tail of sync_ams_list: validate the loaded list and apply it. `obj` is null for CANVAS (no sync dialog).
+    void apply_synced_ams_list(MachineObject *obj, bool is_from_big_sync_btn);
     bool sync_extruder_list();
     bool is_fila_switch_ready();
     void reset_fila_switch();
