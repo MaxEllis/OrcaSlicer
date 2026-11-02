@@ -1,5 +1,9 @@
 #include "ElegooMqtt.hpp"
 
+#include <boost/asio.hpp>
+#include <boost/system/error_code.hpp>
+
+#include <algorithm>
 #include <stdexcept>
 
 namespace Slic3r::ElegooMqtt {
@@ -155,6 +159,272 @@ std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed)
 
     consumed = pos + remaining;
     return p;
+}
+
+namespace {
+
+namespace asio = boost::asio;
+using asio::ip::tcp;
+
+class TcpTransport : public Transport
+{
+public:
+    TcpTransport(const std::string &host, uint16_t port, std::chrono::milliseconds timeout)
+        : m_timeout(timeout), m_socket(m_io)
+    {
+        boost::system::error_code ec;
+        bool                      done = false;
+        std::vector<tcp::endpoint> endpoints;
+
+        tcp::resolver resolver(m_io);
+        resolver.async_resolve(host, std::to_string(port), [&](const boost::system::error_code &e, tcp::resolver::results_type r) {
+            ec   = e;
+            done = true;
+            for (const auto &entry : r)
+                endpoints.push_back(entry.endpoint());
+        });
+        run_until(timeout);
+        if (!done) {
+            resolver.cancel();
+            m_io.restart();
+            m_io.run();
+            throw std::runtime_error("mqtt: timeout resolving " + host);
+        }
+        if (ec || endpoints.empty())
+            throw std::runtime_error("mqtt: cannot resolve " + host + (ec ? ": " + ec.message() : ""));
+
+        done = false;
+        ec   = {};
+        asio::async_connect(m_socket, endpoints, [&](const boost::system::error_code &e, const tcp::endpoint &) {
+            ec   = e;
+            done = true;
+        });
+        run_until(timeout);
+        if (!done) {
+            m_socket.close(ec);
+            m_io.restart();
+            m_io.run();
+            throw std::runtime_error("mqtt: timeout connecting to " + host);
+        }
+        if (ec)
+            throw std::runtime_error("mqtt: cannot connect to " + host + ": " + ec.message());
+    }
+
+    void send(const std::vector<uint8_t> &data) override
+    {
+        boost::system::error_code ec;
+        bool                      done = false;
+        asio::async_write(m_socket, asio::buffer(data), [&](const boost::system::error_code &e, size_t) {
+            ec   = e;
+            done = true;
+        });
+        run_until(m_timeout);
+        if (!done) {
+            m_socket.close(ec);
+            m_io.restart();
+            m_io.run();
+            throw std::runtime_error("mqtt: timeout sending");
+        }
+        if (ec)
+            throw std::runtime_error("mqtt: send failed: " + ec.message());
+    }
+
+    size_t recv_some(std::vector<uint8_t> &into, std::chrono::milliseconds timeout) override
+    {
+        uint8_t                   chunk[4096];
+        boost::system::error_code ec;
+        size_t                    n    = 0;
+        bool                      done = false;
+        m_socket.async_read_some(asio::buffer(chunk), [&](const boost::system::error_code &e, size_t bytes) {
+            ec   = e;
+            n    = bytes;
+            done = true;
+        });
+        run_until(timeout);
+        if (!done) {
+            // Nothing arrived: cancel the read (its handler runs with operation_aborted and n == 0).
+            boost::system::error_code ignored;
+            m_socket.cancel(ignored);
+            m_io.restart();
+            m_io.run();
+            if (n == 0)
+                return 0;
+        } else if (ec) {
+            throw std::runtime_error(ec == asio::error::eof ? std::string("mqtt: connection closed by peer") :
+                                                              "mqtt: receive failed: " + ec.message());
+        }
+        into.insert(into.end(), chunk, chunk + n);
+        return n;
+    }
+
+    void close() override
+    {
+        boost::system::error_code ec;
+        m_socket.shutdown(tcp::socket::shutdown_both, ec);
+        m_socket.close(ec);
+    }
+
+private:
+    void run_until(std::chrono::milliseconds timeout)
+    {
+        m_io.restart();
+        m_io.run_for(timeout);
+    }
+
+    std::chrono::milliseconds m_timeout;
+    asio::io_context          m_io;
+    tcp::socket               m_socket;
+};
+
+} // namespace
+
+std::unique_ptr<Transport> make_tcp_transport(const std::string &host, uint16_t port, std::chrono::milliseconds timeout)
+{
+    return std::make_unique<TcpTransport>(host, port, timeout);
+}
+
+Client::Client(std::unique_ptr<Transport> transport) : m_transport(std::move(transport)) {}
+
+Client::~Client()
+{
+    close_transport();
+}
+
+void Client::close_transport()
+{
+    if (m_transport) {
+        try {
+            m_transport->close();
+        } catch (...) {
+        }
+    }
+}
+
+void Client::fail(const std::string &msg)
+{
+    close_transport();
+    throw std::runtime_error(msg);
+}
+
+uint16_t Client::next_id()
+{
+    m_last_id = uint16_t(m_last_id == 0xFFFF ? 1 : m_last_id + 1);
+    return m_last_id;
+}
+
+void Client::send_or_close(const std::vector<uint8_t> &data)
+{
+    try {
+        m_transport->send(data);
+    } catch (...) {
+        close_transport();
+        throw;
+    }
+}
+
+std::optional<Packet> Client::read_packet(Clock::time_point deadline)
+{
+    for (;;) {
+        size_t consumed = 0;
+        try {
+            auto pkt = decode(m_buf, consumed);
+            if (pkt) {
+                m_buf.erase(m_buf.begin(), m_buf.begin() + std::ptrdiff_t(consumed));
+                return pkt;
+            }
+        } catch (const std::invalid_argument &e) {
+            fail(e.what()); // already "mqtt: malformed packet ..."
+        }
+        const auto now = Clock::now();
+        if (now >= deadline)
+            return std::nullopt;
+        try {
+            m_transport->recv_some(m_buf, std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now));
+        } catch (...) {
+            close_transport();
+            throw;
+        }
+    }
+}
+
+Packet Client::expect(uint8_t type, int packet_id, Clock::time_point deadline, const char *what)
+{
+    for (;;) {
+        auto pkt = read_packet(deadline);
+        if (!pkt)
+            fail(std::string("mqtt: timeout waiting for ") + what);
+        if (pkt->type == 3) { // a message slipped in before the ack: answer it and keep it for wait_message
+            if (pkt->packet_id != 0)
+                send_or_close(encode_puback(pkt->packet_id));
+            m_pending.emplace_back(std::move(pkt->topic), std::move(pkt->payload));
+            continue;
+        }
+        if (pkt->type == type && (packet_id < 0 || pkt->packet_id == packet_id))
+            return *pkt;
+        // PINGRESP and anything unrelated is ignored.
+    }
+}
+
+void Client::connect(const std::string &host, uint16_t port, const std::string &client_id, const std::string &user,
+                     const std::string &pass, std::chrono::milliseconds timeout)
+{
+    const auto deadline = Clock::now() + timeout;
+    m_buf.clear();
+    m_pending.clear();
+    if (!m_transport)
+        m_transport = make_tcp_transport(host, port, timeout); // throws "mqtt: ..." itself
+    send_or_close(encode_connect(client_id, user, pass, 60));
+    const Packet ack = expect(2, -1, deadline, "CONNACK");
+    if (ack.return_code != 0)
+        fail("mqtt: connection refused (" + std::to_string(int(ack.return_code)) + ")");
+}
+
+void Client::subscribe(const std::vector<std::string> &topics, std::chrono::milliseconds timeout)
+{
+    const auto     deadline = Clock::now() + timeout;
+    const uint16_t id       = next_id();
+    send_or_close(encode_subscribe(id, topics));
+    expect(9, id, deadline, "SUBACK");
+}
+
+void Client::publish(const std::string &topic, const std::string &payload, std::chrono::milliseconds timeout)
+{
+    const auto     deadline = Clock::now() + timeout;
+    const uint16_t id       = next_id();
+    send_or_close(encode_publish(id, topic, payload));
+    expect(4, id, deadline, "PUBACK");
+}
+
+std::optional<std::pair<std::string, std::string>> Client::wait_message(std::chrono::milliseconds timeout)
+{
+    if (!m_pending.empty()) {
+        auto m = std::move(m_pending.front());
+        m_pending.pop_front();
+        return m;
+    }
+    const auto deadline = Clock::now() + timeout;
+    for (;;) {
+        auto pkt = read_packet(deadline);
+        if (!pkt)
+            return std::nullopt;
+        if (pkt->type != 3)
+            continue; // PINGRESP and other packets are ignored
+        if (pkt->packet_id != 0)
+            send_or_close(encode_puback(pkt->packet_id));
+        return std::make_pair(std::move(pkt->topic), std::move(pkt->payload));
+    }
+}
+
+void Client::disconnect()
+{
+    if (!m_transport)
+        return;
+    try {
+        m_transport->send(encode_disconnect());
+    } catch (...) {
+    }
+    close_transport();
+    m_transport.reset();
 }
 
 } // namespace Slic3r::ElegooMqtt
