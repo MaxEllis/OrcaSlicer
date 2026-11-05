@@ -436,3 +436,37 @@ TEST_CASE("match_tray_preset on the Centauri Carbon 2 filament set", "[elegoo][c
             }
     }
 }
+
+TEST_CASE("match_tray_preset: dashed types and the family exception's direction", "[elegoo][canvas]")
+{
+    auto preset = [](const std::string &vendor, const std::string &name, const std::string &type) {
+        ProjectFilament p;
+        p.vendor = vendor;
+        p.name   = name;
+        p.alias  = name.substr(0, name.find(" @"));
+        p.type   = type;
+        return p;
+    };
+    auto hit = [](const std::vector<ProjectFilament> &ps, const std::string &brand, const std::string &type,
+                  const std::string &name) -> std::string {
+        const auto i = match_tray_preset(make_tray(0, 0, brand, type, name, "#FF0000"), ps);
+        return i ? ps[*i].name : std::string("<none>");
+    };
+
+    SECTION("name-equals-type works for a dashed type (pass 2 beats a plain same-type preset)")
+    {
+        const std::vector<ProjectFilament> ps = {preset("Acme", "Acme Carbon Pro @X", "PLA-CF"),
+                                                 preset("Acme", "Acme PLA-CF @X", "PLA-CF")};
+        CHECK(hit(ps, "", "PLA-CF", "Mystery") == "Acme PLA-CF @X");
+        CHECK(hit(ps, "", "pla-cf", "Mystery") == "Acme PLA-CF @X");
+    }
+    SECTION("a plain tray never takes a more specific (CF) preset by name")
+    {
+        const std::vector<ProjectFilament> ps = {preset("Generic", "Generic PLA-CF @System", "PLA-CF"),
+                                                 preset("Generic", "Generic PLA @System", "PLA")};
+        CHECK(hit(ps, "", "PLA", "PLA-CF") == "Generic PLA @System");
+        // the documented direction still works: a CF tray takes the base-typed Elegoo CF profile
+        const std::vector<ProjectFilament> elegoo = {preset("Elegoo", "Elegoo PLA-CF @ECC2", "PLA")};
+        CHECK(hit(elegoo, "Elegoo", "PLA-CF", "Elegoo PLA-CF") == "Elegoo PLA-CF @ECC2");
+    }
+}

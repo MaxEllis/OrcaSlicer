@@ -263,17 +263,24 @@ std::vector<std::string> validate(const std::vector<Mapping> &mappings, const In
 
 namespace {
 
-// Same type, or the same family: one type is the other plus a "-..." suffix (PLA / PLA-CF, PETG / PETG-CF).
-// PETG and PET-CF are different families. Both arguments upper-cased and trimmed.
-bool same_type_family(const std::string &a, const std::string &b)
+// The preset's type is the tray's type, or the base the tray's type extends with a "-..." suffix: a PLA-CF tray may
+// take a PLA-typed preset (Elegoo types its CF profiles as PLA / PETG), never the other way round, so a plain PLA
+// tray does not resolve to a CF profile. PETG and PET-CF are different families. Both upper-cased and trimmed.
+bool tray_type_extends(const std::string &tray_type, const std::string &preset_type)
 {
-    if (a == b)
+    if (tray_type == preset_type)
         return true;
-    auto extends = [](const std::string &longer, const std::string &base) {
-        return longer.size() > base.size() + 1 && longer.compare(0, base.size(), base) == 0 &&
-               (longer[base.size()] == '-' || longer[base.size()] == ' ');
-    };
-    return !a.empty() && !b.empty() && (extends(a, b) || extends(b, a));
+    const std::string &base = preset_type;
+    return !base.empty() && tray_type.size() > base.size() + 1 && tray_type.compare(0, base.size(), base) == 0 &&
+           (tray_type[base.size()] == '-' || tray_type[base.size()] == ' ');
+}
+
+// Types compare with dashes equal to spaces, as standardize_name() leaves them ("PLA-CF" = "PLA CF").
+std::string type_key(const std::string &type)
+{
+    std::string s = upper_trim(type);
+    std::replace(s.begin(), s.end(), '-', ' ');
+    return s;
 }
 
 bool is_generic(const ProjectFilament &p)
@@ -331,7 +338,7 @@ std::optional<size_t> match_tray_preset(const Tray &tray, const std::vector<Proj
         if (tray_type.empty())
             return true;
         const std::string pt = upper_trim(p.type);
-        return family ? same_type_family(pt, tray_type) : pt == tray_type;
+        return family ? tray_type_extends(tray_type, pt) : pt == tray_type;
     };
     auto best_of = [&](auto accept, auto rank) -> std::optional<size_t> {
         std::optional<size_t> best;
@@ -365,10 +372,11 @@ std::optional<size_t> match_tray_preset(const Tray &tray, const std::vector<Proj
     if (tray_type.empty())
         return std::nullopt;
     // 2. Name equals type, either way round ("Generic PLA" for a PLA tray, a tray named "PETG"), same type only.
+    //    Dashes in the type count as spaces, like the standardised names.
     if (auto hit = best_of(
             [&](const ProjectFilament &p) {
-                return type_ok(p, false) &&
-                       (standardize_name(base_name(p), p.vendor) == tray_type || tray_short == upper_trim(p.type));
+                return type_ok(p, false) && (standardize_name(base_name(p), p.vendor) == type_key(tray_type) ||
+                                             tray_short == type_key(p.type));
             },
             type_rank))
         return hit;
