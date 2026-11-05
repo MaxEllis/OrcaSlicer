@@ -45,6 +45,15 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/plates/{i}/select` | Make plate `i` the current one |
 | DELETE | `/plates/{i}` | Delete plate `i` (its objects are parked beside the bed, not deleted) |
 | POST | `/objects/{id}/plate` | Move an object onto plate `i` |
+| GET | `/project` | Project name, path, dirty flag, plate and object counts |
+| POST | `/project/save` | File > Save / Save As (`{"path", "overwrite"}`), no dialogs |
+| POST | `/project/open` | File > Open Project (`path` or `recent` index), the unsaved-changes prompt answered by `if_unsaved` |
+| POST | `/project/new` | File > New Project, same `if_unsaved`; optional `name` |
+| GET | `/project/recent` | File > Recent, most recent first, with whether each file still exists |
+| DELETE | `/project/recent` | Forget an entry (`path` or `index`) or the whole list (`all`) |
+| GET | `/project/browse?dir=` | The `.3mf` files in a folder, newest first |
+| POST | `/project/move` | Move or rename a project file (`{"from", "to", "overwrite"}`); the window follows for the open project |
+| DELETE | `/project/file` | Delete a project file from disk (never the open project's) |
 
 ### GET /status
 
@@ -55,7 +64,7 @@ curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/status
 {
   "app": "OrcaSlicer", "app_version": "2.3.2", "api_version": "1.0",
   "capabilities": ["status","config","slice","events"],
-  "project": "",
+  "project": "", "project_name": "Untitled", "project_dirty": false,
   "objects": [{"name":"cube","size_mm":[20,20,20]}],
   "presets": {"printer":"...","print":"...","filaments":["..."]},
   "modified": {"print":["layer_height"],"filament":[],"printer":[]},
@@ -290,6 +299,179 @@ next plate appears, so `POST /plates` straight after a delete picks them back up
 `404 unknown_object | unknown_plate | unknown_instance`, `422 plate_locked` (the
 target or the plate it sits on is locked; `plate` names which) `| move_failed`,
 `409 slicing`, `400 missing_plate`.
+
+## Project files
+
+File > Save, Open and New each go through modal prompts in the window ("save the
+changes first?", "keep the modified presets?", "overwrite?"). A remote caller cannot
+see those, so every prompt is answered from the request and the GUI's own
+remembered-choice settings are used to keep the dialogs closed for the duration of
+the call. The work goes through the same `Plater` calls as the menu, so the window
+title, dirty flag, undo stack, the periodic backup and File > Recent follow along.
+`GET /status` reports `project` (path, empty until saved), `project_name` and
+`project_dirty`, and lists `project` in `capabilities`.
+
+The file routes (recent, browse, move, delete) work on `.3mf` files only, through
+paths on the OrcaSlicer host, and never touch the open project's own file except to
+rename it. Delete is permanent: there is no trash.
+
+Known limits: a 3MF from another slicer, a newer OrcaSlicer, or one that needs a
+migration can still raise an informational dialog inside the loader (projects saved
+by this build open without one). And `Plater::load_project` empties the window
+before it reads the file, so a file that turns out to be unreadable leaves an empty
+project behind and answers `422 load_failed`; the preset edits dropped for the open
+are gone by then too. Save first when that matters.
+
+### GET /project
+
+```json
+{ "name": "float_spinner", "path": "/Users/roy/float_spinner.3mf", "saved": true,
+  "dirty": true, "plates": 4, "objects": 9, "modified": ["print"], "recent_count": 6 }
+```
+`dirty` is what File > Save would have to write: plater edits, modified presets, or
+undo-stack changes since the last save. `modified` names the preset groups with
+unsaved edits.
+
+### POST /project/save
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"path": "/Users/roy/float_spinner.3mf"}' http://localhost:13130/api/v1/project/save
+```
+```json
+{ "saved": "/Users/roy/float_spinner.3mf", "bytes": 1834021, "project": { "...": "as in GET /project" } }
+```
+The body is optional. Without `path` (or with `null`) the project is saved to its
+own path, as File > Save does; `422 no_project_path` when it has never been saved.
+With a `path` it is Save As: an existing file at that path is refused with
+`409 exists` unless `overwrite` is `true` (saving the project back onto its own
+path is a plain Save and never counts). The file holds what the GUI writes:
+plates, placement, per-object and per-plate settings, height ranges, slot
+presets and colours, and unsaved config edits. Afterwards `GET /status` reports
+the new `project` path and `project_dirty: false`, and the file is at the top of
+File > Recent. Errors: `400 not_3mf`, `404 directory_not_found`, `409 slicing`,
+`422 save_failed`.
+
+### POST /project/open
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"path": "/Users/roy/float_spinner.3mf", "if_unsaved": "discard"}' \
+  http://localhost:13130/api/v1/project/open
+```
+```json
+{ "opened": "/Users/roy/float_spinner.3mf", "plates": 4, "objects": 9,
+  "had_unsaved_changes": true, "discarded_changes": [],
+  "presets": { "printer": "...", "print": "...", "filaments": ["...", "..."] },
+  "project": { "...": "as in GET /project" } }
+```
+File > Open Project, not a geometry import: plates, objects, per-object and
+per-plate settings, slot presets and colours come back. Instead of `path`, `recent`
+names an entry of `GET /project/recent` by index (File > Recent). `if_unsaved`
+answers the "save changes to the current project?" prompt: `fail` (the default)
+refuses with `422 unsaved_changes` and changes nothing, `save` writes the current
+project to its own path first (`422 no_project_path` if it has none; the reply
+carries `saved`), `discard` goes ahead. Unsaved preset edits are dropped before the
+open, because the project's config replaces them in any case; `discarded_changes`
+names the groups.
+
+`presets` is `project` (the default: the project's printer, print and filament
+presets are selected, as the GUI does) or `keep_current`: the project is opened and
+the presets selected before the call are selected again (printer, then print, then
+each filament slot, for names that still exist); `presets_restored` says which. The
+project's own config edits are not kept in that mode. Errors: `404 file_not_found`
+(with a `detail` when the file is a stale recent entry) `| unknown_recent`,
+`409 slicing | busy`, `422 unsaved_changes | no_project_path | unsupported_format |
+load_failed`, `400 missing_path | bad_recent | bad_if_unsaved | bad_presets`.
+
+### POST /project/new
+
+```json
+{ "ok": true, "had_unsaved_changes": false, "kept_changes": [], "project": { "name": "Untitled", "path": "", "...": "" } }
+```
+File > New Project with the same `if_unsaved` handling (body optional). The GUI's
+second prompt, keep the modified presets for the new project or discard them, is
+answered with Keep: unsaved preset edits carry over and `kept_changes` names the
+groups. Use `PUT /preset` to drop them. An optional `name` gives the project its
+title (the window shows it; the file name is chosen at save). Errors as for open.
+
+### GET /project/recent
+
+```json
+{ "recent": [
+    { "index": 0, "path": "/Users/roy/float_spinner.3mf", "name": "float_spinner", "exists": true,
+      "open": true, "size_bytes": 1834021, "modified": "2026-11-04T10:12:03Z" },
+    { "index": 1, "path": "/Users/roy/old.3mf", "name": "old", "exists": false, "open": false } ],
+  "count": 2 }
+```
+File > Recent, most recent first. `open` marks the open project's own file;
+`size_bytes` and `modified` (UTC) are present when the file exists. `index` is
+what `POST /project/open {"recent": i}` and `DELETE /project/recent {"index": i}`
+take; the list changes whenever a project is saved or opened, so read and use it
+together.
+
+### DELETE /project/recent
+
+```bash
+curl -X DELETE -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"path": "/Users/roy/old.3mf"}' http://localhost:13130/api/v1/project/recent
+```
+```json
+{ "forgotten": ["/Users/roy/old.3mf"], "recent": [ "..." ], "count": 1 }
+```
+Takes an entry off File > Recent by `path` (as listed, or any spelling of the same
+file while it exists) or `index`, or clears the list with `{"all": true}`. Nothing
+on disk changes. Errors: `404 not_in_recent | unknown_recent`, `400 missing_target
+| bad_index`.
+
+### GET /project/browse
+
+```bash
+curl -H "X-Api-Token: $TOK" "http://localhost:13130/api/v1/project/browse?dir=/Users/roy/projects"
+```
+```json
+{ "dir": "/Users/roy/projects", "count": 2, "truncated": false,
+  "files": [ { "path": "/Users/roy/projects/a.3mf", "name": "a", "exists": true, "open": false,
+               "size_bytes": 1834021, "modified": "2026-11-04T10:12:03Z" }, "..." ] }
+```
+The `.3mf` files in one folder, not recursive, newest first (at most 500; `truncated`
+says when there were more). Without `dir` the open project's folder is listed, else
+the folder the last file dialog used. Hidden files are skipped. Errors:
+`404 directory_not_found`, `400 missing_dir`.
+
+### POST /project/move
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"from": "/Users/roy/a.3mf", "to": "/Users/roy/projects/bracket.3mf"}' \
+  http://localhost:13130/api/v1/project/move
+```
+```json
+{ "moved": "/Users/roy/a.3mf", "to": "/Users/roy/projects/bracket.3mf", "bytes": 1834021,
+  "was_open": true, "recent_updated": true, "project": { "...": "as in GET /project" } }
+```
+Renames or moves a project file (across volumes it is copied and the original
+removed). When it is the open project's file, the window follows: project name,
+title, project folder and File > Recent show the new path and the next Save writes
+there; the content and the dirty state are untouched. Otherwise a recent-list entry
+naming the old path is pointed at the new one. An existing file at `to` is refused
+with `409 exists` unless `overwrite` is `true`, and the open project's own file is
+never overwritten. Errors: `404 file_not_found | directory_not_found`,
+`409 exists | project_is_open`, `400 not_3mf | same_path | missing_path`,
+`422 move_failed` (with the OS message).
+
+### DELETE /project/file
+
+```bash
+curl -X DELETE -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"path": "/Users/roy/old.3mf"}' http://localhost:13130/api/v1/project/file
+```
+```json
+{ "deleted": "/Users/roy/old.3mf", "bytes": 1834021, "recent_updated": true }
+```
+Removes a `.3mf` from disk, permanently, and from File > Recent. The open project's
+own file is refused with `409 project_is_open`: start a new project or open another
+first. Errors: `404 file_not_found`, `400 not_3mf | missing_path`, `422 delete_failed`.
 
 ## Notes & limits
 
