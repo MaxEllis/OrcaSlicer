@@ -1248,7 +1248,7 @@ Response Controller::handle_load_model(const std::string &body)
     // would still complete on the GUI thread after a ui_timeout was returned.
     nlohmann::json r = run_on_ui([path, is_step]() -> nlohmann::json {
         if (!boost::filesystem::exists(path))
-            return {{"error", "not_found"}};
+            return {{"error", "file_not_found"}}; // not "not_found": that token means a missing route (F18)
         Plater *plater = wxGetApp().plater();
         // Use the stored deflection defaults instead of StepMeshDialog and skip
         // the non-UTF8 name warning while loading; restore the user's flags after.
@@ -1279,7 +1279,7 @@ Response Controller::handle_load_model(const std::string &body)
     std::string fn = boost::filesystem::path(path).filename().string();
     if (r.contains("error")) {
         api_notify("Couldn't load " + fn, true);
-        if (r["error"] == "not_found") return { 404, r };
+        if (r["error"] == "file_not_found") return { 404, r };
         return { 422, r };
     }
     api_notify("Added " + fn + " to the plate");
@@ -1925,7 +1925,11 @@ Response Controller::handle_duplicate_object(uint64_t id)
         if (mo->instances.empty()) return {{"error", "no_instance"}};
         const ModelInstance *src = mo->instances.front();
         Vec3d off = src->get_offset() + Vec3d(10.0, 10.0, 0.0);
+        const bool was_one = mo->instances.size() == 1;
         mo->add_instance(off, src->get_scaling_factor(), src->get_rotation(), src->get_mirror());
+        // sidebar: add the "Instances" child now, as Plater::increase_instances does (a lone object
+        // gets both rows), instead of only at the next full list rebuild.
+        wxGetApp().obj_list()->increase_object_instances(idx, was_one ? 2 : 1);
         // plates: give the new copy to the plate it landed on (see handle_transform_object).
         wxGetApp().plater()->get_partplate_list().notify_instance_update(idx, (int) mo->instances.size() - 1, true);
         plater->changed_object(idx);
