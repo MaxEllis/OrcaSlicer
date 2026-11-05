@@ -21,6 +21,7 @@
 #include <curl/curl.h>
 
 #include <wx/progdlg.h>
+#include <wx/thread.h>
 
 #include "slic3r/GUI/GUI.hpp"
 #include "slic3r/GUI/I18N.hpp"
@@ -103,10 +104,17 @@ namespace Slic3r {
             if (host_ip.empty() || sn.empty())
                 return;
             cache_sn(host_ip, token, sn);
-            AppConfig* app_cfg = GUI::get_app_config();
-            if (app_cfg == nullptr)
-                return;
-            app_cfg->set_str(ELEGOO_DEV_SN_SECTION, host_ip, sn);
+            // AppConfig is not thread-safe and the CANVAS slot read and print upload call this
+            // from worker threads: write on the UI thread. The cache above answers lookups meanwhile.
+            auto write = [host_ip, sn]() {
+                AppConfig* app_cfg = GUI::get_app_config();
+                if (app_cfg != nullptr)
+                    app_cfg->set_str(ELEGOO_DEV_SN_SECTION, host_ip, sn);
+            };
+            if (wxThread::IsMain())
+                write();
+            else if (wxTheApp != nullptr)
+                GUI::wxGetApp().CallAfter(write);
         }
 
         enum class ElegooPrinterType {
