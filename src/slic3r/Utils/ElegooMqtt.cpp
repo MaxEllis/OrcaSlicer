@@ -150,12 +150,14 @@ std::optional<Packet> decode(const std::vector<uint8_t> &buf, size_t &consumed)
         break;
     }
     case 4: // PUBACK
-    case 9: // SUBACK: packet id, then one return code per topic (first is kept)
+    case 9: // SUBACK: packet id, then one return code per topic
         if (remaining < (p.type == 9 ? 3u : 2u))
             malformed(p.type == 9 ? "SUBACK too short" : "PUBACK too short");
         p.packet_id = u16_at(0);
-        if (p.type == 9)
+        if (p.type == 9) {
             p.return_code = body[2];
+            p.return_codes.assign(body + 2, body + remaining);
+        }
         break;
     default:
         break;
@@ -432,8 +434,10 @@ void Client::subscribe(const std::vector<std::string> &topics, std::chrono::mill
     const uint16_t id       = next_id();
     send_or_close(encode_subscribe(id, topics));
     const Packet ack = expect(9, id, deadline, "SUBACK");
-    if (ack.return_code == 0x80)
-        fail("mqtt: subscribe refused for " + (topics.empty() ? std::string() : topics.front()));
+    // A broker refuses per topic (0x80); any refusal means a reply topic we wait on never arrives.
+    for (size_t i = 0; i < ack.return_codes.size(); ++i)
+        if (ack.return_codes[i] == 0x80)
+            fail("mqtt: subscribe refused for " + (i < topics.size() ? topics[i] : std::string("topic ") + std::to_string(i + 1)));
 }
 
 void Client::publish(const std::string &topic, const std::string &payload, std::chrono::milliseconds timeout)

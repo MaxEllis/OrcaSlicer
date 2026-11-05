@@ -356,6 +356,25 @@ TEST_CASE("Client::subscribe fails on a SUBACK refusal (0x80)", "[elegoo_mqtt][c
     CHECK(r.state.closed);
 }
 
+TEST_CASE("Client::subscribe fails when a later topic is refused, naming it", "[elegoo_mqtt][client]")
+{
+    ClientRig r;
+    r.connect_ok();
+    // granted QoS 1 for the first topic, refused for the second
+    r.state.feed({0x90, 0x04, 0x00, 0x01, 0x01, 0x80});
+    CHECK_THROWS_WITH(r.client.subscribe({"ok/topic", "nope/topic"}, 50ms), "mqtt: subscribe refused for nope/topic");
+    CHECK(r.state.closed);
+}
+
+TEST_CASE("decode keeps every SUBACK return code", "[elegoo_mqtt]")
+{
+    size_t consumed = 0;
+    auto sa = decode({0x90, 0x05, 0x00, 0x02, 0x01, 0x00, 0x80}, consumed);
+    REQUIRE(sa);
+    CHECK(sa->return_code == 1);
+    CHECK(sa->return_codes == std::vector<uint8_t>{0x01, 0x00, 0x80});
+}
+
 TEST_CASE("Client polls already-queued data even with a zero timeout", "[elegoo_mqtt][client]")
 {
     ClientRig r;

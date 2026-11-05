@@ -21,6 +21,7 @@ struct Packet
     std::string topic;           // PUBLISH only
     std::string payload;         // PUBLISH only
     uint8_t     return_code = 0; // CONNACK return code, or the first SUBACK return code
+    std::vector<uint8_t> return_codes; // SUBACK: one per topic, in SUBSCRIBE order
 };
 
 std::vector<uint8_t> encode_connect(const std::string &client_id, const std::string &user, const std::string &pass, uint16_t keepalive);
