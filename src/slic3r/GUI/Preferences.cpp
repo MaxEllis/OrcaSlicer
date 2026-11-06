@@ -2228,6 +2228,15 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         "remote_api_allow_sensitive");
     g_sizer->Add(item_sensitive);
 
+    // Read by RemoteAPIController (project_file_changes_allowed) on every project file call. Absent = off.
+    auto item_file_changes = create_item_checkbox(
+        _L("Allow deleting and replacing project files"),
+        _L("Off (recommended): the API can save, open and rename project files, but cannot delete a .3mf "
+           "file or save or move a project over one that already exists. A deleted file does not go to "
+           "the trash."),
+        "remote_api_allow_file_changes");
+    g_sizer->Add(item_file_changes);
+
     // Port row (bespoke). The stock create_item_input() unconditionally writes the
     // field's raw text back to AppConfig on every Enter/focus-loss (see the
     // handlers in create_item_input) with no empty/range guard, and shows a blank

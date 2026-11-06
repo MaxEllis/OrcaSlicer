@@ -406,6 +406,452 @@ paths:
                 failed: { value: { error: "move_failed" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
+  /project:
+    get:
+      summary: Project name, path and dirty state
+      operationId: getProject
+      responses:
+        "200":
+          description: The open project.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Project"
+                  - type: object
+                    properties:
+                      modified:
+                        type: array
+                        description: Preset groups with unsaved edits.
+                        items: { type: string }
+                      recent_count: { type: integer, description: "Entries in File > Recent." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/save:
+    post:
+      summary: Save the project (File > Save / Save As)
+      operationId: saveProject
+      description: |
+        Writes the project 3MF exactly as the menu does (plates, placement, per-object
+        and per-plate settings, slot presets and colours, unsaved config edits) with
+        no dialog. Without `path` the project is saved to its own path. With a `path`
+        it is Save As, which refuses an existing file unless `overwrite` is true;
+        saving onto the project's own path never counts as overwriting. The file
+        goes to the top of File > Recent.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string, nullable: true, description: "A .3mf path on the OrcaSlicer host." }
+                overwrite: { type: boolean, default: false }
+            example: { path: "/Users/me/float_spinner.3mf" }
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  saved: { type: string, description: "The project path as now stored." }
+                  bytes: { type: integer }
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: The path does not end in .3mf, or a field has the wrong type.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_3mf" }
+        "404":
+          description: The target folder does not exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "directory_not_found", path: "/nowhere/a.3mf" }
+        "409":
+          description: A file is already there (pass overwrite), or a slice is running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                exists:  { value: { error: "exists", path: "/Users/me/a.3mf" } }
+                slicing: { value: { error: "slicing" } }
+        "422":
+          description: The project has never been saved and no path was given, the export failed, or overwrite was asked for without Preferences > Remote API > Allow deleting and replacing project files.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                nopath:  { value: { error: "no_project_path" } }
+                failed:  { value: { error: "save_failed", path: "/Users/me/a.3mf" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/a.3mf" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/open:
+    post:
+      summary: Open a project (File > Open Project)
+      operationId: openProject
+      description: |
+        Loads plates, objects, per-object and per-plate settings, slot presets and
+        colours, and the project's config: not a geometry import. `path` names the
+        file; `recent` names an entry of GET /project/recent instead. `if_unsaved`
+        answers the "save changes to the current project?" prompt; `presets` says
+        whether the project's presets are selected afterwards or the ones selected
+        before the call. Unsaved preset edits are dropped before the open (the
+        project's config replaces them) and named in `discarded_changes`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string, description: "A .3mf path on the OrcaSlicer host." }
+                recent: { type: integer, minimum: 0, description: "An index from GET /project/recent, instead of path." }
+                if_unsaved: { type: string, enum: [save, discard, fail], default: fail }
+                presets: { type: string, enum: [project, keep_current], default: project }
+            example: { path: "/Users/me/float_spinner.3mf", if_unsaved: "discard" }
+      responses:
+        "200":
+          description: Opened.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  opened: { type: string }
+                  plates: { type: integer }
+                  objects: { type: integer }
+                  had_unsaved_changes: { type: boolean }
+                  saved: { type: string, description: "Where the previous project was saved (if_unsaved: save)." }
+                  discarded_changes: { type: array, items: { type: string } }
+                  presets_restored: { type: array, items: { type: string }, description: "presets: keep_current only." }
+                  presets:
+                    type: object
+                    properties:
+                      printer: { type: string }
+                      print: { type: string }
+                      filaments: { type: array, items: { type: string } }
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: Missing path or a bad value.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                path:    { value: { error: "missing_path", detail: "pass path or recent" } }
+                recent:  { value: { error: "bad_recent" } }
+                unsaved: { value: { error: "bad_if_unsaved", detail: "save | discard | fail" } }
+                presets: { value: { error: "bad_presets", detail: "project | keep_current" } }
+        "404":
+          description: No file at that path, or no such recent entry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                file:   { value: { error: "file_not_found", path: "/Users/me/missing.3mf" } }
+                recent: { value: { error: "unknown_recent", index: 7, count: 2 } }
+        "409":
+          description: A slice is running, or another project is still loading.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                slicing: { value: { error: "slicing" } }
+                busy:    { value: { error: "busy" } }
+        "422":
+          description: Unsaved changes with if_unsaved fail, no path to save to, not a 3MF, the load failed, or the project brings its own script, G-code or connection settings while Preferences > Remote API > Allow script, G-code and connection edits is off (nothing is changed; `keys` lists them).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                unsaved: { value: { error: "unsaved_changes", detail: "pass if_unsaved: \"save\" or \"discard\"", modified: ["print"] } }
+                nopath:  { value: { error: "no_project_path" } }
+                format:  { value: { error: "unsupported_format" } }
+                failed:  { value: { error: "load_failed", path: "/Users/me/a.3mf" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/a.3mf", keys: ["machine_start_gcode", "post_process"] } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/new:
+    post:
+      summary: Start a new project (File > New Project)
+      operationId: newProject
+      description: |
+        Same `if_unsaved` handling as open. The GUI's "keep the modified presets or
+        discard them?" prompt is answered with Keep: unsaved preset edits carry over
+        and are named in `kept_changes`. `name` gives the project its title.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                if_unsaved: { type: string, enum: [save, discard, fail], default: fail }
+                name: { type: string, nullable: true, description: "The window title; Untitled when omitted." }
+      responses:
+        "200":
+          description: A new, empty project is open.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  had_unsaved_changes: { type: boolean }
+                  saved: { type: string }
+                  kept_changes: { type: array, items: { type: string } }
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: Bad if_unsaved or name.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "bad_if_unsaved" }
+        "409":
+          description: A slice is running, or a project is still loading.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "slicing" }
+        "422":
+          description: Unsaved changes with if_unsaved fail, or no path to save to.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "unsaved_changes" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/recent:
+    get:
+      summary: File > Recent
+      operationId: getRecentProjects
+      responses:
+        "200":
+          description: Most recent first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recent:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/ProjectFile"
+                        - type: object
+                          properties:
+                            index: { type: integer, description: "For POST /project/open {recent} and DELETE /project/recent {index}." }
+                  count: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+    delete:
+      summary: Forget a recent entry, or the whole list
+      operationId: forgetRecentProject
+      description: Nothing on disk changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string, description: "The entry as listed, or any spelling of the same file while it exists." }
+                index: { type: integer, minimum: 0 }
+                all: { type: boolean, description: "Clear the list." }
+            example: { path: "/Users/me/old.3mf" }
+      responses:
+        "200":
+          description: The list as it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  forgotten: { type: array, items: { type: string } }
+                  recent: { type: array, items: { $ref: "#/components/schemas/ProjectFile" } }
+                  count: { type: integer }
+        "400":
+          description: No target, or a bad index.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_target", detail: "pass path, index or all:true" }
+        "404":
+          description: Not in the list.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                path:  { value: { error: "not_in_recent", path: "/Users/me/x.3mf" } }
+                index: { value: { error: "unknown_recent", index: 7, count: 2 } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/browse:
+    get:
+      summary: The .3mf files in a folder
+      operationId: browseProjects
+      description: |
+        Not recursive, newest first, at most 500 (`truncated` says when there were
+        more). Without `dir` the open project's folder is listed, else the folder
+        the last file dialog used.
+      parameters:
+        - name: dir
+          in: query
+          required: false
+          schema: { type: string }
+          description: A folder on the OrcaSlicer host.
+      responses:
+        "200":
+          description: The folder's project files.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dir: { type: string }
+                  files: { type: array, items: { $ref: "#/components/schemas/ProjectFile" } }
+                  count: { type: integer }
+                  truncated: { type: boolean }
+        "400":
+          description: No folder to list and none given.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "missing_dir" }
+        "404":
+          description: No such folder.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "directory_not_found", dir: "/nowhere" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/move:
+    post:
+      summary: Move or rename a project file
+      operationId: moveProjectFile
+      description: |
+        Renames or moves a .3mf (copied and removed across volumes). For the open
+        project's file the window follows (name, title, folder, File > Recent) and
+        the next Save writes to the new path; otherwise a recent-list entry naming
+        the old path is pointed at the new one. The open project's own file is
+        never overwritten.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from: { type: string }
+                to: { type: string }
+                overwrite: { type: boolean, default: false }
+            example: { from: "/Users/me/a.3mf", to: "/Users/me/projects/bracket.3mf" }
+      responses:
+        "200":
+          description: Moved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moved: { type: string }
+                  to: { type: string }
+                  bytes: { type: integer }
+                  was_open: { type: boolean }
+                  recent_updated: { type: boolean }
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: Not .3mf paths, the same file, or a missing field.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                format: { value: { error: "not_3mf" } }
+                same:   { value: { error: "same_path" } }
+        "404":
+          description: The source is missing, or the destination folder does not exist.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "file_not_found", path: "/Users/me/a.3mf" }
+        "409":
+          description: A file is already there (pass overwrite), or it is the open project's file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                exists: { value: { error: "exists", path: "/Users/me/b.3mf" } }
+                open:   { value: { error: "project_is_open", path: "/Users/me/b.3mf" } }
+        "422":
+          description: The OS refused the move, or overwrite was asked for without Preferences > Remote API > Allow deleting and replacing project files.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                failed:  { value: { error: "move_failed", detail: "Permission denied" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/b.3mf" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /project/file:
+    delete:
+      summary: Delete a project file from disk
+      operationId: deleteProjectFile
+      description: Permanent (no trash). Also removed from File > Recent. The open project's own file is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path: { type: string }
+            example: { path: "/Users/me/old.3mf" }
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: string }
+                  bytes: { type: integer }
+                  recent_updated: { type: boolean }
+        "400":
+          description: Not a .3mf path, or no path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "not_3mf" }
+        "404":
+          description: No file at that path.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "file_not_found", path: "/Users/me/old.3mf" }
+        "409":
+          description: It is the open project's file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: "project_is_open" }
+        "422":
+          description: The OS refused the delete, or Preferences > Remote API > Allow deleting and replacing project files is off.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                failed:  { value: { error: "delete_failed", detail: "Permission denied" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/old.3mf" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "504": { $ref: "#/components/responses/UiTimeout" }
 components:
   securitySchemes:
     ApiToken:
@@ -446,14 +892,16 @@ components:
         capabilities:
           type: array
           items: { type: string }
-          example: [status, config, slice, events, plates]
+          example: [status, config, slice, events, plates, project]
         plates:
           type: object
           description: How many plates the project has and which one is current.
           properties:
             count: { type: integer }
             current: { type: integer }
-        project: { type: string, description: "Current project filename (may be empty)." }
+        project: { type: string, description: "Current project path (empty until saved)." }
+        project_name: { type: string, description: "The name in the window title (Untitled for a new project)." }
+        project_dirty: { type: boolean, description: "True when File > Save has something to write." }
         objects:
           type: array
           items:
@@ -497,6 +945,25 @@ components:
               id: { type: integer }
               instance: { type: integer }
               name: { type: string }
+    Project:
+      type: object
+      properties:
+        name: { type: string }
+        path: { type: string, description: "Empty until the project has been saved." }
+        saved: { type: boolean }
+        dirty: { type: boolean, description: "Plater edits, modified presets, or undo-stack changes since the last save." }
+        plates: { type: integer }
+        objects: { type: integer }
+    ProjectFile:
+      type: object
+      description: A .3mf on the OrcaSlicer host, as GET /project/recent and GET /project/browse list it.
+      properties:
+        path: { type: string }
+        name: { type: string, description: "The file name without .3mf." }
+        exists: { type: boolean }
+        open: { type: boolean, description: "The open project's own file." }
+        size_bytes: { type: integer, description: "When the file exists." }
+        modified: { type: string, format: date-time, description: "Last write time, UTC; when the file exists." }
     PlateList:
       type: object
       properties:

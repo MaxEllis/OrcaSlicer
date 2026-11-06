@@ -81,6 +81,15 @@ private:
     Response handle_select_plate(int index);                // plates: POST /plates/{i}/select
     Response handle_delete_plate(int index);                // plates: DELETE /plates/{i}
     Response handle_put_object_plate(uint64_t id, const std::string &body); // plates: POST /objects/{id}/plate
+    Response handle_get_project();                                  // project: GET /project
+    Response handle_save_project(const std::string &body);          // project: POST /project/save
+    Response handle_open_project(const std::string &body);          // project: POST /project/open
+    Response handle_new_project(const std::string &body);           // project: POST /project/new
+    Response handle_get_recent_projects();                          // project: GET /project/recent
+    Response handle_forget_recent_project(const std::string &body); // project: DELETE /project/recent
+    Response handle_browse_projects(const std::string &target);     // project: GET /project/browse?dir=
+    Response handle_move_project_file(const std::string &body);     // project: POST /project/move
+    Response handle_delete_project_file(const std::string &body);   // project: DELETE /project/file
     Response handle_printer_slots();                        // CANVAS: GET /printer/slots
     Response handle_get_slot_mapping();                     // CANVAS: GET /printer/slot_mapping
     Response handle_put_slot_mapping(const std::string &body); // CANVAS: PUT /printer/slot_mapping
