@@ -480,13 +480,14 @@ paths:
                 exists:  { value: { error: "exists", path: "/Users/me/a.3mf" } }
                 slicing: { value: { error: "slicing" } }
         "422":
-          description: The project has never been saved and no path was given, or the export failed.
+          description: The project has never been saved and no path was given, the export failed, or overwrite was asked for without Preferences > Remote API > Allow deleting and replacing project files.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               examples:
-                nopath: { value: { error: "no_project_path" } }
-                failed: { value: { error: "save_failed", path: "/Users/me/a.3mf" } }
+                nopath:  { value: { error: "no_project_path" } }
+                failed:  { value: { error: "save_failed", path: "/Users/me/a.3mf" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/a.3mf" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
   /project/open:
@@ -562,7 +563,7 @@ paths:
                 slicing: { value: { error: "slicing" } }
                 busy:    { value: { error: "busy" } }
         "422":
-          description: Unsaved changes with if_unsaved fail, no path to save to, not a 3MF, or the load failed.
+          description: Unsaved changes with if_unsaved fail, no path to save to, not a 3MF, the load failed, or the project brings its own script, G-code or connection settings while Preferences > Remote API > Allow script, G-code and connection edits is off (nothing is changed; `keys` lists them).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -571,6 +572,7 @@ paths:
                 nopath:  { value: { error: "no_project_path" } }
                 format:  { value: { error: "unsupported_format" } }
                 failed:  { value: { error: "load_failed", path: "/Users/me/a.3mf" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/a.3mf", keys: ["machine_start_gcode", "post_process"] } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
   /project/new:
@@ -787,11 +789,13 @@ paths:
                 exists: { value: { error: "exists", path: "/Users/me/b.3mf" } }
                 open:   { value: { error: "project_is_open", path: "/Users/me/b.3mf" } }
         "422":
-          description: The OS refused the move.
+          description: The OS refused the move, or overwrite was asked for without Preferences > Remote API > Allow deleting and replacing project files.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: "move_failed", detail: "Permission denied" }
+              examples:
+                failed:  { value: { error: "move_failed", detail: "Permission denied" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/b.3mf" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
   /project/file:
@@ -839,11 +843,13 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: "project_is_open" }
         "422":
-          description: The OS refused the delete.
+          description: The OS refused the delete, or Preferences > Remote API > Allow deleting and replacing project files is off.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-              example: { error: "delete_failed", detail: "Permission denied" }
+              examples:
+                failed:  { value: { error: "delete_failed", detail: "Permission denied" } }
+                blocked: { value: { error: "blocked_by_remote_api_policy", path: "/Users/me/old.3mf" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
 components:

@@ -204,10 +204,24 @@ int  s_api_ui_task_depth  = 0;
 bool s_backup_in_progress = false;
 std::deque<std::shared_ptr<UiTask>> s_deferred_ui_tasks;
 
+void flush_deferred_ui_tasks()
+{
+    if (s_deferred_ui_tasks.empty()) return;
+    auto parked = std::move(s_deferred_ui_tasks);
+    s_deferred_ui_tasks.clear();
+    for (auto &t : parked)
+        t->schedule(); // re-queued, not run inline: let the caller unwind first
+}
+
 void UiTask::run()
 {
     if (cancelled->load()) return; // caller already returned 504; do nothing
-    if (s_backup_in_progress) {    // parked until set_backup_in_progress(false)
+    // Parked until the export ends, or until the API task already on the stack
+    // returns. The io thread waits for each task, so a second one only arrives
+    // after the first timed out; it then runs inside the first one's event pump
+    // (load_project and export_3mf show progress dialogs) and would change the
+    // model or presets halfway through that work.
+    if (s_backup_in_progress || s_api_ui_task_depth > 0) {
         s_deferred_ui_tasks.push_back(shared_from_this());
         return;
     }
@@ -221,6 +235,8 @@ void UiTask::run()
         promise->set_exception(std::current_exception());
     }
     --s_api_ui_task_depth;
+    if (s_api_ui_task_depth == 0 && !s_backup_in_progress)
+        flush_deferred_ui_tasks();
 }
 
 } // namespace
@@ -230,12 +246,8 @@ bool Controller::api_ui_task_active() { return s_api_ui_task_depth > 0; }
 void Controller::set_backup_in_progress(bool v)
 {
     s_backup_in_progress = v;
-    if (!v && !s_deferred_ui_tasks.empty()) {
-        auto parked = std::move(s_deferred_ui_tasks);
-        s_deferred_ui_tasks.clear();
-        for (auto &t : parked)
-            t->schedule(); // re-queued, not run inline: let the export unwind first
-    }
+    if (!v && s_api_ui_task_depth == 0)
+        flush_deferred_ui_tasks();
 }
 
 nlohmann::json Controller::run_on_ui(std::function<nlohmann::json()> fn, int timeout_s)
@@ -295,6 +307,7 @@ Response Controller::handle_status()
             {"api_version", "1.0"},
             {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
+            {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
             // project: the window title's name, and whether File > Save has something to
             // write (plater edits, modified presets, or undo-stack changes since the save).
@@ -404,6 +417,16 @@ static bool is_sensitive_config_key(const std::string &key)
 static bool sensitive_writes_allowed()
 {
     return wxGetApp().app_config->get_bool("remote_api_allow_sensitive");
+}
+
+// The project file routes reach any .3mf on this computer, and a delete is
+// permanent (no trash). Deleting a file, or replacing one with a save or a move,
+// is refused unless the user ticks Preferences > Remote API > "Allow deleting and
+// replacing project files". Saving, opening and moving onto a free name never
+// lose data and stay open. GUI thread only (AppConfig). Absent = off.
+static bool project_file_changes_allowed()
+{
+    return wxGetApp().app_config->get_bool("remote_api_allow_file_changes");
 }
 
 // What POST /preset/config hides. GET /config already drops the whole host block
@@ -2456,6 +2479,96 @@ static bool parse_if_unsaved(const nlohmann::json &in, std::string &if_unsaved)
     return if_unsaved == "save" || if_unsaved == "discard" || if_unsaved == "fail";
 }
 
+// The script, G-code and connection settings (is_sensitive_config_key) a project
+// file would put in place when it is opened. A key counts when the project's
+// value differs from the one in the local preset the project names, or when that
+// preset is not on this computer (the project brings its own copy). OrcaSlicer's
+// own File > Open asks about modified G-code (PresetBundle::validate_presets);
+// POST /project/open silences that prompt, so with the policy off it runs this
+// check instead and opens nothing when a key turns up. `check_print_printer`
+// false and `first_filament` skip what presets: keep_current puts back anyway.
+// GUI thread only. Throws when the file cannot be read.
+static std::set<std::string> project_sensitive_changes(const std::string &path_utf8, bool check_print_printer,
+                                                       size_t first_filament)
+{
+    DynamicPrintConfig        cfg;
+    ConfigSubstitutionContext subs{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plate_data;
+    std::vector<Preset *>     project_presets;
+    En3mfType                 file_type = En3mfType::From_BBS;
+    Semver                    file_version;
+    struct Cleanup
+    {
+        PlateDataPtrs         &plates;
+        std::vector<Preset *> &presets;
+        ~Cleanup()
+        {
+            release_PlateData_list(plates);
+            for (Preset *p : presets) delete p;
+            presets.clear();
+        }
+    } cleanup{plate_data, project_presets};
+    // Config only: no meshes are read.
+    Model::read_from_archive(into_path(from_u8(path_utf8)).string(), &cfg, &subs, file_type, LoadStrategy::LoadConfig,
+                             &plate_data, &project_presets, &file_version);
+
+    auto *bundle = wxGetApp().preset_bundle;
+    auto  owned_by = [](const std::vector<std::string> &opts, const std::string &key) {
+        return std::find(opts.begin(), opts.end(), key) != opts.end();
+    };
+    // One value of an option: element `idx` of a vector option, the whole value otherwise.
+    auto value_at = [](const ConfigOption *opt, size_t idx, std::string &out) {
+        if (opt == nullptr) return false;
+        if (const auto *vec = dynamic_cast<const ConfigOptionVectorBase *>(opt)) {
+            const std::vector<std::string> v = vec->vserialize();
+            if (v.empty()) return false;
+            out = v[std::min(idx, v.size() - 1)];
+            return true;
+        }
+        out = opt->serialize();
+        return true;
+    };
+    // The project's value against the named local preset's; a missing preset
+    // counts any non-empty value.
+    auto differs = [&](const Preset *local, const std::string &key, size_t project_idx) {
+        std::string theirs, ours;
+        if (!value_at(cfg.option(key), project_idx, theirs)) return false;
+        if (local == nullptr) return !theirs.empty();
+        if (!value_at(local->config.option(key), 0, ours)) return !theirs.empty();
+        return theirs != ours;
+    };
+
+    const Preset *printer = nullptr, *print = nullptr;
+    if (check_print_printer) {
+        if (cfg.has("printer_settings_id"))
+            printer = bundle->printers.find_preset(cfg.opt_string("printer_settings_id"), false, true);
+        if (cfg.has("print_settings_id"))
+            print = bundle->prints.find_preset(cfg.opt_string("print_settings_id"), false, true);
+    }
+    std::vector<std::string> filament_ids;
+    if (const auto *ids = cfg.option<ConfigOptionStrings>("filament_settings_id"))
+        filament_ids = ids->values;
+
+    std::set<std::string> keys;
+    for (const std::string &key : cfg.keys()) {
+        if (!is_sensitive_config_key(key)) continue;
+        if (owned_by(Preset::filament_options(), key)) {
+            for (size_t i = first_filament; i < filament_ids.size(); ++i) {
+                if (filament_ids[i].empty()) continue;
+                const Preset *local = bundle->filaments.find_preset(filament_ids[i], false, true);
+                if (differs(local, key, i)) { keys.insert(key); break; }
+            }
+        } else if (!check_print_printer) {
+            continue;
+        } else if (owned_by(Preset::printer_options(), key)) {
+            if (differs(printer, key, 0)) keys.insert(key);
+        } else if (owned_by(Preset::print_options(), key)) {
+            if (differs(print, key, 0)) keys.insert(key);
+        }
+    }
+    return keys;
+}
+
 static Response project_error_response(const nlohmann::json &r)
 {
     const std::string e = r["error"].get<std::string>();
@@ -2636,16 +2749,23 @@ Response Controller::handle_save_project(const std::string &body)
         boost::system::error_code ec;
         if (!bp.parent_path().empty() && !boost::filesystem::is_directory(bp.parent_path(), ec))
             return {{"error", "directory_not_found"}, {"path", target}};
-        if (!path.empty() && !overwrite && boost::filesystem::exists(bp, ec) && !is_open_project_file(plater, bp))
-            return {{"error", "exists"}, {"path", target},
-                    {"detail", "a file is already there; pass overwrite:true to replace it"}};
+        if (!path.empty() && boost::filesystem::exists(bp, ec) && !is_open_project_file(plater, bp)) {
+            if (!overwrite)
+                return {{"error", "exists"}, {"path", target},
+                        {"detail", "a file is already there; pass overwrite:true to replace it"}};
+            if (!project_file_changes_allowed())
+                return {{"error", "blocked_by_remote_api_policy"}, {"path", target},
+                        {"detail", "replacing a file needs Preferences > Remote API > Allow deleting and replacing project files"}};
+        }
         uintmax_t bytes = 0;
         const std::string err = save_project_to(plater, target, bytes);
         if (!err.empty()) return {{"error", err}, {"path", target}};
         return {{"saved", project_path_utf8(plater)}, {"bytes", bytes}, {"project", project_json(plater)}};
     }, /*timeout_s=*/120);
     if (r.contains("error")) {
-        if (r["error"] != "slicing")
+        if (r["error"] == "blocked_by_remote_api_policy")
+            api_notify("Couldn't save the project over another file (blocked, see Preferences > Remote API)", true);
+        else if (r["error"] != "slicing")
             api_notify("Couldn't save the project (" + r["error"].get<std::string>() + ")", true);
         return project_error_response(r);
     }
@@ -2713,6 +2833,23 @@ Response Controller::handle_open_project(const std::string &body)
         }
         if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
         if (plater->is_loading_project()) return {{"error", "busy"}};
+
+        // Before anything changes: the project must not bring script, G-code or
+        // connection settings of its own unless the user allows those edits.
+        if (!sensitive_writes_allowed()) {
+            const bool keep_current = presets == "keep_current";
+            std::set<std::string> keys;
+            try {
+                keys = project_sensitive_changes(path, !keep_current, keep_current ? bundle->filament_presets.size() : 0);
+            } catch (const std::exception &ex) {
+                return {{"error", "load_failed"}, {"path", path}, {"detail", ex.what()}};
+            }
+            if (!keys.empty())
+                return {{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"keys", keys},
+                        {"detail", "the project brings its own script, G-code or connection settings; open it in "
+                                   "OrcaSlicer, or tick Preferences > Remote API > Allow script, G-code and "
+                                   "connection edits"}};
+        }
 
         nlohmann::json out = nlohmann::json::object();
         const std::string err = answer_unsaved_prompt(plater, if_unsaved, out);
@@ -2805,7 +2942,9 @@ Response Controller::handle_open_project(const std::string &body)
     }, /*timeout_s=*/120);
     const std::string fn = path_to_utf8(path_from_utf8(path).filename());
     if (r.contains("error")) {
-        if (r["error"] != "slicing" && r["error"] != "unsaved_changes")
+        if (r["error"] == "blocked_by_remote_api_policy")
+            api_notify("Couldn't open " + fn + ": it changes scripts, G-code or the printer connection (blocked, see Preferences > Remote API)", true);
+        else if (r["error"] != "slicing" && r["error"] != "unsaved_changes")
             api_notify("Couldn't open " + fn + " (" + r["error"].get<std::string>() + ")", true);
         return project_error_response(r);
     }
@@ -3006,11 +3145,19 @@ Response Controller::handle_move_project_file(const std::string &body)
         if (!dst.parent_path().empty() && !boost::filesystem::is_directory(dst.parent_path(), ec))
             return {{"error", "directory_not_found"}, {"path", to}};
         if (boost::filesystem::exists(dst, ec)) {
-            if (boost::filesystem::equivalent(src, dst, ec)) return {{"error", "same_path"}, {"path", to}};
-            if (!overwrite)
-                return {{"error", "exists"}, {"path", to}, {"detail", "a file is already there; pass overwrite:true to replace it"}};
-            if (is_open_project_file(plater, dst))
-                return {{"error", "project_is_open"}, {"path", to}, {"detail", "the destination is the open project's file"}};
+            if (boost::filesystem::equivalent(src, dst, ec)) {
+                // On a case-insensitive disk "a.3mf" -> "A.3mf" names the same
+                // file; that is a rename, not a clash. Anything else is a no-op.
+                if (src.filename() == dst.filename()) return {{"error", "same_path"}, {"path", to}};
+            } else {
+                if (!overwrite)
+                    return {{"error", "exists"}, {"path", to}, {"detail", "a file is already there; pass overwrite:true to replace it"}};
+                if (is_open_project_file(plater, dst))
+                    return {{"error", "project_is_open"}, {"path", to}, {"detail", "the destination is the open project's file"}};
+                if (!project_file_changes_allowed())
+                    return {{"error", "blocked_by_remote_api_policy"}, {"path", to},
+                            {"detail", "replacing a file needs Preferences > Remote API > Allow deleting and replacing project files"}};
+            }
         }
         const bool was_open = is_open_project_file(plater, src);
         const std::vector<std::string> recent = recent_entries_for(src);
@@ -3042,7 +3189,10 @@ Response Controller::handle_move_project_file(const std::string &body)
                 {"recent_updated", was_open || !recent.empty()}, {"project", project_json(plater)}};
     }, /*timeout_s=*/60);
     if (r.contains("error")) {
-        api_notify("Couldn't move " + path_to_utf8(path_from_utf8(from).filename()) + " (" + r["error"].get<std::string>() + ")", true);
+        const std::string why = r["error"] == "blocked_by_remote_api_policy"
+                                    ? std::string(" (blocked, see Preferences > Remote API)")
+                                    : " (" + r["error"].get<std::string>() + ")";
+        api_notify("Couldn't move " + path_to_utf8(path_from_utf8(from).filename()) + why, true);
         return project_error_response(r);
     }
     api_notify("Moved project to " + path_to_utf8(path_from_utf8(to).filename()));
@@ -3066,6 +3216,9 @@ Response Controller::handle_delete_project_file(const std::string &body)
         Plater *plater = wxGetApp().plater();
         const boost::filesystem::path p = path_from_utf8(path);
         boost::system::error_code ec;
+        if (!project_file_changes_allowed())
+            return {{"error", "blocked_by_remote_api_policy"}, {"path", path},
+                    {"detail", "deleting a file needs Preferences > Remote API > Allow deleting and replacing project files"}};
         if (!boost::filesystem::is_regular_file(p, ec)) return {{"error", "file_not_found"}, {"path", path}};
         if (is_open_project_file(plater, p))
             return {{"error", "project_is_open"}, {"path", path},
@@ -3079,7 +3232,10 @@ Response Controller::handle_delete_project_file(const std::string &body)
         return {{"deleted", path}, {"bytes", bytes}, {"recent_updated", !recent.empty()}};
     }, /*timeout_s=*/30);
     if (r.contains("error")) {
-        api_notify("Couldn't delete " + path_to_utf8(path_from_utf8(path).filename()) + " (" + r["error"].get<std::string>() + ")", true);
+        const std::string why = r["error"] == "blocked_by_remote_api_policy"
+                                    ? std::string(" (blocked, see Preferences > Remote API)")
+                                    : " (" + r["error"].get<std::string>() + ")";
+        api_notify("Couldn't delete " + path_to_utf8(path_from_utf8(path).filename()) + why, true);
         return project_error_response(r);
     }
     api_notify("Deleted project file " + path_to_utf8(path_from_utf8(path).filename()));

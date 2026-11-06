@@ -315,6 +315,23 @@ The file routes (recent, browse, move, delete) work on `.3mf` files only, throug
 paths on the OrcaSlicer host, and never touch the open project's own file except to
 rename it. Delete is permanent: there is no trash.
 
+Two Preferences > Remote API boxes guard what these routes can do; both are off
+by default and both are answered with `422 blocked_by_remote_api_policy`:
+
+- **Allow deleting and replacing project files.** Without it `DELETE /project/file`
+  is refused, and so is a save or move with `overwrite: true` onto a file that is
+  already there. Saving to a free name, opening and renaming stay open.
+  `GET /status` reports it as `project_file_changes_allowed`.
+- **Allow script, G-code and connection edits**, the box `PUT /config` already
+  answers to. Without it `POST /project/open` reads the project's settings before
+  it changes anything and refuses a project that brings its own post-processing
+  script, custom G-code, printer connection, printer model or file name format,
+  meaning a value that differs from the local preset the project names, or one
+  from a preset that isn't on this computer. The reply lists them in `keys`. With
+  `presets: keep_current` only the filament slots the call can't put back are
+  checked. OrcaSlicer's own File > Open asks about modified G-code; this check is
+  what stands in for that prompt.
+
 Known limits: a 3MF from another slicer, a newer OrcaSlicer, or one that needs a
 migration can still raise an informational dialog inside the loader (projects saved
 by this build open without one). And `Plater::load_project` empties the window
@@ -345,7 +362,8 @@ The body is optional. Without `path` (or with `null`) the project is saved to it
 own path, as File > Save does; `422 no_project_path` when it has never been saved.
 With a `path` it is Save As: an existing file at that path is refused with
 `409 exists` unless `overwrite` is `true` (saving the project back onto its own
-path is a plain Save and never counts). The file holds what the GUI writes:
+path is a plain Save and never counts), and replacing it also needs the file
+changes box (`422 blocked_by_remote_api_policy`). The file holds what the GUI writes:
 plates, placement, per-object and per-plate settings, height ranges, slot
 presets and colours, and unsaved config edits. Afterwards `GET /status` reports
 the new `project` path and `project_dirty: false`, and the file is at the top of
@@ -382,7 +400,8 @@ each filament slot, for names that still exist); `presets_restored` says which. 
 project's own config edits are not kept in that mode. Errors: `404 file_not_found`
 (with a `detail` when the file is a stale recent entry) `| unknown_recent`,
 `409 slicing | busy`, `422 unsaved_changes | no_project_path | unsupported_format |
-load_failed`, `400 missing_path | bad_recent | bad_if_unsaved | bad_presets`.
+load_failed | blocked_by_remote_api_policy` (with `keys`),
+`400 missing_path | bad_recent | bad_if_unsaved | bad_presets`.
 
 ### POST /project/new
 
@@ -455,10 +474,12 @@ removed). When it is the open project's file, the window follows: project name,
 title, project folder and File > Recent show the new path and the next Save writes
 there; the content and the dirty state are untouched. Otherwise a recent-list entry
 naming the old path is pointed at the new one. An existing file at `to` is refused
-with `409 exists` unless `overwrite` is `true`, and the open project's own file is
-never overwritten. Errors: `404 file_not_found | directory_not_found`,
-`409 exists | project_is_open`, `400 not_3mf | same_path | missing_path`,
-`422 move_failed` (with the OS message).
+with `409 exists` unless `overwrite` is `true` and the file changes box is ticked,
+and the open project's own file is never overwritten. A rename that only changes
+the case of the name works on a case-insensitive disk. Errors:
+`404 file_not_found | directory_not_found`, `409 exists | project_is_open`,
+`400 not_3mf | same_path | missing_path`, `422 move_failed` (with the OS message) `|
+blocked_by_remote_api_policy`.
 
 ### DELETE /project/file
 
@@ -471,7 +492,8 @@ curl -X DELETE -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 ```
 Removes a `.3mf` from disk, permanently, and from File > Recent. The open project's
 own file is refused with `409 project_is_open`: start a new project or open another
-first. Errors: `404 file_not_found`, `400 not_3mf | missing_path`, `422 delete_failed`.
+first. Needs the file changes box. Errors: `404 file_not_found`,
+`400 not_3mf | missing_path`, `422 delete_failed | blocked_by_remote_api_policy`.
 
 ## Notes & limits
 
