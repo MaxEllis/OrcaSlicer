@@ -132,6 +132,7 @@ static std::string api_config_unit(const std::string &key)
 
 static int find_object_index(const Model &model, uint64_t id); // defined with the M4b object handlers below
 static bool sensitive_writes_allowed(); // defined with the sensitive-key policy below
+static bool project_file_changes_allowed(); // defined with the sensitive-key policy below
 static bool project_has_unsaved_changes(Plater *plater); // defined with the project handlers below
 
 
