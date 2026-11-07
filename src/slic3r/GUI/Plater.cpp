@@ -7204,7 +7204,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 
     if (tolal_model_count <= 0 && !q->m_exported_file) {
         dlg.Hide();
-        if (!is_user_cancel) {
+        // A Remote API open or load has no one to click Yes: skip the modal (the
+        // reply already says objects: 0) instead of blocking the GUI thread.
+        if (!is_user_cancel && !RemoteAPI::Controller::api_ui_task_active()) {
             MessageDialog msg(wxGetApp().mainframe, _L("The file does not contain any geometry data."), _L("Warning"), wxYES | wxICON_WARNING);
             if (msg.ShowModal() == wxID_YES) {}
         }

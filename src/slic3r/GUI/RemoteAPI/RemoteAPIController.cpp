@@ -1293,6 +1293,9 @@ Response Controller::handle_load_model(const std::string &body)
             cfg->set_bool("enable_step_mesh_setting", false);
             cfg->set_bool("step_not_utf8_no_warn", true);
         }
+        // File > Import's snapshot: without it the undo stack never moves, so the
+        // project never reads as unsaved and new/open would drop the model unasked.
+        Plater::TakeSnapshot snapshot(plater, "Import Object");
         std::vector<size_t> idxs = plater->load_files(std::vector<std::string>{ path },
                                                       LoadStrategy::LoadModel);
         if (is_step) {
@@ -1555,6 +1558,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
             return a;
         };
         if (clear) {
+            Plater::TakeSnapshot snapshot(plater, "Delete Height Range");
             mo->layer_config_ranges.clear();
             plater->changed_object(idx);
             wxGetApp().obj_list()->update_info_items(idx);
@@ -1578,6 +1582,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         DynamicPrintConfig c;
         c.set_key_value("layer_height", new ConfigOptionFloat(lh));
         c.set_key_value("extruder",     new ConfigOptionInt(0));
+        Plater::TakeSnapshot snapshot(plater, "Add Height Range");
         mo->layer_config_ranges[key].assign_config(std::move(c));
         plater->changed_object(idx);
         wxGetApp().obj_list()->update_info_items(idx);
@@ -1892,6 +1897,7 @@ Response Controller::handle_delete_object(uint64_t id)
         int idx = find_object_index(plater->model(), id);
         if (idx < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
         std::string oname = plater->model().objects[idx]->name;
+        Plater::TakeSnapshot snapshot(plater, "Delete Object: " + oname);
         plater->remove((size_t) idx);
         api_notify("Removed '" + oname + "'");
         return {{"deleted", true}, {"id", id}, {"count", plater->model().objects.size()}};
@@ -1924,6 +1930,7 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
         ModelObject *mo = plater->model().objects[idx];
         if (mo->instances.empty()) return {{"error", "no_instance"}};
         ModelInstance *mi = mo->instances.front();
+        Plater::TakeSnapshot snapshot(plater, "Transform Object");
         if (has_t) mi->set_offset(mi->get_offset() + tr);
         if (has_r) mi->set_rotation(mi->get_rotation() + ro * 0.017453292519943295); // deg->rad
         if (has_s) mi->set_scaling_factor(sc);
@@ -1960,6 +1967,7 @@ Response Controller::handle_duplicate_object(uint64_t id)
         const ModelInstance *src = mo->instances.front();
         Vec3d off = src->get_offset() + Vec3d(10.0, 10.0, 0.0);
         const bool was_one = mo->instances.size() == 1;
+        Plater::TakeSnapshot snapshot(plater, "Add Instance");
         mo->add_instance(off, src->get_scaling_factor(), src->get_rotation(), src->get_mirror());
         // sidebar: add the "Instances" child now, as Plater::increase_instances does (a lone object
         // gets both rows), instead of only at the next full list rebuild.
@@ -2007,6 +2015,7 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
             api_notify(std::string("Couldn't set object settings on '") + mo->name + "'", true);
             return {{"applied", nlohmann::json::array()}, {"errors", errors}};
         }
+        Plater::TakeSnapshot snapshot(plater, "Change Object Settings");
         mo->config.assign_config(std::move(cfg));
         plater->changed_object(idx);
         // changed_object() reschedules the background slice and repaints the 3D scene, but
