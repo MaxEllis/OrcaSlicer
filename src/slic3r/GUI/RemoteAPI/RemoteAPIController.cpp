@@ -2904,7 +2904,10 @@ Response Controller::handle_open_project(const std::string &body)
         const boost::filesystem::path now = into_path(plater->get_project_filename(".3mf"));
         const bool opened = !now.empty() && boost::filesystem::exists(now, ec) &&
                             boost::filesystem::equivalent(now, into_path(wpath), ec);
-        if (!opened) return {{"error", "load_failed"}, {"path", path}};
+        if (!opened)
+            return {{"error", "load_failed"}, {"path", path},
+                    {"detail", "OrcaSlicer could not open it as a project; a .3mf with no objects "
+                               "in it is not opened either"}};
 
         if (presets == "keep_current") {
             // The project's config sits as edits over the presets it selected;
