@@ -6969,7 +6969,12 @@ bool GLCanvas3D::render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned 
         scene_box.merge(content_box);
     // frame_object zooms to the models (detail); otherwise the whole plate
     // (where the part sits on the bed, first-layer footprint).
-    const BoundingBoxf3 &zoom_box = (frame_object && content_box.defined) ? content_box : scene_box;
+    // The plate view frames the bed's footprint and what sits on it. 2.5 framed the whole
+    // build volume (400 mm tall on most printers), which left the bed small and low.
+    BoundingBoxf3 plate_frame(plate_box.min, Vec3d(plate_box.max.x(), plate_box.max.y(), plate_box.min.z() + 1.0));
+    if (content_box.defined)
+        plate_frame.merge(content_box);
+    const BoundingBoxf3 &zoom_box = (frame_object && content_box.defined) ? content_box : plate_frame;
 
     thumbnail_data.set(w, h);
     if (!thumbnail_data.is_valid())
@@ -7025,6 +7030,17 @@ bool GLCanvas3D::render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned 
         const Transform3d projection_matrix = global_camera.get_projection_matrix();
         const bool        bottom            = !global_camera.is_looking_downward();
 
+        // 2.5: the on-screen translucent pass can leave depth writes off, and libvgcode
+        // draws the last-printed segments first, so without depth writes the bottom
+        // layers painted over the rest (and the depth clear did nothing). Set the depth
+        // state this render needs; put the caller's back after the read-back.
+        GLboolean prev_depth_mask = GL_TRUE;
+        GLint     prev_depth_func = GL_LESS;
+        glsafe(::glGetBooleanv(GL_DEPTH_WRITEMASK, &prev_depth_mask));
+        glsafe(::glGetIntegerv(GL_DEPTH_FUNC, &prev_depth_func));
+        glsafe(::glDepthMask(GL_TRUE));
+        glsafe(::glDepthFunc(GL_LESS));
+        glsafe(::glClearDepth(1.0f));
         glsafe(::glClearColor(0.906f, 0.906f, 0.906f, 1.0f));
         glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
         glsafe(::glEnable(GL_DEPTH_TEST));
@@ -7060,6 +7076,8 @@ bool GLCanvas3D::render_plate_thumbnail(ThumbnailData& thumbnail_data, unsigned 
         }
 
         glsafe(::glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)thumbnail_data.pixels.data()));
+        glsafe(::glDepthMask(prev_depth_mask));
+        glsafe(::glDepthFunc(prev_depth_func));
         ok = true;
     }
 
@@ -7131,13 +7149,16 @@ bool GLCanvas3D::render_gcode_thumbnail(ThumbnailData& thumbnail_data, unsigned 
         } camera_restore { global_camera, global_camera };
 
         BoundingBoxf3 scene_box = box;
+        BoundingBoxf3 plate_frame = box; // the bed footprint and the toolpaths, as in the editor view
         if (PartPlate *plate = wxGetApp().plater()->get_partplate_list().get_curr_plate()) {
             const BoundingBoxf3 plate_box = plate->get_build_volume();
-            if (plate_box.defined)
+            if (plate_box.defined) {
                 scene_box.merge(plate_box);
+                plate_frame.merge(BoundingBoxf3(plate_box.min, Vec3d(plate_box.max.x(), plate_box.max.y(), plate_box.min.z() + 1.0)));
+            }
         }
         // Default here is frame_object: support detail is the point of this view.
-        const BoundingBoxf3 &zoom_box = frame_object ? box : scene_box;
+        const BoundingBoxf3 &zoom_box = frame_object ? box : plate_frame;
 
         Camera camera;
         camera.set_type(Camera::EType::Ortho);
@@ -7150,6 +7171,17 @@ bool GLCanvas3D::render_gcode_thumbnail(ThumbnailData& thumbnail_data, unsigned 
         global_camera = camera;
         global_camera.apply_viewport();
 
+        // 2.5: the on-screen translucent pass can leave depth writes off, and libvgcode
+        // draws the last-printed segments first, so without depth writes the bottom
+        // layers painted over the rest (and the depth clear did nothing). Set the depth
+        // state this render needs; put the caller's back after the read-back.
+        GLboolean prev_depth_mask = GL_TRUE;
+        GLint     prev_depth_func = GL_LESS;
+        glsafe(::glGetBooleanv(GL_DEPTH_WRITEMASK, &prev_depth_mask));
+        glsafe(::glGetIntegerv(GL_DEPTH_FUNC, &prev_depth_func));
+        glsafe(::glDepthMask(GL_TRUE));
+        glsafe(::glDepthFunc(GL_LESS));
+        glsafe(::glClearDepth(1.0f));
         glsafe(::glClearColor(0.906f, 0.906f, 0.906f, 1.0f));
         glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
         glsafe(::glEnable(GL_DEPTH_TEST));
@@ -7162,6 +7194,8 @@ bool GLCanvas3D::render_gcode_thumbnail(ThumbnailData& thumbnail_data, unsigned 
         m_gcode_viewer.render_toolpaths_with_camera(global_camera);
 
         glsafe(::glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, (void*)thumbnail_data.pixels.data()));
+        glsafe(::glDepthMask(prev_depth_mask));
+        glsafe(::glDepthFunc(prev_depth_func));
         ok = true;
     }
 

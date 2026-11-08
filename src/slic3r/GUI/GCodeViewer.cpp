@@ -3235,6 +3235,12 @@ void GCodeViewer::render_toolpaths_with_camera(const Camera& camera)
         libvgcode::convert(static_cast<Matrix4f>(camera.get_view_matrix().matrix().cast<float>()));
     const libvgcode::Mat4x4 converted_projection_matrix =
         libvgcode::convert(static_cast<Matrix4f>(camera.get_projection_matrix().matrix().cast<float>()));
+    // PartPlate::render() ends with GL_DEPTH_TEST disabled. 2.4.2's renderer turned it
+    // back on itself; 2.5.0's libvgcode relies on the caller and draws the last-printed
+    // segments first, so without it the bottom layers painted over the rest.
+    glsafe(::glEnable(GL_DEPTH_TEST));
+    glsafe(::glDepthMask(GL_TRUE));
+    glsafe(::glDepthFunc(GL_LESS));
     m_viewer.render(converted_view_matrix, converted_projection_matrix);
     // 2.5: translucent filaments draw in a second pass (render_translucent_toolpaths
     // on screen); without it they would be missing from the render.
