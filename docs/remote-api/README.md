@@ -39,6 +39,28 @@ Base URL: `http://<host>:13130/api/v1`
 | PUT | `/config` | Apply config edits live (atomic) |
 | POST | `/slice` | Start slicing the current plate |
 | GET | `/slice/status` | Current/last slice state + stats + warnings |
+| POST | `/slice/cancel` | Stop a running slice, or clear a stuck `slicing` state |
+| GET | `/gcode` | The G-code of the current plate's last slice (`409` until it is sliced) |
+| POST | `/model` | Load a model file (`{"path"}`; .stl, .obj, .3mf geometry, .step/.stp) onto the plate |
+| GET | `/objects` | Objects on the bed: id, name, size, position, rotation, scale, bounding box, plate |
+| DELETE | `/objects/{id}` | Delete an object |
+| POST | `/objects/{id}/transform` | Move, rotate (degrees) or scale an object (`translate`, `rotate`, `scale`) |
+| POST | `/objects/{id}/duplicate` | Add one more copy of an object |
+| PUT | `/objects/{id}/config` | Per-object setting overrides |
+| PUT | `/objects/{id}/layer_height` | Adaptive layer height (`{"mode":"adaptive","quality"}`) or reset |
+| PUT | `/objects/{id}/height_range` | Settings for a height range of an object (`min_z`, `max_z`, `layer_height`), or `{"clear":true}` |
+| POST | `/arrange` | Arrange all (`202`; follow it with `GET /jobs/status`) |
+| POST | `/orient` | Auto-orient (`202`; follow it with `GET /jobs/status`) |
+| GET | `/jobs/status` | `{"idle"}`: whether an arrange or orient job is still running |
+| GET | `/plate/render` | PNG of the current plate: `view=editor\|preview`, `angle=iso\|top\|front\|left\|right\|rear\|bottom`, `frame=plate\|object`, `width`, `height` |
+| GET | `/presets` | Preset names per type, with system and selected flags |
+| PUT | `/preset` | Select a preset (`{"type":"print\|filament\|printer","name"}`) |
+| POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog |
+| POST | `/preset/config` | The full config of a named preset (`{"type","name"}`; credentials redacted) |
+| DELETE | `/preset` | Delete a user preset (never a system, selected or inherited-from one) |
+| GET | `/printer/slots` | Elegoo Centauri Carbon 2: read the CANVAS trays now |
+| GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from |
+| PUT | `/printer/slot_mapping` | Set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
 | WS | `/events?token=…` | Live event stream |
 | GET | `/plates` | List the plates: index, name, current, locked, objects on each |
 | POST | `/plates` | Add a plate (`{"select": true}` by default) |
