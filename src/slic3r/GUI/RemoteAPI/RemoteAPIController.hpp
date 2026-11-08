@@ -119,6 +119,8 @@ private:
     mutable std::mutex m_mutex;
     SliceState         m_slice;
     bool               m_events_bound { false };
+    // MCP panel: a slice started by POST /slice is running; its completion records the slice row. GUI thread.
+    bool               m_api_slice { false };
 
     std::mutex         m_cc_mutex;
     std::set<int>      m_cc_pending;

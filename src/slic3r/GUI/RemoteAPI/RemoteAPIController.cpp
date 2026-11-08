@@ -33,6 +33,7 @@
 #include "slic3r/GUI/ElegooCanvasGate.hpp"          // CANVAS: elegoo_canvas_enabled
 #include "slic3r/GUI/ElegooCanvasMappingDialog.hpp" // CANVAS: shared project-filament/mapping helpers
 #include "slic3r/GUI/ElegooCanvasState.hpp"         // CANVAS: last slot read + API-set mapping
+#include "slic3r/GUI/Jobs/Worker.hpp"               // MCP panel: queue_job after arrange / orient
 #include "slic3r/Utils/ElegooCanvas.hpp"
 #include "slic3r/Utils/ElegooCanvasMatch.hpp"
 #include "slic3r/Utils/ElegooLink.hpp"              // CANVAS: get_canvas_info
@@ -58,6 +59,7 @@
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -130,6 +132,297 @@ static std::string api_config_unit(const std::string &key)
 {
     const ConfigOptionDef *d = print_config_def.get(key);
     return (d != nullptr && !d->sidetext.empty()) ? (std::string(" ") + d->sidetext) : std::string();
+}
+
+// The MCP panel's rows use McpRecorder::config_label (full_label first: "Nozzle temperature", not "Other
+// layers") and McpRecorder::config_value_text (unit and enum label) instead of the two above.
+
+// --- MCP panel: recording API changes ------------------------------------------------------------------------
+// Every mutating handler calls mcp_before_change() inside its UI lambda once the request has validated, right
+// before the first change (its run_on_ui timeout is 120 s: a checkpoint export can be slow), then records its
+// row(s); a refusal or error reply to a change records a refused row. The target schema is documented at the
+// top of McpRecorder.hpp. Recording never fails a request: a recorder problem is logged and the change stands.
+static const char *const k_dot   = "\xC2\xB7";     // U+00B7, as the page writes it
+static const char *const k_arrow = "\xE2\x86\x92"; // U+2192
+static const char *const k_times = "\xC3\x97";     // U+00D7
+static const char *const k_deg   = "\xC2\xB0";     // U+00B0
+static const char *const k_dash  = "\xE2\x80\x93"; // U+2013
+static const std::string k_needs_sensitive =
+    "Needs Preferences \xE2\x80\xBA Remote API \xE2\x80\xBA Allow script, G-code and connection edits";
+static const std::string k_needs_file_changes =
+    "Needs Preferences \xE2\x80\xBA Remote API \xE2\x80\xBA Allow deleting and replacing project files";
+
+static void mcp_before_change()
+{
+    try {
+        McpRecorder::get().before_change();
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: before_change failed: " << e.what();
+    }
+}
+
+static void mcp_record(McpRow row)
+{
+    try {
+        McpRecorder::get().record(std::move(row));
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: row not recorded: " << e.what();
+    }
+}
+
+static McpRow mcp_row(const char *kind, std::string label, std::string value, std::string before = {},
+                      std::string where = {})
+{
+    McpRow r;
+    r.kind   = kind;
+    r.label  = std::move(label);
+    r.value  = std::move(value);
+    r.before = std::move(before);
+    r.where  = std::move(where);
+    return r;
+}
+
+static void mcp_undo(McpRow &r, const char *verb, std::string tip)
+{
+    r.undo_verb = verb;
+    r.undo_tip  = std::move(tip);
+}
+
+// Short reason for an API error token (the row's value); unknown tokens read as `fallback`.
+static std::string mcp_reason(const std::string &e, const char *fallback = "Rejected")
+{
+    static const std::map<std::string, std::string> reasons{
+        {"blocked_by_remote_api_policy", "Not allowed"},
+        {"unknown_object", "Object not found"},
+        {"no_instance", "Object has no copy"},
+        {"unknown_instance", "No such copy"},
+        {"file_not_found", "File not found"},
+        {"directory_not_found", "Folder not found"},
+        {"load_failed", "Couldn't open it"},
+        {"unsupported_format", "Unsupported file"},
+        {"slicing", "Busy slicing"},
+        {"busy", "Busy"},
+        {"job_running", "Busy"},
+        {"unsaved_changes", "Unsaved changes"},
+        {"no_project_path", "Never saved"},
+        {"exists", "File exists"},
+        {"same_path", "Same path"},
+        {"project_is_open", "Project is open"},
+        {"save_failed", "Couldn't save"},
+        {"move_failed", "Couldn't move"},
+        {"delete_failed", "Couldn't delete"},
+        {"cancelled", "Cancelled"},
+        {"unknown_recent", "Not in the recent list"},
+        {"unknown_plate", "No such plate"},
+        {"max_plates", "No room for another plate"},
+        {"last_plate", "Last plate"},
+        {"plate_locked", "Plate locked"},
+        {"select_failed", "Couldn't select"},
+        {"empty", "Nothing on the plate"},
+        {"unknown_preset", "No such preset"},
+        {"incompatible_preset", "Not compatible"},
+        {"slot_out_of_range", "No such filament"},
+        {"select_cancelled", "Switch cancelled"},
+        {"tab_unavailable", "Not ready"},
+        {"name_reserved", "Built-in name"},
+        {"builtin_preset", "Built-in preset"},
+        {"preset_selected", "Preset in use"},
+        {"has_children", "Other presets inherit it"},
+        {"layer_height_out_of_range", "Layer height out of range"},
+        {"overlaps_existing", "Overlaps a range"},
+        {"profile_failed", "Couldn't compute"},
+        {"unknown_key", "Unknown setting"},
+        {"not_editable_in_current_config", "Not editable here"},
+        {"redacted_placeholder", "Hidden value"},
+        {"key_dropped_by_legacy_handler", "Not stored"},
+        {"unknown_filament_index", "No such filament"},
+        {"unknown_tray", "No such tray"},
+        {"tray_not_ready", "Tray not ready"},
+        {"duplicate_tray", "Tray used twice"},
+        {"slots_unavailable", "No CANVAS trays"},
+    };
+    auto it = reasons.find(e);
+    if (it != reasons.end()) return it->second;
+    if (e.rfind("per_filament_length_mismatch", 0) == 0) return "Wrong number of values";
+    if (e.find("derived_from") == 0 || e.find("indexed_unchecked") == 0 || e.find("values_are_unchecked") == 0 ||
+        e.find("tied_to") == 0 || e.find("live_printer_state") == 0 || e == "not_writable_project_key")
+        return "Read-only";
+    return fallback;
+}
+
+// A refused change. label = the setting or action; value = "Not allowed" for a policy block, else a short
+// reason; where = what allows it, or the API's error and detail.
+static void mcp_refused(const std::string &label, const std::string &value, const std::string &where,
+                        const std::string &action)
+{
+    try {
+        McpRecorder::get().record_refusal(label, where, value, {{"type", "refused"}, {"action", action}});
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: refusal not recorded: " << e.what();
+    }
+}
+
+// The refused row for an error reply built in a UI lambda: {"error", "detail"?, "path"?}. A policy block
+// names the Preferences box that allows it.
+static void mcp_refused_reply(const std::string &label, const nlohmann::json &r, const std::string &action)
+{
+    const std::string e = r.contains("error") && r["error"].is_string() ? r["error"].get<std::string>() : "error";
+    std::string       where;
+    if (e == "blocked_by_remote_api_policy") {
+        const std::string detail = r.contains("detail") && r["detail"].is_string() ? r["detail"].get<std::string>() : "";
+        where = detail.find("deleting and replacing") != std::string::npos ? k_needs_file_changes : k_needs_sensitive;
+    } else {
+        where = e;
+        if (r.contains("detail") && r["detail"].is_string())
+            where += ": " + r["detail"].get<std::string>();
+        else if (r.contains("path") && r["path"].is_string())
+            where += ": " + r["path"].get<std::string>();
+    }
+    mcp_refused(label, mcp_reason(e), where, action);
+}
+
+static std::string mcp_file_name(const std::string &path_utf8)
+{
+    return into_u8(from_path(into_path(from_u8(path_utf8)).filename()));
+}
+
+static std::string mcp_size_text(const ModelObject &mo)
+{
+    const Vec3d sz = mo.bounding_box_exact().size();
+    return McpRecorder::num_text(std::round(sz.x())) + " " + k_times + " " + McpRecorder::num_text(std::round(sz.y())) +
+           " " + k_times + " " + McpRecorder::num_text(std::round(sz.z())) + " mm";
+}
+
+// "Plate 2", or "beside the bed" for -1 (off every plate).
+static std::string mcp_plate_text(int plate)
+{
+    return plate >= 0 ? "Plate " + std::to_string(plate + 1) : std::string("beside the bed");
+}
+
+static const char *mcp_preset_type_name(Preset::Type t)
+{
+    return t == Preset::TYPE_PRINT ? "print" : t == Preset::TYPE_FILAMENT ? "filament" : "printer";
+}
+
+// " (filament 2)" / " (filaments 1, 3)": the slots using the preset the Filament tab edits, when more than
+// one filament is loaded.
+static std::string mcp_edited_filament_suffix()
+{
+    auto *bundle = wxGetApp().preset_bundle;
+    if (bundle->filament_presets.size() <= 1) return {};
+    const std::string        sel = bundle->filaments.get_selected_preset_name();
+    std::vector<std::string> slots;
+    for (size_t i = 0; i < bundle->filament_presets.size(); ++i)
+        if (bundle->filament_presets[i] == sel) slots.push_back(std::to_string(i + 1));
+    if (slots.empty()) return {};
+    if (slots.size() == 1) return " (filament " + slots.front() + ")";
+    std::string t = " (filaments ";
+    for (size_t i = 0; i < slots.size(); ++i) t += (i ? ", " : "") + slots[i];
+    return t + ")";
+}
+
+// A setting row: value/before as config_value_text, undo "Revert" (raws in target).
+static McpRow mcp_config_row(const std::string &key, const std::string &label, const std::string &before_raw,
+                             const std::string &after_raw, nlohmann::json target, const std::string &where)
+{
+    McpRow r = mcp_row("setting", label, McpRecorder::config_value_text(key, after_raw),
+                       McpRecorder::config_value_text(key, before_raw), where);
+    target["before_raw"] = before_raw;
+    target["after_raw"]  = after_raw;
+    r.target             = std::move(target);
+    mcp_undo(r, "Revert", "Set " + label + " back to " + r.before);
+    return r;
+}
+
+// Every instance of the model: id, index, plate and matrix. For the arrange / orient rows.
+struct McpInstanceState
+{
+    uint64_t       object_id   = 0;
+    size_t         instance    = 0;
+    uint64_t       instance_id = 0;
+    int            plate       = -1;
+    nlohmann::json matrix;
+};
+
+static std::vector<McpInstanceState> mcp_instance_states(Plater *plater)
+{
+    std::vector<McpInstanceState> out;
+    const Model   &model  = plater->model();
+    PartPlateList &plates = plater->get_partplate_list();
+    for (size_t oi = 0; oi < model.objects.size(); ++oi) {
+        const ModelObject *mo = model.objects[oi];
+        for (size_t ii = 0; ii < mo->instances.size(); ++ii) {
+            McpInstanceState st;
+            st.object_id   = (uint64_t) mo->id().id;
+            st.instance    = ii;
+            st.instance_id = (uint64_t) mo->instances[ii]->id().id;
+            st.plate       = plates.find_instance((int) oi, (int) ii);
+            st.matrix      = McpRecorder::instance_matrix(*mo->instances[ii]);
+            out.push_back(std::move(st));
+        }
+    }
+    return out;
+}
+
+static bool mcp_same_matrix(const nlohmann::json &a, const nlohmann::json &b)
+{
+    if (!a.is_array() || !b.is_array() || a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const double x = a[i].get<double>(), y = b[i].get<double>();
+        if (std::abs(x - y) > 1e-6 * std::max({std::abs(x), std::abs(y), 1.0})) return false;
+    }
+    return true;
+}
+
+// After an arrange / orient job: one row with every instance that moved (or changed plate). Runs on the GUI
+// thread from the job queue, after the job's own finalize.
+static void mcp_record_instances(const char *op, const std::vector<McpInstanceState> &before, int plates_before)
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr) return;
+    const std::vector<McpInstanceState> after = mcp_instance_states(plater);
+    nlohmann::json        items = nlohmann::json::array();
+    std::set<uint64_t>    moved_objects;
+    for (const McpInstanceState &b : before) {
+        auto a = std::find_if(after.begin(), after.end(), [&b](const McpInstanceState &x) {
+            return x.object_id == b.object_id && x.instance_id == b.instance_id;
+        });
+        if (a == after.end()) continue;
+        if (a->plate == b.plate && mcp_same_matrix(a->matrix, b.matrix)) continue;
+        items.push_back({{"object_id", b.object_id}, {"instance", a->instance}, {"instance_id", b.instance_id},
+                         {"plate_before", b.plate}, {"plate_after", a->plate}, {"before", b.matrix},
+                         {"after", a->matrix}});
+        moved_objects.insert(b.object_id);
+    }
+    const bool arrange = std::string(op) == "arrange";
+    const int  n       = (int) moved_objects.size();
+    McpRow     r       = mcp_row(arrange ? "plate" : "model", arrange ? "Arranged" : "Auto-oriented",
+                                 n == 0 ? std::string("Nothing moved")
+                                        : std::to_string(n) + (n == 1 ? " object" : " objects"));
+    if (n == 1) {
+        const int oi = [&] {
+            for (size_t i = 0; i < plater->model().objects.size(); ++i)
+                if ((uint64_t) plater->model().objects[i]->id().id == *moved_objects.begin()) return (int) i;
+            return -1;
+        }();
+        if (oi >= 0) r.where = plater->model().objects[oi]->name;
+    }
+    r.target = {{"type", "instances"}, {"op", op}, {"plates_before", plates_before},
+                {"plates_after", plater->get_partplate_list().get_plate_count()}, {"items", items}};
+    if (n > 0)
+        mcp_undo(r, "Put back", n == 1 && !r.where.empty() ? "Move " + r.where + " back where it was"
+                                                          : "Put the " + std::to_string(n) +
+                                                                " objects back where they were");
+    mcp_record(std::move(r));
+}
+
+static void mcp_slice_finished(const nlohmann::json &stats, bool ok, const std::string &error)
+{
+    try {
+        McpRecorder::get().slice_finished(stats, ok, error);
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: slice row not recorded: " << e.what();
+    }
 }
 
 static int find_object_index(const Model &model, uint64_t id); // defined with the M4b object handlers below
@@ -726,6 +1019,9 @@ Response Controller::handle_put_config(const std::string &body)
         nlohmann::json applied = nlohmann::json::array();
         nlohmann::json errors  = nlohmann::json::object();
         std::vector<std::array<std::string, 3>> changes; // key, old, new -> notification
+        // MCP panel: every applied key with its raw old and new value, in request order. type -1 = project.
+        struct Staged { int type; std::string key, oldv, newv; };
+        std::vector<Staged> staged;
 
         // Project scope (CFS / multi-material) is staged on its own copy. It is
         // checked AFTER the three presets so wipe_tower_rotation_angle - the one
@@ -787,6 +1083,7 @@ Response Controller::handle_put_config(const std::string &body)
                     applied.push_back(key);
                     // Re-serialized, not echoed: handle_legacy can rewrite the value.
                     changes.push_back({ key, oldv, proj_new.opt_serialize(key) });
+                    staged.push_back({ -1, key, oldv, proj_new.opt_serialize(key) });
                 } catch (const std::exception &e) {
                     errors[key] = e.what();
                 }
@@ -844,6 +1141,7 @@ Response Controller::handle_put_config(const std::string &body)
                 }
                 tgt->touched = true;
                 applied.push_back(key);
+                staged.push_back({ int(tgt->type), key, oldv, newv });
                 // The notification is on screen, so it never shows a credential.
                 if (is_credential_key(key))
                     changes.push_back({ key, "(hidden)", "(hidden)" });
@@ -875,8 +1173,80 @@ Response Controller::handle_put_config(const std::string &body)
                     emsg += " (blocked, see Preferences > Remote API)";
             }
             api_notify(emsg, true);
+            // MCP panel: one refused row per rejected key (the batch applies nothing).
+            for (auto it2 = errors.begin(); it2 != errors.end(); ++it2) {
+                const std::string why = it2.value().is_string() ? it2.value().get<std::string>() : std::string("error");
+                if (why == "blocked_by_remote_api_policy")
+                    mcp_refused(McpRecorder::config_label(it2.key()), "Not allowed", k_needs_sensitive, "PUT /config");
+                else
+                    mcp_refused(McpRecorder::config_label(it2.key()), mcp_reason(why, "Invalid value"),
+                                it2.key() + ": " + why, "PUT /config");
+            }
             return {{"applied", nlohmann::json::array()}, {"errors", errors}};
         }
+
+        // MCP panel rows, built from the state before anything is applied (preset names, colours). A key
+        // written back to the value it has changes nothing and gets no row.
+        std::vector<McpRow> mcp_rows;
+        for (const Staged &c : staged) {
+            if (c.type < 0) {
+                if (c.key == "filament_colour") {
+                    // One row per slot whose colour changed.
+                    const auto *after = proj_new.option<ConfigOptionStrings>("filament_colour");
+                    if (after == nullptr) continue;
+                    for (size_t i = 0; i < after->values.size(); ++i) {
+                        const std::string b = i < colours_before.size() ? colours_before[i] : std::string();
+                        if (b == after->values[i]) continue;
+                        mcp_rows.push_back(mcp_config_row(c.key, "Filament " + std::to_string(i + 1) + " colour", b,
+                                                          after->values[i],
+                                                          {{"type", "config"}, {"key", c.key}, {"scope", "project"}, {"index", i}},
+                                                          std::string()));
+                    }
+                } else if (c.key == "wipe_tower_x" || c.key == "wipe_tower_y") {
+                    // Per-plate vectors: the element of the current plate (written with set_at above).
+                    const auto *ob = bundle->project_config.option<ConfigOptionFloats>(c.key);
+                    const auto *na = proj_new.option<ConfigOptionFloats>(c.key);
+                    if (na == nullptr || na->values.empty()) continue;
+                    const std::string b = (ob == nullptr || ob->values.empty()) ? std::string()
+                                              : ConfigOptionFloat(ob->get_at(size_t(plate_idx))).serialize();
+                    const std::string a = ConfigOptionFloat(na->get_at(size_t(plate_idx))).serialize();
+                    if (a == b) continue;
+                    mcp_rows.push_back(mcp_config_row(c.key, c.key == "wipe_tower_x" ? "Wipe tower X" : "Wipe tower Y", b, a,
+                                                      {{"type", "config"}, {"key", c.key}, {"scope", "project"},
+                                                       {"index", plate_idx}},
+                                                      "plate " + std::to_string(plate_idx + 1)));
+                } else {
+                    if (c.oldv == c.newv) continue;
+                    mcp_rows.push_back(mcp_config_row(c.key, McpRecorder::config_label(c.key), c.oldv, c.newv,
+                                                      {{"type", "config"}, {"key", c.key}, {"scope", "project"}},
+                                                      std::string()));
+                }
+                continue;
+            }
+            if (c.oldv == c.newv) continue;
+            const Preset::Type     type  = Preset::Type(c.type);
+            const PresetCollection &coll = type == Preset::TYPE_PRINT    ? bundle->prints :
+                                           type == Preset::TYPE_FILAMENT ? bundle->filaments : bundle->printers;
+            const std::string preset = coll.get_selected_preset_name();
+            const std::string label  = McpRecorder::config_label(c.key) +
+                                      (type == Preset::TYPE_FILAMENT ? mcp_edited_filament_suffix() : std::string());
+            const std::string where  = preset + " (unsaved)";
+            nlohmann::json    target = {{"type", "config"}, {"key", c.key}, {"scope", mcp_preset_type_name(type)},
+                                        {"preset", preset}};
+            const bool login_in_url = is_host_url_key(c.key) &&
+                                      (c.oldv.find('@') != std::string::npos || c.newv.find('@') != std::string::npos);
+            if (is_credential_key(c.key) || login_in_url) {
+                // Never kept or shown: no raws, no undo (the change is still listed).
+                McpRow r = mcp_row("setting", label,
+                                   login_in_url ? strip_url_userinfo(c.newv) : std::string("(hidden)"),
+                                   login_in_url ? strip_url_userinfo(c.oldv) : std::string("(hidden)"), where);
+                r.target = std::move(target);
+                mcp_rows.push_back(std::move(r));
+                continue;
+            }
+            mcp_rows.push_back(mcp_config_row(c.key, label, c.oldv, c.newv, std::move(target), where));
+        }
+        if (!mcp_rows.empty()) mcp_before_change();
 
         // Apply through the GUI's own path: dirty markers + live panel refresh.
         // Same idiom as PlaterPresetComboBox::change_extruder_color()
@@ -976,6 +1346,8 @@ Response Controller::handle_put_config(const std::string &body)
             }
         }
 
+        for (McpRow &row : mcp_rows) mcp_record(std::move(row));
+
         if (!changes.empty()) {
             std::string msg = "Settings updated";
             int shown = 0;
@@ -993,7 +1365,7 @@ Response Controller::handle_put_config(const std::string &body)
         }
 
         return {{"applied", applied}, {"errors", errors}};
-    });
+    }, /*timeout_s=*/120); // a checkpoint export in mcp_before_change can be slow
 
     int status = result["errors"].empty() ? 200 : 422;
     return { status, result };
@@ -1181,18 +1553,23 @@ void Controller::bind_plater_events()
 
     plater->Bind(EVT_PROCESS_COMPLETED, [this](SlicingProcessCompletedEvent &evt) {
         evt.Skip(); // REQUIRED (see above)
+        // MCP panel: only a slice the API started gets a row (GUI slices and background re-slices don't).
+        const bool api_slice = m_api_slice;
+        m_api_slice = false;
         if (evt.error()) {
             auto msg = evt.format_error_message();
             set_slice_state([&](SliceState &s) {
                 s.state = "error"; s.percent = -1; s.message = msg.first;
                 s.stats = nullptr; s.warnings = nlohmann::json::array();
             }, "slice.error");
+            if (api_slice) mcp_slice_finished(nullptr, false, msg.first);
             return;
         }
         if (evt.cancelled()) {
             set_slice_state([&](SliceState &s) {
                 s.state = "idle"; s.percent = -1; s.message = "cancelled";
             }, "slice.cancelled");
+            if (api_slice) mcp_slice_finished(nullptr, false, "cancelled");
             return;
         }
         // Success: harvest stats on the GUI thread (we ARE on it - wx handler).
@@ -1202,6 +1579,7 @@ void Controller::bind_plater_events()
             s.state = "done"; s.percent = 100; s.message = "";
             s.stats = stats; s.warnings = warnings;
         }, "slice.done");
+        if (api_slice) mcp_slice_finished(stats, true, std::string());
     });
 }
 
@@ -1238,6 +1616,7 @@ Response Controller::handle_slice()
             s.state = "slicing"; s.percent = 0; s.message = "starting";
             s.stats = nullptr; s.warnings = nlohmann::json::array();
         }, "slice.started");
+        m_api_slice = true; // the completion event records the MCP panel's slice row
         plater->reslice();
         // F2: reslice() bails out synchronously - with NO completion event -
         // when the plate can't be sliced (update_background_process() INVALID,
@@ -1251,6 +1630,7 @@ Response Controller::handle_slice()
             // starts no job and sets the flag again. That is the old result, not an error.
             // The state already says "slicing" here, which sync_slice_state_to_current_plate
             // leaves alone, so report the result directly.
+            m_api_slice = false; // nothing started: no completion event is coming
             if (plater->get_partplate_list().get_curr_plate()->is_slice_result_valid()) {
                 nlohmann::json stats, warnings;
                 current_plate_slice_stats(stats, warnings);
@@ -1265,6 +1645,7 @@ Response Controller::handle_slice()
                 s.message = "plate cannot be sliced (object outside bed or invalid state)";
                 s.stats = nullptr; s.warnings = nlohmann::json::array();
             }, "slice.error");
+            mcp_slice_finished(nullptr, false, "plate cannot be sliced (object outside bed or invalid state)");
             return {{"error", "slice_not_started"}};
         }
         return {{"started", true}};
@@ -1302,8 +1683,13 @@ Response Controller::handle_slice_cancel()
     nlohmann::json r = run_on_ui([this]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
         bool was_slicing = slice_state().state == "slicing";
+        // MCP panel: the cancelled row is recorded here; the completion event (if it still fires) finds the
+        // flag cleared and records nothing.
+        const bool api_slice = m_api_slice;
+        m_api_slice = false;
         if (plater != nullptr)
             plater->stop_background_slicing();
+        if (api_slice) mcp_slice_finished(nullptr, false, "cancelled");
         set_slice_state([](SliceState &s) {
             s.state = "idle"; s.percent = -1; s.message = "cancelled";
             s.stats = nullptr; s.warnings = nlohmann::json::array();
@@ -1338,17 +1724,27 @@ Response Controller::handle_load_model(const std::string &body)
     const bool is_step = ends_with(".step") || ends_with(".stp");
     if (!(ends_with(".stl") || ends_with(".obj") || ends_with(".3mf") || is_step)) {
         api_notify("Can't load " + boost::filesystem::path(path).filename().string() + ": unsupported format", true);
-        return { 422, {{"error", "unsupported_format"},
-                       {"detail", "remote load supports .stl, .obj, .3mf, .step, .stp"}} };
+        nlohmann::json e = {{"error", "unsupported_format"}, {"detail", "remote load supports .stl, .obj, .3mf, .step, .stp"}};
+        try {
+            run_on_ui([e]() -> nlohmann::json { mcp_refused_reply("Add model", e, "POST /model"); return nullptr; });
+        } catch (const std::exception &) {} // the panel row is not worth failing the reply over
+        return { 422, e };
     }
 
     // 120 s instead of the default 10: OCCT read + tessellation of a real-world
     // STEP (and mesh import of a very large STL) can exceed 10 s, and the load
     // would still complete on the GUI thread after a ui_timeout was returned.
     nlohmann::json r = run_on_ui([path, is_step]() -> nlohmann::json {
+        auto refuse = [&path](nlohmann::json e) -> nlohmann::json {
+            e["path"] = path;
+            mcp_refused_reply("Add " + mcp_file_name(path), e, "POST /model");
+            e.erase("path");
+            return e;
+        };
         if (!boost::filesystem::exists(path))
-            return {{"error", "file_not_found"}}; // not "not_found": that token means a missing route (F18)
+            return refuse({{"error", "file_not_found"}}); // not "not_found": that token means a missing route (F18)
         Plater *plater = wxGetApp().plater();
+        mcp_before_change();
         // Use the stored deflection defaults instead of StepMeshDialog and skip
         // the non-UTF8 name warning while loading; restore the user's flags after.
         AppConfig *cfg = wxGetApp().app_config;
@@ -1369,13 +1765,18 @@ Response Controller::handle_load_model(const std::string &body)
             cfg->set_bool("step_not_utf8_no_warn", prev_utf8_warn);
         }
         if (idxs.empty())
-            return {{"error", "load_failed"}};
+            return refuse({{"error", "load_failed"}});
         nlohmann::json objects = nlohmann::json::array();
         for (size_t i : idxs) {
             const ModelObject *mo = plater->model().objects[i];
             auto sz = mo->bounding_box_exact().size();
             objects.push_back({{"index", i}, {"name", mo->name},
                                {"size_mm", {sz.x(), sz.y(), sz.z()}}});
+            McpRow row = mcp_row("model", "Added", mo->name, std::string(), mcp_size_text(*mo));
+            row.title_hint = "added";
+            row.target     = {{"type", "added"}, {"object_id", (uint64_t) mo->id().id}};
+            mcp_undo(row, "Remove", "Remove " + mo->name + " from the plate");
+            mcp_record(std::move(row));
         }
         return {{"loaded", true}, {"objects", objects}};
     }, /*timeout_s=*/120);
@@ -1416,16 +1817,26 @@ Response Controller::handle_select_preset(const std::string &body)
             auto    *bundle  = wxGetApp().preset_bundle;
             Plater  *plater  = wxGetApp().plater();
             Sidebar &sidebar = plater->sidebar();
+            const std::string slot_label = "Filament " + std::to_string(slot + 1);
+            auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+                e["detail"] = name;
+                mcp_refused_reply(slot_label, e, "PUT /preset");
+                e.erase("detail");
+                return e;
+            };
             if (slot >= bundle->filament_presets.size())
-                return {{"error", "slot_out_of_range"}, {"filament_count", bundle->filament_presets.size()}};
+                return refuse({{"error", "slot_out_of_range"}, {"filament_count", bundle->filament_presets.size()}});
             const Preset *preset = bundle->filaments.find_preset(name, false, true);
             if (preset == nullptr)
-                return {{"error", "unknown_preset"}};
+                return refuse({{"error", "unknown_preset"}});
             if (!preset->is_compatible)
-                return {{"error", "incompatible_preset"}};
+                return refuse({{"error", "incompatible_preset"}});
             // Single-filament printer: slot 0 is the Filament tab's preset.
             if (!sidebar.is_multifilament())
                 return {{"use_tab", true}};
+            // MCP panel: a slot switched to the preset it already has changes nothing.
+            const std::string before = bundle->filament_presets[slot];
+            if (before != name) mcp_before_change();
             // Same steps as Plater::priv::on_select_preset() for a filament combo.
             const bool was_support = is_support_filament(int(slot));
             bundle->set_filament_preset(slot, name);
@@ -1439,8 +1850,15 @@ Response Controller::handle_select_preset(const std::string &body)
             auto &combos = sidebar.combos_filament();
             if (slot < combos.size())
                 combos[slot]->update();
+            if (before != name) {
+                McpRow row = mcp_row("preset", slot_label, name, before);
+                row.target = {{"type", "preset"}, {"preset_type", "filament"}, {"slot", slot}, {"before", before},
+                              {"after", name}, {"discarded", nlohmann::json::array()}};
+                mcp_undo(row, "Switch back", "Switch " + slot_label + " back to " + before);
+                mcp_record(std::move(row));
+            }
             return {{"selected", name}, {"slot", slot}, {"filaments", bundle->filament_presets}};
-        });
+        }, /*timeout_s=*/120);
         if (!r.contains("use_tab")) {
             if (r.contains("error")) {
                 const std::string err = r["error"].get<std::string>();
@@ -1460,12 +1878,26 @@ Response Controller::handle_select_preset(const std::string &body)
         PresetCollection &presets = type == Preset::TYPE_PRINT    ? bundle->prints :
                                     type == Preset::TYPE_FILAMENT ? bundle->filaments :
                                                                     bundle->printers;
+        const std::string group_label = type == Preset::TYPE_PRINT    ? "Print preset" :
+                                        type == Preset::TYPE_FILAMENT ? "Filament" : "Printer";
+        auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+            e["detail"] = name;
+            mcp_refused_reply(group_label, e, "PUT /preset");
+            e.erase("detail");
+            return e;
+        };
         // Validate up front: select_preset silently falls back to a visible preset
         // for an unknown name, so its return can't be trusted for a 422.
         if (presets.find_preset(name, false, true) == nullptr)
-            return {{"error", "unknown_preset"}};
+            return refuse({{"error", "unknown_preset"}});
         Tab *tab = wxGetApp().get_tab(type);
-        if (tab == nullptr) return {{"error", "tab_unavailable"}};
+        if (tab == nullptr) return refuse({{"error", "tab_unavailable"}});
+        // MCP panel: the switch is recorded unless it changes nothing (same preset, no edits to drop).
+        const std::string before   = presets.get_selected_preset_name();
+        const bool        any_edit = bundle->prints.current_is_dirty() || bundle->filaments.current_is_dirty() ||
+                                     bundle->sla_materials.current_is_dirty() || bundle->printers.current_is_dirty();
+        const bool        record   = before != name || any_edit;
+        if (record) mcp_before_change();
         // Discard un-applied GUI edits on EVERY collection Tab::select_preset may
         // inspect. It consults dependent tabs too (switching a print/printer preset
         // checks the filament/print collections' dirty state), and ANY dirty one
@@ -1491,9 +1923,22 @@ Response Controller::handle_select_preset(const std::string &body)
         discard_if_dirty(bundle->sla_materials, "sla_material");
         discard_if_dirty(bundle->printers, "printer");
         bool ok = tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true);
-        if (!ok) return {{"error", "select_cancelled"}};
+        if (!ok) return refuse({{"error", "select_cancelled"}});
+        if (record) {
+            std::string where;
+            if (!discarded.empty()) {
+                where = "Unsaved edits dropped: ";
+                for (size_t i = 0; i < discarded.size(); ++i)
+                    where += (i ? ", " : "") + discarded[i].get<std::string>();
+            }
+            McpRow row = mcp_row("preset", group_label, name, before, where);
+            row.target = {{"type", "preset"}, {"preset_type", mcp_preset_type_name(type)}, {"slot", nullptr},
+                          {"before", before}, {"after", name}, {"discarded", discarded}};
+            if (before != name) mcp_undo(row, "Switch back", "Switch " + group_label + " back to " + before);
+            mcp_record(std::move(row));
+        }
         return {{"selected", name}, {"discarded_changes", discarded}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         if (r["error"] == "unknown_preset") {
             api_notify("No such " + type_s + " preset '" + name + "'", true);
@@ -1546,18 +1991,32 @@ Response Controller::handle_save_preset(const std::string &body)
         PresetCollection &presets = type == Preset::TYPE_PRINT    ? bundle->prints :
                                     type == Preset::TYPE_FILAMENT ? bundle->filaments :
                                                                     bundle->printers;
+        const std::string tname = mcp_preset_type_name(type);
+        auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+            e["detail"] = name;
+            mcp_refused_reply("Save " + tname + " preset", e, "POST /preset/save");
+            e.erase("detail");
+            return e;
+        };
         const Preset *existing = presets.find_preset(name, false);
         if (existing != nullptr && (existing->is_system || existing->is_default))
-            return {{"error", "name_reserved"}};
+            return refuse({{"error", "name_reserved"}});
         Tab *tab = wxGetApp().get_tab(type);
-        if (tab == nullptr) return {{"error", "tab_unavailable"}};
+        if (tab == nullptr) return refuse({{"error", "tab_unavailable"}});
         bool created = existing == nullptr;
+        mcp_before_change();
         tab->save_preset(name, detach, /*save_to_project=*/false);
         // save_preset returns void; confirm the preset actually landed.
         const Preset *saved = presets.find_preset(name, false);
-        if (saved == nullptr) return {{"error", "save_failed"}};
+        if (saved == nullptr) return refuse({{"error", "save_failed"}});
+        McpRow row = mcp_row("preset", "Saved preset", name, std::string(),
+                             created ? "New " + tname + " preset" : "Replaced the saved " + tname + " preset");
+        row.on_disk = true;
+        row.target  = {{"type", "preset_saved"}, {"preset_type", tname}, {"name", name}, {"created", created}};
+        if (created) mcp_undo(row, "Delete preset", "Delete the " + tname + " preset " + name);
+        mcp_record(std::move(row));
         return {{"saved", name}, {"created", created}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         if (r["error"] == "name_reserved") {
             api_notify("Can't overwrite built-in " + type_s + " preset '" + name + "'", true);
@@ -1606,15 +2065,31 @@ Response Controller::handle_put_layer_height(uint64_t id, const std::string &bod
         return { 400, {{"error", "quality_out_of_range"}, {"detail", "0..1"}} };
 
     nlohmann::json r = run_on_ui([id, mode, quality]() -> nlohmann::json {
+        const std::string action = mode == "reset" ? "Reset layer height" : "Adaptive layer height";
+        auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply(action, e, "PUT /objects/{id}/layer_height");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
         int idx = find_object_index(plater->model(), id);
-        if (idx < 0) return {{"error", "unknown_object"}};
+        if (idx < 0) return refuse({{"error", "unknown_object"}});
         ModelObject *mo = plater->model().objects[idx];
+        // MCP panel: the profile before, for "Undo".
+        const std::vector<double> profile_before = mo->layer_height_profile.get();
+        auto record_profile = [&](const char *label, const std::string &where) {
+            McpRow row = mcp_row("setting", label, mo->name, std::string(), where);
+            row.target = {{"type", "layer_profile"}, {"object_id", id}, {"before", profile_before},
+                          {"after", mo->layer_height_profile.get()}};
+            mcp_undo(row, "Undo", "Put the previous layer height profile of " + mo->name + " back");
+            mcp_record(std::move(row));
+        };
         if (mode == "reset") {
+            mcp_before_change();
             mo->layer_height_profile.clear();
             plater->schedule_background_process();
             wxGetApp().obj_list()->update_info_items(idx);
             api_notify("Reset layer height profile on '" + mo->name + "'");
+            record_profile("Layer height reset", std::string());
             return {{"id", id}, {"mode", "reset"}};
         }
         const DynamicPrintConfig full_cfg = wxGetApp().preset_bundle->full_config();
@@ -1623,7 +2098,8 @@ Response Controller::handle_put_layer_height(uint64_t id, const std::string &bod
             full_cfg, *mo, 0.f, plater->fff_print().shrinkage_compensation());
         std::vector<double> profile = layer_height_profile_adaptive(sp, *mo, (float) quality);
         if (profile.size() < 4)
-            return {{"error", "profile_failed"}};
+            return refuse({{"error", "profile_failed"}});
+        mcp_before_change();
         mo->layer_height_profile.set(std::move(profile));
         const std::vector<double> &prof = mo->layer_height_profile.get();
         plater->schedule_background_process();
@@ -1634,10 +2110,11 @@ Response Controller::handle_put_layer_height(uint64_t id, const std::string &bod
             hmax = std::max(hmax, prof[i]);
         }
         api_notify("Applied adaptive layer height to '" + mo->name + "'");
+        record_profile("Adaptive layer height", "Quality " + McpRecorder::num_text(quality));
         return {{"id", id}, {"mode", "adaptive"}, {"quality", quality},
                 {"points", (unsigned) (prof.size() / 2)},
                 {"layer_height_min", hmin}, {"layer_height_max", hmax}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error"))
         return { r["error"] == "unknown_object" ? 404 : 422, r };
     return { 200, r };
@@ -1663,9 +2140,21 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
     }
 
     nlohmann::json r = run_on_ui([id, clear, min_z, max_z, lh]() -> nlohmann::json {
+        const std::string range_label = "Height range " + McpRecorder::num_text(min_z) + k_dash +
+                                        McpRecorder::num_text(max_z) + " mm";
+        auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply(clear ? std::string("Clear height ranges") : range_label, e,
+                              "PUT /objects/{id}/height_range");
+            return e;
+        };
+        auto config_map = [](const ModelConfig &c) {
+            nlohmann::json m = nlohmann::json::object();
+            for (const std::string &k : c.keys()) m[k] = c.opt_serialize(k);
+            return m;
+        };
         Plater *plater = wxGetApp().plater();
         int idx = find_object_index(plater->model(), id);
-        if (idx < 0) return {{"error", "unknown_object"}};
+        if (idx < 0) return refuse({{"error", "unknown_object"}});
         ModelObject *mo = plater->model().objects[idx];
         auto ranges_json = [mo]() {
             nlohmann::json a = nlohmann::json::array();
@@ -1675,11 +2164,24 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
             return a;
         };
         if (clear) {
+            // MCP panel: the ranges as they were, for "Put back". Clearing none changes nothing.
+            nlohmann::json was = nlohmann::json::array();
+            for (const auto &kv : mo->layer_config_ranges)
+                was.push_back({{"min_z", kv.first.first}, {"max_z", kv.first.second}, {"config", config_map(kv.second)}});
+            if (!was.empty()) mcp_before_change();
             Plater::TakeSnapshot snapshot(plater, "Delete Height Range");
             mo->layer_config_ranges.clear();
             plater->changed_object(idx);
             wxGetApp().obj_list()->update_info_items(idx);
             api_notify("Cleared height ranges on '" + mo->name + "'");
+            if (!was.empty()) {
+                McpRow row = mcp_row("setting", "Height ranges cleared",
+                                     std::to_string(was.size()) + (was.size() == 1 ? " range" : " ranges"),
+                                     std::string(), mo->name);
+                row.target = {{"type", "height_ranges_cleared"}, {"object_id", id}, {"ranges", was}};
+                mcp_undo(row, "Put back", "Put the height ranges of " + mo->name + " back");
+                mcp_record(std::move(row));
+            }
             return {{"id", id}, {"height_ranges", ranges_json()}};
         }
         // Printer limits, same rules as ObjectList's get_min/max_layer_height.
@@ -1688,24 +2190,49 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         double maxh = pcfg.opt_float("max_layer_height", 0);
         if (maxh < EPSILON) maxh = 0.75 * pcfg.opt_float("nozzle_diameter", 0);
         if (lh < minh || lh > maxh)
-            return {{"error", "layer_height_out_of_range"}, {"min", minh}, {"max", maxh}};
+            return refuse({{"error", "layer_height_out_of_range"}, {"min", minh}, {"max", maxh},
+                           {"detail", "layer height must be within " + McpRecorder::num_text(minh) + " to " +
+                                          McpRecorder::num_text(maxh) + " mm"}});
         t_layer_height_range key{ min_z, max_z };
         for (const auto &kv : mo->layer_config_ranges) {
             if (kv.first == key) continue;
             if (min_z < kv.first.second && kv.first.first < max_z)
-                return {{"error", "overlaps_existing"},
-                        {"existing", {kv.first.first, kv.first.second}}};
+                return refuse({{"error", "overlaps_existing"},
+                               {"existing", {kv.first.first, kv.first.second}}});
+        }
+        // MCP panel: an existing range with the same bounds is updated; its earlier config is the "before".
+        nlohmann::json range_before = nullptr;
+        std::string    lh_before;
+        {
+            auto it = mo->layer_config_ranges.find(key);
+            if (it != mo->layer_config_ranges.end()) {
+                range_before = config_map(it->second);
+                if (it->second.has("layer_height")) lh_before = "layer " + McpRecorder::num_text(it->second.opt_float("layer_height")) + " mm";
+            }
         }
         DynamicPrintConfig c;
         c.set_key_value("layer_height", new ConfigOptionFloat(lh));
         c.set_key_value("extruder",     new ConfigOptionInt(0));
+        mcp_before_change();
         Plater::TakeSnapshot snapshot(plater, "Add Height Range");
         mo->layer_config_ranges[key].assign_config(std::move(c));
         plater->changed_object(idx);
         wxGetApp().obj_list()->update_info_items(idx);
         api_notify("Set height range " + std::to_string(min_z) + "-" + std::to_string(max_z) + " mm on '" + mo->name + "'");
+        {
+            McpRow row = mcp_row("setting", range_label, "layer " + McpRecorder::num_text(lh) + " mm", lh_before, mo->name);
+            row.target = {{"type", "height_range"}, {"object_id", id}, {"min_z", min_z}, {"max_z", max_z},
+                          {"before", range_before}, {"after", config_map(mo->layer_config_ranges[key])}};
+            if (range_before.is_null())
+                mcp_undo(row, "Remove range", "Remove the " + McpRecorder::num_text(min_z) + k_dash +
+                                                  McpRecorder::num_text(max_z) + " mm range from " + mo->name);
+            else
+                mcp_undo(row, "Revert", "Set the " + McpRecorder::num_text(min_z) + k_dash + McpRecorder::num_text(max_z) +
+                                            " mm range of " + mo->name + " back to " + lh_before);
+            mcp_record(std::move(row));
+        }
         return {{"id", id}, {"height_ranges", ranges_json()}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error"))
         return { r["error"] == "unknown_object" ? 404 : 422, r };
     return { 200, r };
@@ -1770,26 +2297,39 @@ Response Controller::handle_delete_preset(const std::string &body)
     if (type == Preset::TYPE_INVALID)
         return { 400, {{"error", "unknown_type"}} };
     nlohmann::json r = run_on_ui([type, type_s, name]() -> nlohmann::json {
+        auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+            if (!e.contains("detail")) e["detail"] = name;
+            mcp_refused_reply("Delete " + type_s + " preset", e, "DELETE /preset");
+            if (e["detail"].is_string() && e["detail"].get<std::string>() == name) e.erase("detail");
+            return e;
+        };
         PresetCollection *presets = api_preset_collection(type_s);
         const Preset *p = presets->find_preset(name, false);
-        if (p == nullptr) return {{"error", "unknown_preset"}};
-        if (p->is_system || p->is_default) return {{"error", "builtin_preset"}};
+        if (p == nullptr) return refuse({{"error", "unknown_preset"}});
+        if (p->is_system || p->is_default) return refuse({{"error", "builtin_preset"}});
         if (presets->get_selected_preset_name() == name)
-            return {{"error", "preset_selected"},
-                    {"detail", "select another preset first, then delete"}};
+            return refuse({{"error", "preset_selected"},
+                           {"detail", "select another preset first, then delete"}});
         for (const Preset &other : presets->get_presets())
             if (other.name != name && other.inherits() == name)
-                return {{"error", "has_children"},
-                        {"detail", "other presets inherit from this one"}};
+                return refuse({{"error", "has_children"},
+                               {"detail", "other presets inherit from this one"}});
+        mcp_before_change();
         if (!presets->delete_preset(name))
-            return {{"error", "delete_failed"}};
+            return refuse({{"error", "delete_failed"}});
         // Refresh the tab's preset list + the plater sidebar combo.
         if (Tab *tab = wxGetApp().get_tab(type); tab != nullptr)
             tab->update_tab_ui();
         wxGetApp().plater()->sidebar().update_presets(type);
         api_notify("Deleted " + type_s + " preset '" + name + "'");
+        McpRow row = mcp_row("preset", "Deleted preset", name, std::string(),
+                             std::string(type == Preset::TYPE_PRINT ? "Print" : type == Preset::TYPE_FILAMENT ? "Filament" : "Printer") +
+                                 " preset");
+        row.on_disk = true;
+        row.target  = {{"type", "preset_deleted"}, {"preset_type", type_s}, {"name", name}};
+        mcp_record(std::move(row));
         return {{"deleted", name}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         if (r["error"] == "unknown_preset") return { 404, r };
         if (r["error"] == "delete_failed")  return { 500, r };
@@ -2012,13 +2552,32 @@ Response Controller::handle_delete_object(uint64_t id)
     nlohmann::json r = run_on_ui([id]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
         int idx = find_object_index(plater->model(), id);
-        if (idx < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
+        if (idx < 0) {
+            api_notify("Object not found", true);
+            nlohmann::json e = {{"error", "unknown_object"}};
+            mcp_refused_reply("Remove object " + std::to_string(id), e, "DELETE /objects/{id}");
+            return e;
+        }
         std::string oname = plater->model().objects[idx]->name;
+        // MCP panel: keep a full copy for "Put back", with the plate it was on.
+        const int plate = plater->get_partplate_list().find_instance(idx, 0);
+        mcp_before_change();
+        int stash = 0;
+        try {
+            stash = McpRecorder::get().stash_object(*plater->model().objects[idx], plate);
+        } catch (const std::exception &e) {
+            BOOST_LOG_TRIVIAL(error) << "MCP panel: object not stashed: " << e.what();
+        }
         Plater::TakeSnapshot snapshot(plater, "Delete Object: " + oname);
         plater->remove((size_t) idx);
         api_notify("Removed '" + oname + "'");
+        McpRow row = mcp_row("model", "Removed", oname, std::string(), mcp_plate_text(plate));
+        row.target = {{"type", "removed"}, {"object_id", id}, {"stash", stash},
+                      {"stash_session", McpRecorder::get().stash_session()}, {"plate", plate}};
+        if (stash > 0) mcp_undo(row, "Put back", "Put " + oname + " back on " + (plate >= 0 ? mcp_plate_text(plate) : std::string("the plate")));
+        mcp_record(std::move(row));
         return {{"deleted", true}, {"id", id}, {"count", plater->model().objects.size()}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { 404, r };
     return { 200, r };
 }
@@ -2041,12 +2600,24 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
                        {"detail", "provide translate (mm), rotate (deg), and/or scale (factor)"}} };
 
     nlohmann::json r = run_on_ui([=]() -> nlohmann::json {
+        const char *verb = has_r ? "Rotate" : (has_s ? "Scale" : "Move");
+        auto refuse = [&](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply(std::string(verb) + " object " + std::to_string(id), e, "POST /objects/{id}/transform");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
         int idx = find_object_index(plater->model(), id);
-        if (idx < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
+        if (idx < 0) { api_notify("Object not found", true); return refuse({{"error", "unknown_object"}}); }
         ModelObject *mo = plater->model().objects[idx];
-        if (mo->instances.empty()) return {{"error", "no_instance"}};
+        if (mo->instances.empty()) return refuse({{"error", "no_instance"}});
         ModelInstance *mi = mo->instances.front();
+        // MCP panel: the state before, for the row and its undo.
+        const nlohmann::json m_before    = McpRecorder::instance_matrix(*mi);
+        const int            plate_before = wxGetApp().plater()->get_partplate_list().find_instance(idx, 0);
+        const Vec3d          off_before  = mi->get_offset();
+        const Vec3d          rot_before  = mi->get_rotation();
+        const Vec3d          scl_before  = mi->get_scaling_factor();
+        mcp_before_change();
         Plater::TakeSnapshot snapshot(plater, "Transform Object");
         if (has_t) mi->set_offset(mi->get_offset() + tr);
         if (has_r) mi->set_rotation(mi->get_rotation() + ro * 0.017453292519943295); // deg->rad
@@ -2062,12 +2633,76 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
         plater->changed_object(idx);
         wxGetApp().obj_list()->update_plate_values_for_items();
         api_notify(std::string(has_t ? "Moved" : (has_r ? "Rotated" : "Resized")) + " '" + mo->name + "'");
+        {
+            // One row; with several parts in one request it is named after the rotation, then the scale.
+            const Vec3d off_after = mi->get_offset();
+            const Vec3d scl_after = mi->get_scaling_factor();
+            auto deg = [](double rad) { return McpRecorder::num_text(std::round(rad * 57.29577951308232 * 10.0) / 10.0); };
+            auto angles = [&deg](const Vec3d &r) {
+                const char *axes[] = {"X", "Y", "Z"};
+                std::string t;
+                for (int a = 0; a < 3; ++a) {
+                    if (std::abs(r[a]) < 1e-9) continue;
+                    t += (t.empty() ? "" : ", ") + std::string(axes[a]) + " " + deg(r[a]) + k_deg;
+                }
+                return t;
+            };
+            auto scale_text = [](const Vec3d &f) {
+                if (std::abs(f.x() - f.y()) < 1e-9 && std::abs(f.y() - f.z()) < 1e-9)
+                    return std::string("x") + McpRecorder::num_text(f.x());
+                return std::string("x") + McpRecorder::num_text(f.x()) + ", " + McpRecorder::num_text(f.y()) + ", " +
+                       McpRecorder::num_text(f.z());
+            };
+            auto pos_text = [](const Vec3d &o, bool z) {
+                return McpRecorder::num_text(std::round(o.x() * 10.0) / 10.0) + ", " +
+                       McpRecorder::num_text(std::round(o.y() * 10.0) / 10.0) +
+                       (z ? ", " + McpRecorder::num_text(std::round(o.z() * 10.0) / 10.0) : std::string());
+            };
+            std::vector<std::string> parts;
+            if (has_r) {
+                // "90° about Y" for a turn about one axis, else the turn per axis.
+                int axes_used = 0, axis = 0;
+                for (int a = 0; a < 3; ++a)
+                    if (std::abs(ro[a]) > 1e-9) { ++axes_used; axis = a; }
+                const char *names[] = {"X", "Y", "Z"};
+                if (axes_used == 1)
+                    parts.push_back(McpRecorder::num_text(ro[axis]) + k_deg + " about " + names[axis]);
+                else if (axes_used == 0)
+                    parts.push_back(std::string("0") + k_deg);
+                else
+                    parts.push_back(angles(ro * 0.017453292519943295));
+            }
+            if (has_s) parts.push_back(scale_text(scl_after));
+            if (has_t) parts.push_back("to " + pos_text(off_after, std::abs(tr.z()) > 1e-9));
+            std::string value;
+            for (const std::string &p : parts) value += (value.empty() ? "" : ", ") + p;
+            std::string before;
+            if (has_r) {
+                const std::string a = angles(rot_before);
+                before = a.empty() ? std::string("not rotated") : a;
+            } else if (has_s) {
+                before = scale_text(scl_before);
+            } else {
+                before = pos_text(off_before, std::abs(tr.z()) > 1e-9);
+            }
+            const char *label = has_r ? "Rotated" : (has_s ? "Scaled" : "Moved");
+            McpRow row = mcp_row("model", label, value, before, mo->name);
+            const int plate_after = wxGetApp().plater()->get_partplate_list().find_instance(idx, 0);
+            row.target = {{"type", "transform"}, {"object_id", id}, {"instance", 0},
+                          {"instance_id", (uint64_t) mi->id().id}, {"before", m_before},
+                          {"after", McpRecorder::instance_matrix(*mi)}, {"plate_before", plate_before},
+                          {"plate_after", plate_after}};
+            if (has_r)      mcp_undo(row, "Rotate back", "Rotate " + mo->name + " back");
+            else if (has_s) mcp_undo(row, "Scale back", "Scale " + mo->name + " back");
+            else            mcp_undo(row, "Move back", "Move " + mo->name + " back where it was");
+            mcp_record(std::move(row));
+        }
         auto off = mi->get_offset(); auto rot = mi->get_rotation(); auto scl = mi->get_scaling_factor();
         return {{"id", id}, {"transform", {
             {"offset",   {off.x(), off.y(), off.z()}},
             {"rotation", {rot.x(), rot.y(), rot.z()}},
             {"scale",    {scl.x(), scl.y(), scl.z()}}}}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { 404, r };
     return { 200, r };
 }
@@ -2075,15 +2710,20 @@ Response Controller::handle_transform_object(uint64_t id, const std::string &bod
 Response Controller::handle_duplicate_object(uint64_t id)
 {
     nlohmann::json r = run_on_ui([id]() -> nlohmann::json {
+        auto refuse = [id](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Duplicate object " + std::to_string(id), e, "POST /objects/{id}/duplicate");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
         Model &model = plater->model();
         int idx = find_object_index(model, id);
-        if (idx < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
+        if (idx < 0) { api_notify("Object not found", true); return refuse({{"error", "unknown_object"}}); }
         ModelObject *mo = model.objects[idx];
-        if (mo->instances.empty()) return {{"error", "no_instance"}};
+        if (mo->instances.empty()) return refuse({{"error", "no_instance"}});
         const ModelInstance *src = mo->instances.front();
         Vec3d off = src->get_offset() + Vec3d(10.0, 10.0, 0.0);
         const bool was_one = mo->instances.size() == 1;
+        mcp_before_change();
         Plater::TakeSnapshot snapshot(plater, "Add Instance");
         mo->add_instance(off, src->get_scaling_factor(), src->get_rotation(), src->get_mirror());
         // sidebar: add the "Instances" child now, as Plater::increase_instances does (a lone object
@@ -2094,8 +2734,18 @@ Response Controller::handle_duplicate_object(uint64_t id)
         plater->changed_object(idx);
         wxGetApp().obj_list()->update_plate_values_for_items();
         api_notify("Duplicated '" + mo->name + "'");
+        {
+            const size_t         n    = mo->instances.size();
+            const ModelInstance *copy = mo->instances.back();
+            McpRow row = mcp_row("model", "Duplicated", mo->name + ", now " + std::to_string(n) + " copies");
+            row.target = {{"type", "duplicate"}, {"object_id", id}, {"instance", n - 1},
+                          {"instance_id", (uint64_t) copy->id().id}, {"after", McpRecorder::instance_matrix(*copy)},
+                          {"plate", wxGetApp().plater()->get_partplate_list().find_instance(idx, (int) n - 1)}};
+            mcp_undo(row, "Remove copy", "Remove the new copy of " + mo->name);
+            mcp_record(std::move(row));
+        }
         return {{"duplicated", true}, {"id", id}, {"instances", (unsigned) mo->instances.size()}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { r["error"] == "unknown_object" ? 404 : 422, r };
     return { 200, r };
 }
@@ -2108,7 +2758,11 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
     nlohmann::json r = run_on_ui([id, in]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
         int idx = find_object_index(plater->model(), id);
-        if (idx < 0) return {{"error", "unknown_object"}};
+        if (idx < 0) {
+            nlohmann::json e = {{"error", "unknown_object"}};
+            mcp_refused_reply("Object settings " + std::to_string(id), e, "PUT /objects/{id}/config");
+            return e;
+        }
         ModelObject *mo = plater->model().objects[idx];
         DynamicPrintConfig cfg = mo->config.get(); // copy of existing per-object overrides
         nlohmann::json applied = nlohmann::json::array();
@@ -2130,8 +2784,39 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         }
         if (!errors.empty()) { // atomic: apply nothing on any error
             api_notify(std::string("Couldn't set object settings on '") + mo->name + "'", true);
+            for (auto it2 = errors.begin(); it2 != errors.end(); ++it2) {
+                const std::string why = it2.value().is_string() ? it2.value().get<std::string>() : std::string("error");
+                if (why == "blocked_by_remote_api_policy")
+                    mcp_refused(McpRecorder::config_label(it2.key()), "Not allowed",
+                                k_needs_sensitive + " " + k_dot + " " + mo->name, "PUT /objects/{id}/config");
+                else
+                    mcp_refused(McpRecorder::config_label(it2.key()), mcp_reason(why, "Invalid value"),
+                                mo->name + ": " + it2.key() + ": " + why, "PUT /objects/{id}/config");
+            }
             return {{"applied", nlohmann::json::array()}, {"errors", errors}};
         }
+        // MCP panel rows: per applied key, the old override (or the value the object used without one).
+        std::vector<McpRow> mcp_rows;
+        {
+            const DynamicPrintConfig old_cfg = mo->config.get();
+            const DynamicPrintConfig merged  = wxGetApp().preset_bundle->full_config();
+            for (const auto &k : applied) {
+                const std::string key        = k.get<std::string>();
+                const bool        had        = old_cfg.has(key);
+                const std::string before_raw = had ? old_cfg.opt_serialize(key)
+                                                   : (merged.has(key) ? merged.opt_serialize(key) : std::string());
+                const std::string after_raw  = cfg.opt_serialize(key);
+                if (had && before_raw == after_raw) continue;
+                const std::string label = McpRecorder::config_label(key);
+                McpRow row = mcp_config_row(key, label, before_raw, after_raw,
+                                            {{"type", "object_config"}, {"object_id", id}, {"key", key}, {"had_override", had}},
+                                            had ? mo->name + " only" : mo->name + " only " + k_dot + " from the print preset");
+                row.undo_tip = had ? "Set " + label + " on " + mo->name + " back to " + row.before
+                                   : "Remove the " + label + " override from " + mo->name;
+                mcp_rows.push_back(std::move(row));
+            }
+        }
+        if (!mcp_rows.empty()) mcp_before_change();
         Plater::TakeSnapshot snapshot(plater, "Change Object Settings");
         mo->config.assign_config(std::move(cfg));
         plater->changed_object(idx);
@@ -2157,21 +2842,46 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         }
         if (!applied.empty())
             api_notify("Updated " + std::to_string(applied.size()) + " setting(s) on '" + mo->name + "'");
+        for (McpRow &row : mcp_rows) mcp_record(std::move(row));
         return {{"applied", applied}, {"errors", errors}, {"object", mo->name}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { 404, r };
     return { r["errors"].empty() ? 200 : 422, r };
+}
+
+// MCP panel: arrange and orient run as jobs. The instances are noted before the job starts, and a no-op job
+// queued right behind it records the row from its finalize (on the GUI thread, after the job's own finalize:
+// the worker runs and finalizes its queue in order), when the new positions are known.
+static void mcp_queue_instances_row(Plater *plater, const char *op, std::vector<McpInstanceState> before, int plates_before)
+{
+    const std::string opname = op;
+    const bool queued = queue_job(plater->get_ui_job_worker(), [](Job::Ctl &) {},
+                                  [opname, before, plates_before](bool, std::exception_ptr &) {
+                                      mcp_record_instances(opname.c_str(), before, plates_before);
+                                  });
+    if (!queued) mcp_record_instances(op, before, plates_before); // records what has moved so far
 }
 
 Response Controller::handle_arrange()
 {
     nlohmann::json r = run_on_ui([]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
-        if (plater->model().objects.empty()) return {{"error", "empty"}};
-        if (!plater->get_ui_job_worker().is_idle()) return {{"busy", true}};
+        if (plater->model().objects.empty()) {
+            nlohmann::json e = {{"error", "empty"}};
+            mcp_refused_reply("Arrange", e, "POST /arrange");
+            return e;
+        }
+        if (!plater->get_ui_job_worker().is_idle()) {
+            mcp_refused_reply("Arrange", {{"error", "job_running"}}, "POST /arrange");
+            return {{"busy", true}};
+        }
+        std::vector<McpInstanceState> before = mcp_instance_states(plater);
+        const int plates_before = plater->get_partplate_list().get_plate_count();
+        mcp_before_change();
         plater->arrange();
+        mcp_queue_instances_row(plater, "arrange", std::move(before), plates_before);
         return {{"started", true}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { 422, r };
     if (r.value("busy", false)) return { 409, {{"error", "job_running"}} };
     return { 202, r };
@@ -2181,11 +2891,22 @@ Response Controller::handle_orient()
 {
     nlohmann::json r = run_on_ui([]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
-        if (plater->model().objects.empty()) return {{"error", "empty"}};
-        if (!plater->get_ui_job_worker().is_idle()) return {{"busy", true}};
+        if (plater->model().objects.empty()) {
+            nlohmann::json e = {{"error", "empty"}};
+            mcp_refused_reply("Auto-orient", e, "POST /orient");
+            return e;
+        }
+        if (!plater->get_ui_job_worker().is_idle()) {
+            mcp_refused_reply("Auto-orient", {{"error", "job_running"}}, "POST /orient");
+            return {{"busy", true}};
+        }
+        std::vector<McpInstanceState> before = mcp_instance_states(plater);
+        const int plates_before = plater->get_partplate_list().get_plate_count();
+        mcp_before_change();
         plater->orient();
+        mcp_queue_instances_row(plater, "orient", std::move(before), plates_before);
         return {{"started", true}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { 422, r };
     if (r.value("busy", false)) return { 409, {{"error", "job_running"}} };
     return { 202, r };
@@ -2269,10 +2990,15 @@ Response Controller::handle_create_plate(const std::string &body)
     nlohmann::json r = run_on_ui([this, select]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
         PartPlateList &plates = plater->get_partplate_list();
+        auto refuse = [](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Add plate", e, "POST /plates");
+            return e;
+        };
         if (!plater->can_add_plate()) {
-            if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
-            return {{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}};
+            if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
+            return refuse({{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}});
         }
+        mcp_before_change();
         // Same steps as the toolbar's "Add plate" (Plater::priv::on_action_add_plate).
         plater->take_snapshot("add partplate");
         // 2.5.0: when the new plate adds a column to the plate grid, create_plate
@@ -2280,18 +3006,24 @@ Response Controller::handle_create_plate(const std::string &body)
         // slice result, as the toolbar button does. Follow that in /slice/status.
         const bool was_valid = plates.get_curr_plate()->is_slice_result_valid();
         const int idx = plates.create_plate();
-        if (idx < 0) return {{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}};
+        if (idx < 0) return refuse({{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}});
         if (select) plater->select_plate(idx, false);
         plater->update();
         plater->get_camera().requires_zoom_to_plate = REQUIRES_ZOOM_TO_ALL_PLATE;
         if (select || plates.get_curr_plate()->is_slice_result_valid() != was_valid)
             sync_slice_state_to_current_plate("slice.plate_changed");
         api_notify("Added plate " + std::to_string(idx + 1));
+        {
+            McpRow row = mcp_row("plate", "Added plate", "Plate " + std::to_string(idx + 1));
+            row.target = {{"type", "plate_added"}, {"index", idx}};
+            mcp_undo(row, "Delete plate", "Delete Plate " + std::to_string(idx + 1) + " (only while it is empty)");
+            mcp_record(std::move(row));
+        }
         return {{"created", true}, {"index", idx},
                 {"count", plates.get_plate_count()},
                 {"current", plates.get_curr_plate_index()},
                 {"plate", plate_json(plates, idx, plater->model())}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) return { r["error"] == "slicing" ? 409 : 422, r };
     return { 200, r };
 }
@@ -2330,10 +3062,14 @@ Response Controller::handle_delete_plate(int index)
     nlohmann::json r = run_on_ui([this, index]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
         PartPlateList &plates = plater->get_partplate_list();
+        auto refuse = [index](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Delete plate " + std::to_string(index + 1), e, "DELETE /plates/{i}");
+            return e;
+        };
         if (index < 0 || index >= plates.get_plate_count())
-            return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
-        if (!plater->can_delete_plate()) return {{"error", "last_plate"}};
-        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+            return refuse({{"error", "unknown_plate"}, {"count", plates.get_plate_count()}});
+        if (!plater->can_delete_plate()) return refuse({{"error", "last_plate"}});
+        if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
         int held = 0;
         {
             PartPlate *p = plates.get_plate(index);
@@ -2342,15 +3078,22 @@ Response Controller::handle_delete_plate(int index)
                 for (size_t ii = 0; ii < model.objects[oi]->instances.size(); ++ii)
                     if (p->contain_instance((int) oi, (int) ii)) ++held;
         }
-        if (plater->delete_plate(index) != 0) return {{"error", "delete_failed"}};
+        mcp_before_change();
+        if (plater->delete_plate(index) != 0) return refuse({{"error", "delete_failed"}});
         sync_slice_state_to_current_plate("slice.plate_changed");
+        {
+            McpRow row = mcp_row("plate", "Deleted plate", "Plate " + std::to_string(index + 1), std::string(),
+                                 held > 0 ? std::string("Its objects moved beside the bed") : std::string());
+            row.target = {{"type", "plate_deleted"}, {"index", index}, {"objects_moved_off", held}};
+            mcp_record(std::move(row));
+        }
         api_notify("Deleted plate " + std::to_string(index + 1) +
                    (held > 0 ? " (" + std::to_string(held) + " object(s) moved off-plate)" : std::string()));
         return {{"deleted", true}, {"index", index},
                 {"count", plates.get_plate_count()},
                 {"current", plates.get_curr_plate_index()},
                 {"objects_moved_off_plate", held}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         if (r["error"] == "unknown_plate") return { 404, r };
         if (r["error"] == "slicing")       return { 409, r };
@@ -2379,27 +3122,34 @@ Response Controller::handle_put_object_plate(uint64_t id, const std::string &bod
     nlohmann::json r = run_on_ui([this, id, plate_idx, inst_idx]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
         PartPlateList &plates = plater->get_partplate_list();
+        auto refuse = [id, plate_idx](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Move object " + std::to_string(id) + " to Plate " + std::to_string(plate_idx + 1), e,
+                              "POST /objects/{id}/plate");
+            return e;
+        };
         const int oi = find_object_index(plater->model(), id);
-        if (oi < 0) { api_notify("Object not found", true); return {{"error", "unknown_object"}}; }
+        if (oi < 0) { api_notify("Object not found", true); return refuse({{"error", "unknown_object"}}); }
         ModelObject *mo = plater->model().objects[oi];
         if (inst_idx >= (int) mo->instances.size())
-            return {{"error", "unknown_instance"}, {"instances", (unsigned) mo->instances.size()}};
+            return refuse({{"error", "unknown_instance"}, {"instances", (unsigned) mo->instances.size()}});
         PartPlate *target = plates.get_plate(plate_idx);
-        if (target == nullptr) return {{"error", "unknown_plate"}, {"count", plates.get_plate_count()}};
-        if (target->is_locked()) return {{"error", "plate_locked"}, {"plate", plate_idx}};
-        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        if (target == nullptr) return refuse({{"error", "unknown_plate"}, {"count", plates.get_plate_count()}});
+        if (target->is_locked()) return refuse({{"error", "plate_locked"}, {"plate", plate_idx}});
+        if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
 
         const int from = plates.find_instance(oi, inst_idx);   // -1: off every plate
         PartPlate *source = from >= 0 ? plates.get_plate(from) : nullptr;
         // The window does not let an object be dragged off a locked plate either.
         if (source != nullptr && from != plate_idx && source->is_locked())
-            return {{"error", "plate_locked"}, {"plate", from}};
+            return refuse({{"error", "plate_locked"}, {"plate", from}});
         ModelInstance *mi = mo->instances[inst_idx];
         if (from == plate_idx) {
             auto off = mi->get_offset();
             return {{"moved", false}, {"already_on_plate", true}, {"id", id}, {"instance", inst_idx},
                     {"plate", plate_idx}, {"offset", {off.x(), off.y(), off.z()}}};
         }
+        const nlohmann::json m_before = McpRecorder::instance_matrix(*mi);
+        mcp_before_change();
         plater->take_snapshot("move to plate");
         // Keep the position relative to the old plate only when the object really sits
         // on it (a plate's list can lag behind its geometry, e.g. after a GUI edit).
@@ -2411,7 +3161,7 @@ Response Controller::handle_put_object_plate(uint64_t id, const std::string &bod
                        keep.y() >= sb.min.y() && keep.y() <= sb.max.y();
         }
         if (relative) keep -= source->get_origin();
-        if (plates.add_to_plate(oi, inst_idx, plate_idx) != 0) return {{"error", "move_failed"}};
+        if (plates.add_to_plate(oi, inst_idx, plate_idx) != 0) return refuse({{"error", "move_failed"}});
         if (relative) {
             mi->set_offset(target->get_origin() + keep);
             mo->invalidate_bounding_box();
@@ -2445,11 +3195,21 @@ Response Controller::handle_put_object_plate(uint64_t id, const std::string &bod
         wxGetApp().obj_list()->update_plate_values_for_items();
         sync_slice_state_to_current_plate("slice.plate_changed");
         api_notify("Moved '" + mo->name + "' to plate " + std::to_string(plate_idx + 1));
+        {
+            const int now = plates.find_instance(oi, inst_idx);
+            McpRow row = mcp_row("plate", "Moved to plate", mo->name + " " + k_arrow + " " + mcp_plate_text(now),
+                                 mcp_plate_text(from));
+            row.target = {{"type", "instance_plate"}, {"object_id", id}, {"instance", inst_idx},
+                          {"instance_id", (uint64_t) mi->id().id}, {"plate_before", from}, {"plate_after", now},
+                          {"before", m_before}, {"after", McpRecorder::instance_matrix(*mi)}};
+            mcp_undo(row, "Move back", "Move " + mo->name + " back to " + (from >= 0 ? mcp_plate_text(from) : std::string("beside the bed")));
+            mcp_record(std::move(row));
+        }
         auto off = mi->get_offset();
         return {{"moved", true}, {"id", id}, {"instance", inst_idx},
                 {"plate", plates.find_instance(oi, inst_idx)}, {"from_plate", from},
                 {"offset", {off.x(), off.y(), off.z()}}};
-    });
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         const std::string e = r["error"].get<std::string>();
         if (e == "unknown_object" || e == "unknown_plate" || e == "unknown_instance") return { 404, r };
@@ -2874,29 +3634,42 @@ Response Controller::handle_save_project(const std::string &body)
 
     // 120 s: export_3mf renders a thumbnail per plate and writes every mesh.
     nlohmann::json r = run_on_ui([path, overwrite]() -> nlohmann::json {
+        auto refuse = [&path](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply(path.empty() ? std::string("Save project") : "Save project as " + mcp_file_name(path), e,
+                              "POST /project/save");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
-        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+        if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
         const std::string current = project_path_utf8(plater);
         const std::string target  = path.empty() ? current : path;
         if (target.empty())
-            return {{"error", "no_project_path"},
-                    {"detail", "the project has never been saved; pass a path"}};
+            return refuse({{"error", "no_project_path"},
+                           {"detail", "the project has never been saved; pass a path"}});
         const boost::filesystem::path bp = path_from_utf8(target);
         boost::system::error_code ec;
         if (!bp.parent_path().empty() && !boost::filesystem::is_directory(bp.parent_path(), ec))
-            return {{"error", "directory_not_found"}, {"path", target}};
+            return refuse({{"error", "directory_not_found"}, {"path", target}});
         if (!path.empty() && boost::filesystem::exists(bp, ec) && !is_open_project_file(plater, bp)) {
             if (!overwrite)
-                return {{"error", "exists"}, {"path", target},
-                        {"detail", "a file is already there; pass overwrite:true to replace it"}};
+                return refuse({{"error", "exists"}, {"path", target},
+                               {"detail", "a file is already there; pass overwrite:true to replace it"}});
             if (!project_file_changes_allowed())
-                return {{"error", "blocked_by_remote_api_policy"}, {"path", target},
-                        {"detail", "replacing a file needs Preferences > Remote API > Allow deleting and replacing project files"}};
+                return refuse({{"error", "blocked_by_remote_api_policy"}, {"path", target},
+                               {"detail", "replacing a file needs Preferences > Remote API > Allow deleting and replacing project files"}});
         }
+        // MCP panel: a save changes no project state, but it is the assistant's change; the row lands in the
+        // history of the path saved to (the recorder follows a first save or Save As).
+        mcp_before_change();
         uintmax_t bytes = 0;
         const std::string err = save_project_to(plater, target, bytes);
-        if (!err.empty()) return {{"error", err}, {"path", target}};
-        return {{"saved", project_path_utf8(plater)}, {"bytes", bytes}, {"project", project_json(plater)}};
+        if (!err.empty()) return refuse({{"error", err}, {"path", target}});
+        const std::string saved = project_path_utf8(plater);
+        McpRow row = mcp_row("file", "Saved project", mcp_file_name(saved), std::string(), saved);
+        row.on_disk = true;
+        row.target  = {{"type", "project_saved"}, {"path", saved}};
+        mcp_record(std::move(row));
+        return {{"saved", saved}, {"bytes", bytes}, {"project", project_json(plater)}};
     }, /*timeout_s=*/120);
     if (r.contains("error")) {
         if (r["error"] == "blocked_by_remote_api_policy")
@@ -2959,16 +3732,20 @@ Response Controller::handle_open_project(const std::string &body)
         auto   *bundle = wxGetApp().preset_bundle;
         const wxString wpath = from_u8(path);
         boost::system::error_code ec;
+        auto refuse = [&path](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Open project " + mcp_file_name(path), e, "POST /project/open");
+            return e;
+        };
         // file_not_found, not not_found: the MCP client reads a bare not_found as "route missing".
         if (!boost::filesystem::is_regular_file(into_path(wpath), ec)) {
             // File > Recent would offer to drop a missing entry; say so instead.
             nlohmann::json e = {{"error", "file_not_found"}, {"path", path}};
             if (!recent_entries_for(into_path(wpath)).empty())
                 e["detail"] = "the file is in the recent list but no longer on disk; DELETE /project/recent forgets it";
-            return e;
+            return refuse(e);
         }
-        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
-        if (plater->is_loading_project()) return {{"error", "busy"}};
+        if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
+        if (plater->is_loading_project()) return refuse({{"error", "busy"}});
 
         // Before anything changes: the project must not bring script, G-code or
         // connection settings of its own unless the user allows those edits.
@@ -2978,13 +3755,13 @@ Response Controller::handle_open_project(const std::string &body)
             try {
                 keys = project_sensitive_changes(path, !keep_current, keep_current ? bundle->filament_presets.size() : 0);
             } catch (const std::exception &ex) {
-                return {{"error", "load_failed"}, {"path", path}, {"detail", ex.what()}};
+                return refuse({{"error", "load_failed"}, {"path", path}, {"detail", ex.what()}});
             }
             if (!keys.empty())
-                return {{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"keys", keys},
-                        {"detail", "the project brings its own script, G-code or connection settings; open it in "
-                                   "OrcaSlicer, or tick Preferences > Remote API > Allow script, G-code and "
-                                   "connection edits"}};
+                return refuse({{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"keys", keys},
+                               {"detail", "the project brings its own script, G-code or connection settings; open it in "
+                                          "OrcaSlicer, or tick Preferences > Remote API > Allow script, G-code and "
+                                          "connection edits"}});
         }
 
         nlohmann::json out = nlohmann::json::object();
@@ -2993,8 +3770,12 @@ Response Controller::handle_open_project(const std::string &body)
             nlohmann::json e = {{"error", err}, {"project", project_json(plater)}, {"modified", dirty_preset_groups()}};
             if (err == "unsaved_changes")
                 e["detail"] = "pass if_unsaved: \"save\" or \"discard\"";
-            return e;
+            return refuse(e);
         }
+
+        // MCP panel: the outgoing project's group (and checkpoint) before anything is replaced; the row is
+        // recorded after the load, into the opened project's history.
+        mcp_before_change();
 
         // What the open will replace. With presets: keep_current these are
         // selected again once the project is in.
@@ -3027,9 +3808,9 @@ Response Controller::handle_open_project(const std::string &body)
         const bool opened = !now.empty() && boost::filesystem::exists(now, ec) &&
                             boost::filesystem::equivalent(now, into_path(wpath), ec);
         if (!opened)
-            return {{"error", "load_failed"}, {"path", path},
-                    {"detail", "OrcaSlicer could not open it as a project; a .3mf with no objects "
-                               "in it is not opened either"}};
+            return refuse({{"error", "load_failed"}, {"path", path},
+                           {"detail", "OrcaSlicer could not open it as a project; a .3mf with no objects "
+                                      "in it is not opened either"}});
 
         if (presets == "keep_current") {
             // The project's config sits as edits over the presets it selected;
@@ -3070,6 +3851,13 @@ Response Controller::handle_open_project(const std::string &body)
         }
 
         sync_slice_state_to_current_plate("slice.plate_changed");
+        {
+            const std::string opened_path = project_path_utf8(plater);
+            McpRow row = mcp_row("file", "Opened project", mcp_file_name(opened_path), std::string(), opened_path);
+            row.title_hint = "opened";
+            row.target     = {{"type", "project_opened"}, {"path", opened_path}};
+            mcp_record(std::move(row)); // syncs to the opened project's history first
+        }
         out["opened"]  = project_path_utf8(plater);
         out["project"] = project_json(plater);
         out["plates"]  = plater->get_partplate_list().get_plate_count();
@@ -3114,28 +3902,40 @@ Response Controller::handle_new_project(const std::string &body)
         }
     }
     nlohmann::json r = run_on_ui([this, if_unsaved, name]() -> nlohmann::json {
+        auto refuse = [](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("New project", e, "POST /project/new");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
-        if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
-        if (plater->is_loading_project()) return {{"error", "busy"}};
+        if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
+        if (plater->is_loading_project()) return refuse({{"error", "busy"}});
         nlohmann::json out = nlohmann::json::object();
         const std::string err = answer_unsaved_prompt(plater, if_unsaved, out);
         if (!err.empty()) {
             nlohmann::json e = {{"error", err}, {"project", project_json(plater)}, {"modified", dirty_preset_groups()}};
             if (err == "unsaved_changes")
                 e["detail"] = "pass if_unsaved: \"save\" or \"discard\"";
-            return e;
+            return refuse(e);
         }
         out["kept_changes"] = dirty_preset_groups();
+        // MCP panel: the outgoing project's checkpoint first; the row goes to the new project's history.
+        mcp_before_change();
         // close_with_confirm drops the old project's backup folder before the
         // model is replaced; with the confirmation skipped, do it here.
         plater->model().set_backup_path("");
         if (plater->new_project(/*skip_confirm=*/true, /*silent=*/false, from_u8(name)) == wxID_CANCEL)
-            return {{"error", "cancelled"}};
+            return refuse({{"error", "cancelled"}});
         sync_slice_state_to_current_plate("slice.plate_changed");
+        {
+            const std::string title = name.empty() ? std::string("Untitled") : name;
+            McpRow row = mcp_row("file", "New project", title);
+            row.target = {{"type", "project_new"}, {"name", title}};
+            mcp_record(std::move(row));
+        }
         out["ok"]      = true;
         out["project"] = project_json(plater);
         return out;
-    }, /*timeout_s=*/60);
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         if (r["error"] != "slicing" && r["error"] != "unsaved_changes")
             api_notify("Couldn't start a new project (" + r["error"].get<std::string>() + ")", true);
@@ -3276,30 +4076,38 @@ Response Controller::handle_move_project_file(const std::string &body)
         return { 400, {{"error", "not_3mf"}, {"detail", "both paths must end in .3mf"}} };
 
     nlohmann::json r = run_on_ui([from, to, overwrite]() -> nlohmann::json {
+        auto refuse = [&from](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Move " + mcp_file_name(from), e, "POST /project/move");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
         const boost::filesystem::path src = path_from_utf8(from);
         const boost::filesystem::path dst = path_from_utf8(to);
         boost::system::error_code ec;
-        if (!boost::filesystem::is_regular_file(src, ec)) return {{"error", "file_not_found"}, {"path", from}};
+        if (!boost::filesystem::is_regular_file(src, ec)) return refuse({{"error", "file_not_found"}, {"path", from}});
         if (!dst.parent_path().empty() && !boost::filesystem::is_directory(dst.parent_path(), ec))
-            return {{"error", "directory_not_found"}, {"path", to}};
+            return refuse({{"error", "directory_not_found"}, {"path", to}});
         if (boost::filesystem::exists(dst, ec)) {
             if (boost::filesystem::equivalent(src, dst, ec)) {
                 // On a case-insensitive disk "a.3mf" -> "A.3mf" names the same
                 // file; that is a rename, not a clash. Anything else is a no-op.
-                if (src.filename() == dst.filename()) return {{"error", "same_path"}, {"path", to}};
+                if (src.filename() == dst.filename()) return refuse({{"error", "same_path"}, {"path", to}});
             } else {
                 if (!overwrite)
-                    return {{"error", "exists"}, {"path", to}, {"detail", "a file is already there; pass overwrite:true to replace it"}};
+                    return refuse({{"error", "exists"}, {"path", to}, {"detail", "a file is already there; pass overwrite:true to replace it"}});
                 if (is_open_project_file(plater, dst))
-                    return {{"error", "project_is_open"}, {"path", to}, {"detail", "the destination is the open project's file"}};
+                    return refuse({{"error", "project_is_open"}, {"path", to}, {"detail", "the destination is the open project's file"}});
                 if (!project_file_changes_allowed())
-                    return {{"error", "blocked_by_remote_api_policy"}, {"path", to},
-                            {"detail", "replacing a file needs Preferences > Remote API > Allow deleting and replacing project files"}};
+                    return refuse({{"error", "blocked_by_remote_api_policy"}, {"path", to},
+                                   {"detail", "replacing a file needs Preferences > Remote API > Allow deleting and replacing project files"}});
             }
         }
         const bool was_open = is_open_project_file(plater, src);
         const std::vector<std::string> recent = recent_entries_for(src);
+        // MCP panel: for the open project its history is keyed by the Plater's own path (spelled as the Plater
+        // has it, which may differ from the request's `from`).
+        const std::string history_from = was_open ? project_path_utf8(plater) : from;
+        mcp_before_change();
 
         boost::filesystem::rename(src, dst, ec);
         if (ec) {
@@ -3307,10 +4115,10 @@ Response Controller::handle_move_project_file(const std::string &body)
             boost::system::error_code cec;
             boost::filesystem::copy_file(src, dst,
                                          boost::filesystem::copy_option::overwrite_if_exists, cec);
-            if (cec) return {{"error", "move_failed"}, {"path", to}, {"detail", cec.message()}};
+            if (cec) return refuse({{"error", "move_failed"}, {"path", to}, {"detail", cec.message()}});
             boost::filesystem::remove(src, cec);
-            if (cec) return {{"error", "move_failed"}, {"path", from},
-                             {"detail", "copied to the new path but the old file could not be removed: " + cec.message()}};
+            if (cec) return refuse({{"error", "move_failed"}, {"path", from},
+                                    {"detail", "copied to the new path but the old file could not be removed: " + cec.message()}});
         }
 
         forget_recent_entries(recent);
@@ -3322,11 +4130,26 @@ Response Controller::handle_move_project_file(const std::string &body)
         } else if (!recent.empty()) {
             wxGetApp().mainframe->add_to_recent_projects(from_path(dst));
         }
+        {
+            // The history follows the file first, so the row lands in it (also for the open project).
+            const std::string new_path = was_open ? project_path_utf8(plater) : path_to_utf8(dst);
+            try {
+                McpRecorder::get().project_moved(history_from, new_path);
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << "MCP panel: history not moved: " << e.what();
+            }
+            const bool same_dir = src.parent_path().lexically_normal() == dst.parent_path().lexically_normal();
+            McpRow row = mcp_row("file", same_dir ? "Renamed" : "Moved", path_to_utf8(dst.filename()), from);
+            row.on_disk = true;
+            row.target  = {{"type", "file_moved"}, {"from", from}, {"to", path_to_utf8(dst)}, {"was_open", was_open}};
+            mcp_undo(row, "Move back", "Move " + path_to_utf8(dst.filename()) + " back to " + from);
+            mcp_record(std::move(row));
+        }
         uintmax_t bytes = boost::filesystem::file_size(dst, ec);
         if (ec) bytes = 0;
         return {{"moved", from}, {"to", path_to_utf8(dst)}, {"bytes", bytes}, {"was_open", was_open},
                 {"recent_updated", was_open || !recent.empty()}, {"project", project_json(plater)}};
-    }, /*timeout_s=*/60);
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         const std::string why = r["error"] == "blocked_by_remote_api_policy"
                                     ? std::string(" (blocked, see Preferences > Remote API)")
@@ -3352,24 +4175,33 @@ Response Controller::handle_delete_project_file(const std::string &body)
         return { 400, {{"error", "not_3mf"}, {"detail", "only .3mf project files can be deleted here"}} };
 
     nlohmann::json r = run_on_ui([path]() -> nlohmann::json {
+        auto refuse = [&path](nlohmann::json e) -> nlohmann::json {
+            mcp_refused_reply("Delete " + mcp_file_name(path), e, "DELETE /project/file");
+            return e;
+        };
         Plater *plater = wxGetApp().plater();
         const boost::filesystem::path p = path_from_utf8(path);
         boost::system::error_code ec;
         if (!project_file_changes_allowed())
-            return {{"error", "blocked_by_remote_api_policy"}, {"path", path},
-                    {"detail", "deleting a file needs Preferences > Remote API > Allow deleting and replacing project files"}};
-        if (!boost::filesystem::is_regular_file(p, ec)) return {{"error", "file_not_found"}, {"path", path}};
+            return refuse({{"error", "blocked_by_remote_api_policy"}, {"path", path},
+                           {"detail", "deleting a file needs Preferences > Remote API > Allow deleting and replacing project files"}});
+        if (!boost::filesystem::is_regular_file(p, ec)) return refuse({{"error", "file_not_found"}, {"path", path}});
         if (is_open_project_file(plater, p))
-            return {{"error", "project_is_open"}, {"path", path},
-                    {"detail", "this is the open project's file; start a new project or open another first"}};
+            return refuse({{"error", "project_is_open"}, {"path", path},
+                           {"detail", "this is the open project's file; start a new project or open another first"}});
         const std::vector<std::string> recent = recent_entries_for(p);
         uintmax_t bytes = boost::filesystem::file_size(p, ec);
         if (ec) bytes = 0;
+        mcp_before_change();
         boost::filesystem::remove(p, ec);
-        if (ec) return {{"error", "delete_failed"}, {"path", path}, {"detail", ec.message()}};
+        if (ec) return refuse({{"error", "delete_failed"}, {"path", path}, {"detail", ec.message()}});
         forget_recent_entries(recent);
+        McpRow row = mcp_row("file", "Deleted file", path_to_utf8(p.filename()), std::string(), path);
+        row.on_disk = true;
+        row.target  = {{"type", "file_deleted"}, {"path", path}};
+        mcp_record(std::move(row));
         return {{"deleted", path}, {"bytes", bytes}, {"recent_updated", !recent.empty()}};
-    }, /*timeout_s=*/30);
+    }, /*timeout_s=*/120);
     if (r.contains("error")) {
         const std::string why = r["error"] == "blocked_by_remote_api_policy"
                                     ? std::string(" (blocked, see Preferences > Remote API)")
@@ -3603,11 +4435,25 @@ Response Controller::handle_put_slot_mapping(const std::string &body)
     nlohmann::json     unsupported;
     if (!read_canvas_slots(true, info, unsupported)) {
         unsupported["error"] = "slots_unavailable";
+        try {
+            run_on_ui([unsupported]() -> nlohmann::json {
+                nlohmann::json e = {{"error", "slots_unavailable"}};
+                if (unsupported.contains("message") && unsupported["message"].is_string()) e["detail"] = unsupported["message"];
+                mcp_refused_reply("Filament trays", e, "PUT /printer/slot_mapping");
+                return nullptr;
+            });
+        } catch (const std::exception &) {} // the panel row is not worth failing the reply over
         return { 422, unsupported };
     }
 
     auto shared = std::make_shared<ElegooCanvas::Info>(std::move(info));
     nlohmann::json r = run_on_ui([shared, entries]() -> nlohmann::json {
+        auto refuse = [](nlohmann::json e) -> nlohmann::json {
+            nlohmann::json shown = e;
+            if (e.contains("entry")) shown["detail"] = e["entry"].dump();
+            mcp_refused_reply("Filament trays", shown, "PUT /printer/slot_mapping");
+            return e;
+        };
         const ElegooCanvas::Info                         &slots     = *shared;
         // Only the filaments the next Send would map (current plate) are accepted, looked up by project index.
         const std::vector<ElegooCanvas::ProjectFilament>  filaments = canvas_send_filaments();
@@ -3617,14 +4463,14 @@ Response Controller::handle_put_slot_mapping(const std::string &body)
             auto fit = std::find_if(filaments.begin(), filaments.end(),
                                     [&e](const ElegooCanvas::ProjectFilament &pf) { return pf.index == e.filament; });
             if (fit == filaments.end())
-                return {{"error", "unknown_filament_index"}, {"entry", e.raw}};
+                return refuse({{"error", "unknown_filament_index"}, {"entry", e.raw}});
             const ElegooCanvas::Tray *t = slots.find(e.canvas_id, e.tray_id);
             if (t == nullptr)
-                return {{"error", "unknown_tray"}, {"entry", e.raw}};
+                return refuse({{"error", "unknown_tray"}, {"entry", e.raw}});
             if (!t->ready())
-                return {{"error", "tray_not_ready"}, {"entry", e.raw}};
+                return refuse({{"error", "tray_not_ready"}, {"entry", e.raw}});
             if (!used.insert({e.canvas_id, e.tray_id}).second)
-                return {{"error", "duplicate_tray"}, {"entry", e.raw}};
+                return refuse({{"error", "duplicate_tray"}, {"entry", e.raw}});
             const ElegooCanvas::ProjectFilament &f = *fit;
             ElegooCanvas::Mapping                m;
             m.index    = e.filament;
@@ -3634,11 +4480,54 @@ Response Controller::handle_put_slot_mapping(const std::string &body)
             mapping.push_back(std::move(m));
         }
         CanvasState &state = CanvasState::get();
+        // MCP panel: the trays each filament would use before and after, and the API mapping it replaces.
+        const nlohmann::json before_json = canvas_mapping_json(slots);
+        const std::string    key_before  = state.project_key;
+        nlohmann::json       api_before  = nlohmann::json::array();
+        if (state.project_key == elegoo_canvas_project_key())
+            for (const ElegooCanvas::Mapping &m : state.api_mapping)
+                if (m.tray)
+                    api_before.push_back({{"filament", m.index}, {"canvas_id", m.tray->first}, {"tray_id", m.tray->second}});
         state.reset_if_project_changed(elegoo_canvas_project_key());
         state.api_mapping = std::move(mapping);
         api_notify(state.api_mapping.empty() ? "CANVAS slot mapping cleared" : "CANVAS slot mapping set for the next send");
-        return canvas_mapping_json(slots);
-    });
+        nlohmann::json after_json = canvas_mapping_json(slots);
+        {
+            // The mapping is session state (not in the project, so not in a checkpoint either): the group and its
+            // checkpoint are opened only when a filament's tray really changed, after the fact.
+            std::vector<McpRow> rows;
+            auto tray_of = [](const nlohmann::json &row) -> nlohmann::json {
+                const nlohmann::json &t = row["tray"];
+                if (!t.is_object()) return nullptr;
+                return {{"canvas_id", t["canvas_id"]}, {"tray_id", t["tray_id"]}};
+            };
+            auto label_of = [](const nlohmann::json &row) -> std::string {
+                const nlohmann::json &t = row["tray"];
+                if (!t.is_object()) return "none";
+                if (t.contains("label") && t["label"].is_string()) return t["label"].get<std::string>();
+                return std::to_string(t["canvas_id"].get<int>()) + "/" + std::to_string(t["tray_id"].get<int>());
+            };
+            for (const nlohmann::json &a : after_json["filaments"]) {
+                const int idx = a["index"].get<int>();
+                std::string before_label = "none";
+                nlohmann::json before_tray = nullptr;
+                for (const nlohmann::json &b : before_json["filaments"])
+                    if (b["index"].get<int>() == idx) { before_label = label_of(b); before_tray = tray_of(b); }
+                const std::string after_label = label_of(a);
+                if (after_label == before_label && tray_of(a) == before_tray) continue;
+                const std::string label = "Filament " + std::to_string(idx + 1) + " tray";
+                McpRow row = mcp_row("plate", label, after_label, before_label);
+                row.target = {{"type", "slot_mapping"}, {"filament", idx}, {"before_tray", before_tray},
+                              {"after_tray", tray_of(a)}, {"api_mapping_before", api_before},
+                              {"project_key", key_before}};
+                mcp_undo(row, "Change back", "Change " + label + " back to " + before_label);
+                rows.push_back(std::move(row));
+            }
+            if (!rows.empty()) mcp_before_change();
+            for (McpRow &row : rows) mcp_record(std::move(row));
+        }
+        return after_json;
+    }, /*timeout_s=*/120);
     if (r.contains("error"))
         return { 422, r };
     return { 200, r };

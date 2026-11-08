@@ -5,6 +5,7 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp" // print_config_def: row labels and units
 #include "libslic3r/Utils.hpp" // data_dir, ScopeGuard
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
@@ -114,6 +115,120 @@ McpRecorder &McpRecorder::get()
     return instance;
 }
 
+McpRecorder::McpRecorder() : m_stash(std::make_unique<Model>())
+{
+    // Unique per app run: a history reloaded after a restart names stash ids of an earlier run.
+    const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    m_stash_session  = std::to_string(static_cast<long long>(std::time(nullptr))) + "-" +
+                      std::to_string(static_cast<long long>(ticks % 1000000007LL));
+}
+
+McpRecorder::~McpRecorder() = default;
+
+int McpRecorder::stash_object(const ModelObject &obj, int plate)
+{
+    // Model::add_object clones (new ids): volumes, modifiers, paint, config, layer ranges and instances.
+    ModelObject *copy = m_stash->add_object(obj);
+    const int    id   = m_next_stash++;
+    m_stashed[id]     = {copy, plate};
+    while (m_stashed.size() > kMaxStashed) {
+        auto oldest = m_stashed.begin();
+        m_stash->delete_object(oldest->second.first);
+        m_stashed.erase(oldest);
+    }
+    return id;
+}
+
+const ModelObject *McpRecorder::stashed_object(int stash, const std::string &session) const
+{
+    if (session != m_stash_session) return nullptr;
+    auto it = m_stashed.find(stash);
+    return it == m_stashed.end() ? nullptr : it->second.first;
+}
+
+int McpRecorder::stashed_plate(int stash) const
+{
+    auto it = m_stashed.find(stash);
+    return it == m_stashed.end() ? -1 : it->second.second;
+}
+
+std::string McpRecorder::num_text(double v)
+{
+    if (!std::isfinite(v)) return "0";
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%.3f", v);
+    std::string t = buf;
+    while (!t.empty() && t.back() == '0') t.pop_back();
+    if (!t.empty() && t.back() == '.') t.pop_back();
+    if (t == "-0") t = "0";
+    return t;
+}
+
+std::string McpRecorder::config_label(const std::string &key)
+{
+    const ConfigOptionDef *d = print_config_def.get(key);
+    if (d == nullptr) return key;
+    if (!d->full_label.empty()) return d->full_label;
+    return d->label.empty() ? key : d->label;
+}
+
+// Cuts at a UTF-8 character boundary at or before `max` bytes.
+static std::string utf8_cut(const std::string &s, size_t max)
+{
+    if (s.size() <= max) return s;
+    size_t cut = max;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
+    return s.substr(0, cut);
+}
+
+std::string McpRecorder::config_value_text(const std::string &key, const std::string &raw)
+{
+    static const char *const kEllipsis = "\xE2\x80\xA6"; // U+2026
+    const ConfigOptionDef   *d         = print_config_def.get(key);
+    std::string              v         = raw;
+    bool                     cut       = false;
+    const size_t             nl        = v.find_first_of("\r\n");
+    if (nl != std::string::npos) {
+        v   = v.substr(0, nl);
+        cut = true;
+    }
+    bool labelled = false; // an enum label or On/Off: no unit after it
+    if (d != nullptr && !cut) {
+        if (d->type == coBool && (v == "1" || v == "0" || v == "true" || v == "false")) {
+            v        = (v == "1" || v == "true") ? "On" : "Off";
+            labelled = true;
+        } else if (d->type == coEnum && d->enum_values.size() == d->enum_labels.size()) {
+            for (size_t i = 0; i < d->enum_values.size(); ++i)
+                if (d->enum_values[i] == v) {
+                    if (!d->enum_labels[i].empty()) v = d->enum_labels[i];
+                    labelled = true;
+                    break;
+                }
+        }
+    }
+    if (v.size() > 40) {
+        v   = utf8_cut(v, 40);
+        cut = true;
+    }
+    if (cut) return v + kEllipsis;
+    if (d != nullptr && !labelled && !v.empty() && !d->sidetext.empty() && v.back() != '%') {
+        // "mm or %" (float-or-percent) reads as mm for a plain number; a percentage carries its own sign.
+        std::string unit = d->sidetext;
+        const size_t orp = unit.find(" or ");
+        if (orp != std::string::npos) unit = unit.substr(0, orp);
+        if (!unit.empty() && unit != "%") v += " " + unit;
+    }
+    return v;
+}
+
+nlohmann::json McpRecorder::instance_matrix(const ModelInstance &mi)
+{
+    const double  *m = mi.get_matrix().matrix().data();
+    nlohmann::json a = nlohmann::json::array();
+    for (int i = 0; i < 16; ++i) a.push_back(m[i]);
+    return a;
+}
+
 int64_t McpRecorder::now_s() const { return static_cast<int64_t>(std::time(nullptr)) + s_clock_offset.load(); }
 
 std::string McpRecorder::hhmm(int64_t epoch_s)
@@ -163,6 +278,7 @@ void McpRecorder::load(const std::string &key, bool fresh)
     m_key    = key;
     m_loaded = true;
     m_open   = false;
+    m_deferred_point = -1;
     m_history = McpHistory();
     const fs::path dir = history_root() / key;
     boost::system::error_code ec;
@@ -263,6 +379,7 @@ void McpRecorder::sync_project()
         fs::remove_all(history_root() / key, ec);
         m_key     = key;
         m_open    = false;
+        m_deferred_point = -1;
         m_history = McpHistory();
     }
     notify();
@@ -381,9 +498,20 @@ void McpRecorder::open_change(bool checkpoint)
     sync_project();
     const McpChange c = m_history.begin_change(now_s());
     m_open = true;
-    if (!c.opened) return;
-    // No checkpoint when slice_finished opens the group: it runs from the slicing-completed event, not
-    // inside an API task, and a slice changes nothing in the project. That point gets no restore.
+    if (!c.opened) {
+        // A refusal opened this group without a checkpoint. Its first real change takes the skipped one now:
+        // nothing has changed through the API since, so it is still the state before the group.
+        if (checkpoint && m_deferred_point >= 0) {
+            take_checkpoint(m_deferred_point);
+            m_deferred_point = -1;
+            save();
+            notify();
+        }
+        return;
+    }
+    // No checkpoint when slice_finished or a refusal opens the group: a slice result runs from the
+    // slicing-completed event, not inside an API task, and neither changes anything in the project.
+    m_deferred_point = checkpoint ? -1 : c.prev_point;
     if (checkpoint) take_checkpoint(c.prev_point);
     save();
     notify();
@@ -402,16 +530,18 @@ int McpRecorder::record(McpRow row)
     return id;
 }
 
-void McpRecorder::record_refusal(std::string label, std::string why)
+void McpRecorder::record_refusal(std::string label, std::string why, std::string value, json target)
 {
     if (!wxThread::IsMain()) return;
-    before_change(); // a refused change still belongs to the burst
+    // A refused change still belongs to the burst, but changed nothing: no checkpoint when it opens a group.
+    open_change(false);
     McpRow r;
-    r.kind  = "refused";
-    r.label = std::move(label);
-    r.value = "Not allowed";
-    r.where = std::move(why);
-    r.error = true;
+    r.kind   = "refused";
+    r.label  = std::move(label);
+    r.value  = value.empty() ? std::string("Not allowed") : std::move(value);
+    r.where  = std::move(why);
+    r.error  = true;
+    r.target = std::move(target);
     record(std::move(r));
 }
 

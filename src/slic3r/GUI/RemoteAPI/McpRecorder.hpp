@@ -2,13 +2,60 @@
 // Recorder behind the OrcaSlicer MCP dock panel: turns Remote API changes into McpHistory rows, takes the
 // restore-point checkpoints, and keeps the history per project in <data_dir>/mcp_history/<key>/.
 // GUI thread only (every member except the static test setters and note_project_opened).
+//
+// ---- Row text and the target schema, consumed by McpActions -------------------------------------------------
+// The API handlers (RemoteAPIController.cpp) record one row per change. `kind` is one of setting, preset,
+// model, plate, slice, file, refused. `value` and `before` of setting rows are config_value_text() of the raw
+// values (unit added, enum label, first line only, cut at 40 bytes): a live value compared with `value` must be
+// formatted the same way. `target` is host-only (never sent to the page) and says what the row changed:
+//
+//   {"type":"config", "key", "scope":"print|filament|printer|project", "preset": <edited preset name>
+//    (preset scopes only), "index": n (only for one element of a vector: filament_colour = filament slot,
+//    wipe_tower_x/y = plate index), "before_raw", "after_raw"}
+//      PUT /config. Raw = ConfigOption::serialize() of the whole option, or of element `index`. No raws for a
+//      credential key or a host URL holding a login (those rows have no undo).
+//   {"type":"object_config", "object_id", "key", "had_override": bool, "before_raw" (the old override, or the
+//    merged config's value when there was none), "after_raw"}                      PUT /objects/{id}/config
+//   {"type":"layer_profile", "object_id", "before": [doubles] (empty = no custom profile), "after": [doubles]}
+//                                                                                   PUT /objects/{id}/layer_height
+//   {"type":"height_range", "object_id", "min_z", "max_z", "before": null | {key: raw}, "after": {key: raw}}
+//      one range set (before null: the range is new; else the range's earlier config)
+//   {"type":"height_ranges_cleared", "object_id", "ranges": [{"min_z","max_z","config":{key: raw}}]}
+//                                                                                   PUT /objects/{id}/height_range
+//   {"type":"added", "object_id"}                                                   POST /model, one per object
+//   {"type":"removed", "object_id" (the gone id), "stash", "stash_session", "plate"}  DELETE /objects/{id};
+//      stashed_object(stash, stash_session) is the full copy (null after a restart or once dropped)
+//   {"type":"transform", "object_id", "instance", "instance_id", "before": [16], "after": [16],
+//    "plate_before", "plate_after"}                                               POST /objects/{id}/transform
+//   {"type":"duplicate", "object_id", "instance", "instance_id", "after": [16], "plate"}  POST .../duplicate
+//   {"type":"instances", "op":"arrange|orient", "plates_before", "plates_after", "items": [{"object_id",
+//    "instance", "instance_id", "plate_before", "plate_after", "before": [16], "after": [16]}]}
+//      POST /arrange, POST /orient; recorded when the job has finished, items = instances that moved
+//   {"type":"instance_plate", "object_id", "instance", "instance_id", "plate_before", "plate_after",
+//    "before": [16], "after": [16]}                                                POST /objects/{id}/plate
+//   {"type":"plate_added", "index"}   {"type":"plate_deleted", "index", "objects_moved_off": n}
+//   {"type":"preset", "preset_type":"print|filament|printer", "slot": n | null, "before", "after",
+//    "discarded": ["print", ...]}                                                  PUT /preset
+//   {"type":"preset_saved", "preset_type", "name", "created": bool}                POST /preset/save
+//   {"type":"preset_deleted", "preset_type", "name"}                               DELETE /preset
+//   {"type":"project_opened", "path"}  {"type":"project_new", "name"}  {"type":"project_saved", "path"}
+//   {"type":"file_moved", "from", "to", "was_open"}  {"type":"file_deleted", "path"}
+//   {"type":"slot_mapping", "filament", "before_tray": {"canvas_id","tray_id"} | null, "after_tray": ... | null,
+//    "api_mapping_before": [{"filament","canvas_id","tray_id"}], "project_key"}    PUT /printer/slot_mapping
+//   {"type":"refused", "action"}                                                   any refused change
+// Matrices: ModelInstance::get_matrix() as 16 doubles, column-major (Eigen's matrix().data() order).
+// object_id / instance_id: ObjectBase::id().id. Slice rows (slice_finished) carry no target.
 #include "McpHistory.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <map>
+#include <memory>
 #include <string>
 #include <nlohmann/json.hpp>
+
+namespace Slic3r { class Model; class ModelObject; class ModelInstance; }
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -26,8 +73,11 @@ public:
     // Adds a row (ts, time, id and group are filled in) and saves. Opens a group itself (with its checkpoint)
     // only when none is open: no group yet, or the last one was closed by a slice result. Returns the row id.
     int  record(McpRow row);
-    // A change the API refused: kind "refused", value "Not allowed", where = why.
-    void record_refusal(std::string label, std::string why);
+    // A change the API refused: kind "refused", `value` ("Not allowed" for a policy block, else a short reason),
+    // where = why. It joins the open group (within the burst); otherwise it opens a group WITHOUT a checkpoint
+    // (nothing changed), and the first real change of that group takes the skipped checkpoint then.
+    void record_refusal(std::string label, std::string why, std::string value = "Not allowed",
+                        nlohmann::json target = nullptr);
     // An API slice ended: a "slice" row in the current group, then the group closes. ok=false with
     // error "cancelled" records "Slicing cancelled"; any other failure records "Slicing failed" (error row).
     // When no group is open (the last one was closed by a slice) it opens one WITHOUT a checkpoint: this runs
@@ -59,6 +109,27 @@ public:
     // points; Task 6 uses it for the snapshot before a restore.
     std::string write_checkpoint(const std::string &stem);
 
+    // "Put back" for a removed object: a full copy (volumes, modifiers, paint, per-object config, layer ranges,
+    // instances) kept in memory for this app run. Returns the stash id; the oldest copies are dropped beyond
+    // kMaxStashed. stashed_object() is null for an unknown/dropped id or another run's session.
+    static constexpr size_t kMaxStashed = 50;
+    int                stash_object(const ModelObject &obj, int plate);
+    const ModelObject *stashed_object(int stash, const std::string &session) const;
+    int                stashed_plate(int stash) const; // -1 when unknown
+    // Identifies this app run: stash ids are only meaningful within it.
+    const std::string &stash_session() const { return m_stash_session; }
+
+    // Row text shared by the handlers and McpActions' live values.
+    // ConfigOptionDef::full_label when set, else label, else the key.
+    static std::string config_label(const std::string &key);
+    // Display text of a raw (serialized) value: enum label, On/Off for a bool, the unit (sidetext) after a
+    // number, first line only and at most 40 bytes (then "..." as U+2026).
+    static std::string config_value_text(const std::string &key, const std::string &raw);
+    // ModelInstance::get_matrix() as 16 doubles, column-major.
+    static nlohmann::json instance_matrix(const ModelInstance &mi);
+    // A number without trailing zeros (up to 3 decimals): 10, 0.12, 150.5.
+    static std::string num_text(double v);
+
     // Epoch seconds plus the test clock offset, and its local "HH:MM".
     int64_t            now_s() const;
     static std::string hhmm(int64_t epoch_s);
@@ -76,7 +147,8 @@ public:
     static void    test_set_checkpoint_delay(int seconds) { s_checkpoint_delay.store(seconds); }
 
 private:
-    McpRecorder() = default;
+    McpRecorder();
+    ~McpRecorder();
 
     void open_change(bool checkpoint); // before_change; checkpoint=false when slice_finished opens a group
     void take_checkpoint(int point);
@@ -92,6 +164,13 @@ private:
     bool                  m_open   = false;  // a group is open for further rows
     bool                  m_swept  = false;  // stale dirs deleted (once per app start)
     std::function<void()> m_listener;
+    // A refusal opened the current group without a checkpoint: the restore point it skipped (-1: none).
+    int                   m_deferred_point = -1;
+
+    std::unique_ptr<Model>                    m_stash;          // owns the stashed copies
+    std::map<int, std::pair<ModelObject*, int>> m_stashed;      // id -> (copy, plate)
+    int                                       m_next_stash = 1;
+    std::string                               m_stash_session;
 
     static std::atomic<bool>    s_project_opened;
     static std::atomic<int64_t> s_clock_offset;
