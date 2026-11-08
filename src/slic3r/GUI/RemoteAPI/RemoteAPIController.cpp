@@ -540,7 +540,7 @@ static std::string numeric_list_error(const std::string &s)
         tok                = (b == std::string::npos) ? std::string() : tok.substr(b, e - b + 1);
         try {
             size_t pos = 0;
-            std::stod(tok, &pos);
+            (void) std::stod(tok, &pos); // only the parse matters here
             if (pos != tok.size())
                 throw std::invalid_argument("trailing characters");
         } catch (const std::exception &) {
@@ -1296,7 +1296,8 @@ Response Controller::handle_load_model(const std::string &body)
         // File > Import's snapshot: without it the undo stack never moves, so the
         // project never reads as unsaved and new/open would drop the model unasked.
         Plater::TakeSnapshot snapshot(plater, "Import Object");
-        std::vector<size_t> idxs = plater->load_files(std::vector<std::string>{ path },
+        // 2.5.0 dropped the std::string overload; it did this same conversion.
+        std::vector<size_t> idxs = plater->load_files(std::vector<boost::filesystem::path>{ boost::filesystem::path(path) },
                                                       LoadStrategy::LoadModel);
         if (is_step) {
             cfg->set_bool("enable_step_mesh_setting", prev_mesh_dlg);
