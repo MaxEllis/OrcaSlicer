@@ -403,13 +403,20 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
 // same rule in its guard.py as a second check; keep the two in step.
 static bool is_sensitive_config_key(const std::string &key)
 {
-    static const std::string gcode_suffix = "_gcode";
+    auto ends_with = [&key](const std::string &suffix) {
+        return key.size() > suffix.size() &&
+               key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    // slicing_pipeline_plugin (2.5): Python plugins run at each slicing step.
+    // plugins (2.5): the plugin capabilities a preset brings with it.
     if (key == "post_process" || key == "printer_model" || key == "filename_format" ||
+        key == "slicing_pipeline_plugin" || key == "plugins" ||
         key.rfind("printhost_", 0) == 0)
         return true;
-    if (key.size() > gcode_suffix.size() &&
-        key.compare(key.size() - gcode_suffix.size(), gcode_suffix.size(), gcode_suffix) == 0)
-        return key != "emit_machine_limits_to_gcode"; // a toggle, not a template
+    // *_gcode templates, and *_gcodes lists of them (imex_mode_gcodes, 2.5).
+    if (ends_with("_gcode") || ends_with("_gcodes"))
+        return key != "emit_machine_limits_to_gcode" && key != "high_precision_gcode" &&
+               key != "skip_modified_gcodes"; // toggles, not templates
     const std::vector<std::string> &pp = PhysicalPrinter::printer_options();
     return std::find(pp.begin(), pp.end(), key) != pp.end();
 }
