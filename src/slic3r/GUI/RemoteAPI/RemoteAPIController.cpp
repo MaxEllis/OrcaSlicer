@@ -1205,8 +1205,15 @@ Response Controller::handle_slice()
             // 2.5.0: a plate whose result flag was cleared while its print stayed the
             // same (a new plate widening the plate grid) has nothing to redo: reslice()
             // starts no job and sets the flag again. That is the old result, not an error.
+            // The state already says "slicing" here, which sync_slice_state_to_current_plate
+            // leaves alone, so report the result directly.
             if (plater->get_partplate_list().get_curr_plate()->is_slice_result_valid()) {
-                sync_slice_state_to_current_plate("slice.done");
+                nlohmann::json stats, warnings;
+                current_plate_slice_stats(stats, warnings);
+                set_slice_state([&](SliceState &s) {
+                    s.state = "done"; s.percent = 100; s.message = "";
+                    s.stats = stats; s.warnings = warnings;
+                }, "slice.done");
                 return {{"started", false}, {"already_valid", true}};
             }
             set_slice_state([](SliceState &s) {
