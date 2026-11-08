@@ -3,9 +3,102 @@
 <head>
 <meta charset="utf-8">
 <title>OrcaSlicer MCP</title>
+<style>
+  :root { --bg: var(--orca-bg, #2b2b2f); --fg: var(--orca-fg, #e8e8e8); --muted: var(--orca-muted, #a3a3a8); --faint: #727278;
+          --border: var(--orca-border, #3c3c42); --accent: var(--orca-accent, #009688); --warn: #e5675c;
+          --hover: rgba(127,127,127,.12); --hover-soft: rgba(127,127,127,.08);
+          --tip-bg: #121214; --tip-fg: #e8e8e8; --tip-border: #44444b;
+          --t-set: #5fa8e8; --t-preset: #b28be8; --t-model: #e8a95a; --t-plate: #74c29a; --t-slice: #00a991;
+          --font: var(--orca-font, "HarmonyOS Sans SC", "Segoe UI", system-ui, -apple-system, sans-serif); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--fg); font: 13px/1.4 var(--font); display: flex; flex-direction: column; overflow: hidden; }
+  #app { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  .title { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-bottom: 1px solid var(--border); flex: none; }
+  .title .sp { flex: 1; }
+  .list { flex: 1; overflow-y: auto; }
+  .ibtn { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); cursor: pointer; }
+  .ibtn:hover { background: var(--hover); color: var(--fg); }
+  .ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .title [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
+
+  svg.i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .k-setting { color: var(--t-set); } .k-preset { color: var(--t-preset); } .k-model { color: var(--t-model); }
+  .k-plate { color: var(--t-plate); } .k-slice { color: var(--t-slice); } .k-refused { color: var(--warn); } .k-start { color: var(--faint); } .k-file { color: var(--faint); }
+
+  .empty { padding: 18px 14px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+  .empty a { color: var(--accent); cursor: pointer; }
+  .offnote { border-bottom: 1px solid var(--border); }
+
+  .group { border-bottom: 1px solid var(--border); }
+  .ghead { position: relative; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 7px; min-height: 34px; padding: 0 10px; cursor: pointer; }
+  .ghead:hover { background: var(--hover-soft); }
+  .ghead .t { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .ghead .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ghead .res { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
+  .ghead .act { position: absolute; right: 8px; top: 7px; width: 20px; height: 20px; display: none; place-items: center; border-radius: 3px; color: var(--muted); background: var(--bg); }
+  .ghead:hover .act { display: grid; }
+  .ghead:hover .act ~ .res, .ghead:hover .res.hide-on-hover { visibility: hidden; }
+  .ghead .act:hover { background: var(--hover); color: var(--fg); }
+  .ghead .act.off { opacity: .45; cursor: default; }
+  .ghead .act svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+  .group.open .ghead .t { color: var(--muted); }
+  .ask { display: none; grid-column: 2 / 4; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; padding: 6px 0; }
+  .ask .line { display: flex; gap: 10px; justify-content: flex-end; }
+  .ask .note { color: var(--muted); font-size: 11.5px; text-align: right; }
+  .ask .bad { color: var(--warn); font-size: 11.5px; text-align: right; }
+  .group.asking .ask, .group.busy .ask, .group.showerr .ask { display: flex; }
+  .group.asking .ghead .name, .group.asking .ghead .res, .group.asking .ghead .act,
+  .group.busy .ghead .name, .group.busy .ghead .res, .group.busy .ghead .act,
+  .group.showerr .ghead .name, .group.showerr .ghead .res, .group.showerr .ghead .act { display: none; }
+  .ask a { color: var(--accent); cursor: pointer; } .ask a.no { color: var(--muted); }
+  .ask .wait { color: var(--muted); }
+
+  .body { display: none; padding: 0 0 8px; }
+  .group.open .body { display: block; }
+  .row { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; min-height: 26px; padding: 3px 10px 3px 51px; cursor: pointer; }
+  .row:hover { background: var(--hover-soft); }
+  .row .l { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .v { color: var(--fg); white-space: nowrap; }
+  .row .l .chg { display: block; color: var(--faint); font-size: 11px; line-height: 1.2; }
+  .row.refused .v { color: var(--warn); }
+  .more { display: none; padding: 0 10px 6px 73px; color: var(--muted); font-size: 12px; justify-content: space-between; gap: 8px; }
+  .row.open, .row.open + .more { background: var(--hover-soft); }
+  .row.open + .more { display: flex; }
+  .more .d { min-width: 0; }
+  .more .d.bad { color: var(--warn); }
+  .more a { color: var(--accent); cursor: pointer; white-space: nowrap; }
+  .more a.off { color: var(--faint); cursor: default; }
+  .more .faint { color: var(--faint); white-space: nowrap; }
+  .group.undone .ghead .name, .group.undone .ghead .res { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(127,127,127,.4); }
+  .group.undone .ghead { cursor: pointer; }
+  .group.restored .ghead { cursor: default; }
+  [data-tip] { position: relative; }
+  [data-tip]:hover::after { content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
+  .tip-left:hover::after { left: auto; right: 0; transform: none; }
+  .row .ic { display: inline-flex; }
+</style>
 </head>
 <body>
-<div id="app"></div>
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-setting" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></symbol>
+  <symbol id="i-preset" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></symbol>
+  <symbol id="i-model" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+  <symbol id="i-plate" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></symbol>
+  <symbol id="i-slice" viewBox="0 0 24 24"><path d="M3 8l9-4 9 4-9 4z"/><path d="M3 12l9 4 9-4M3 16l9 4 9-4"/></symbol>
+  <symbol id="i-refused" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/></symbol>
+  <symbol id="i-start" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M7 9l5-5 5 5M7 15l5 5 5-5"/></symbol>
+  <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></symbol>
+</svg>
+<div id="app">
+  <div class="title">Assistant<span class="sp"></span><span class="ibtn tip-left" id="fold"></span><span class="ibtn tip-left" id="gear"></span></div>
+  <div class="list" id="list"></div>
+</div>
 <script id="panel-core">
 (function (root) {
   'use strict';
@@ -158,6 +251,271 @@
     undoState: undoState
   };
 })(window);
+</script>
+<script id="panel-view">
+(function () {
+  'use strict';
+  var Core = window.McpPanelCore;
+  var TIP = { setting: 'Setting', preset: 'Preset', model: 'Model', plate: 'Plate', slice: 'Slice result', refused: 'Refused', file: 'File', start: 'Starting point' };
+  var history = { rows: [], groups: [] };
+  var caps = { restore: false, open_settings: true, settings_hint: '' };
+  var restoredTo = null, canUndoRestore = false;
+  var live = {};
+  var api = 'on';
+  var openGroups = {};          // group id -> bool
+  var newestSeen = null;        // newest group id at the last render
+  var openRows = {};            // row id -> bool
+  var pendingUndo = {};         // row id -> 'busy'
+  var undoError = {};           // row id -> reason
+  var revertedHere = {};        // row id -> true (ok result, until history catches up)
+  var asking = null;            // group id with confirm showing
+  var restoreBusy = null;       // group id | 'undo'
+  var restoreError = {};        // group id | 'undo' -> reason
+  var groups = [];
+
+  function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function has(s) { return s !== null && s !== undefined && s !== ''; }
+  function send(msg) { try { if (window.orca && window.orca.postMessage) window.orca.postMessage(msg); } catch (e) {} }
+  function icon(k) { return '<svg class="i k-' + k + '"><use href="#i-' + k + '"/></svg>'; }
+
+  function isNewest(g) { return groups.length && groups[0].id === g.id; }
+  function isUndone(g) {
+    if (restoredTo === null || restoredTo === undefined) return false;
+    if (g.id === restoredTo) return false;
+    var t = null;
+    groups.forEach(function (x) { if (x.id === restoredTo) t = x; });
+    if (restoredTo === 0) return g.id !== 0;
+    if (!t) return false;
+    return g.id !== 0 && (g.ts > t.ts || (g.ts === t.ts && g.id > t.id));
+  }
+  function groupsUndoneBy(g) {
+    return groups.filter(function (x) {
+      if (x.id === g.id) return false;
+      if (g.id === 0) return x.id !== 0;
+      return x.id !== 0 && (x.ts > g.ts || (x.ts === g.ts && x.id > g.id));
+    });
+  }
+  function savedToDisk(r) {
+    return r.kind === 'file' || (r.kind === 'preset' && /saved|deleted/i.test(r.label || ''));
+  }
+  function detailText(r, disp) {
+    var parts = [];
+    var b = has(r.before) ? String(r.before) : '';
+    if (disp.note === 'changed by you' && b) {
+      parts.push('Assistant set ' + r.value + ' · ' + b.charAt(0).toLowerCase() + b.slice(1));
+      return parts.join(' · ');
+    }
+    if (b) parts.push(b);
+    if (has(r.where)) parts.push(r.where);
+    return parts.join(' · ');
+  }
+
+  function rowHtml(r, g, newest) {
+    var disp = Core.liveDisplay(r, live, newest);
+    var detail = detailText(r, disp);
+    var kind = r.kind === 'refused' || (r.kind === 'slice' && has(r.error)) ? 'refused' : r.kind;
+    var rc = kind === 'refused' ? ' refused' : '';
+    var open = openRows[r.id] ? ' open' : '';
+    var tail = '';
+    var errLine = undoError[r.id];
+    if (r.undo) {
+      var st = Core.undoState(r, live, newest);
+      var reverted = has(r.undone_at) || revertedHere[r.id];
+      if (reverted) {
+        tail = '<span class="faint"' + (has(r.undone_at) ? ' data-tip="Reverted at ' + esc(r.undone_at) + '" class="tip-left"' : '') + '>Reverted</span>';
+        if (has(r.undone_at)) tail = '<span class="faint tip-left" data-tip="Reverted at ' + esc(r.undone_at) + '">Reverted</span>';
+      } else if (pendingUndo[r.id]) {
+        tail = '<span class="faint">Reverting…</span>';
+      } else if (st.available) {
+        tail = '<a class="tip-left" data-undo="' + r.id + '" data-tip="' + esc(r.undo.tip || r.undo.verb) + '">' + esc(r.undo.verb) + '</a>';
+      } else {
+        tail = '<a class="off tip-left" data-tip="' + esc(st.why) + '">' + esc(r.undo.verb) + '</a>';
+      }
+    }
+    var d = '<span class="d">' + esc(detail) + '</span>';
+    var more = '<div class="more">' + d + tail + '</div>';
+    if (errLine) more = '<div class="more"><span class="d bad">' + esc(errLine) + '</span>' + tail + '</div>';
+    else if (kind === 'refused' && has(r.error) && !detail) more = '<div class="more"><span class="d">' + esc(r.error) + '</span>' + tail + '</div>';
+    return '<div class="row' + rc + open + '" data-row="' + r.id + '"><span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
+      '<span class="l">' + esc(r.label) + (disp.note ? '<span class="chg">' + esc(disp.note) + '</span>' : '') + '</span><span class="v">' + esc(disp.value) + '</span></div>' + more;
+  }
+
+  function groupHtml(g, idx) {
+    var newest = idx === 0;
+    var undone = isUndone(g);
+    var open = !!openGroups[g.id] && !undone;
+    var res = Core.groupResult(g);
+    var cls = 'group' + (open ? ' open' : '') + (undone ? ' undone' : '');
+    var restorable = caps.restore && !newest && !undone && g.restore;
+    var ask = '';
+    if (restoreBusy === g.id) {
+      cls += ' busy';
+      ask = '<span class="ask"><span class="line wait">Restoring…</span></span>';
+    } else if (restoreError[g.id]) {
+      cls += ' showerr';
+      ask = '<span class="ask"><span class="line"><span class="bad">' + esc(restoreError[g.id]) + '</span><a class="no" data-dismiss="' + g.id + '">OK</a></span></span>';
+    } else if (asking === g.id) {
+      cls += ' asking';
+      var notes = '';
+      var undoneGroups = groupsUndoneBy(g);
+      var disk = undoneGroups.some(function (x) { return x.rows.some(savedToDisk); });
+      if (disk) notes += '<span class="note">Files and presets saved to disk stay.</span>';
+      notes += '<span class="note">Your own changes since then are undone too.</span>';
+      ask = '<span class="ask"><span class="line">Restore to ' + esc(g.time) + '? <a data-yes="' + g.id + '">Yes</a><a class="no" data-no="' + g.id + '">No</a></span>' + notes + '</span>';
+    }
+    var act = '';
+    if (restorable && !ask) {
+      var ok = g.restore.available;
+      act = '<span class="act tip-left' + (ok ? '' : ' off') + '" ' + (ok ? 'data-ask="' + g.id + '"' : '') + ' data-tip="' + esc(ok ? 'Restore the project to ' + g.time : (g.restore.why || 'No restore point here')) + '"><svg><use href="#i-restore"/></svg></span>';
+    }
+    var resHtml = '<span class="res' + (act ? ' hide-on-hover' : '') + '">' + (res.warn ? icon('refused') : '') + esc(res.text) + '</span>';
+    var title = Core.groupTitle(g);
+    return '<div class="' + cls + '" data-g="' + g.id + '"><div class="ghead" data-toggle="' + g.id + '"><span class="t">' + esc(g.time) + '</span><span class="name">' + esc(title) + '</span>' +
+      resHtml + act + ask + '</div><div class="body">' + g.rows.map(function (r) { return rowHtml(r, g, newest && !undone); }).join('') + '</div></div>';
+  }
+
+  function restoredLineHtml() {
+    if (restoredTo === null || restoredTo === undefined) return '';
+    var t = '';
+    groups.forEach(function (g) { if (g.id === restoredTo) t = g.time; });
+    var right;
+    if (restoreBusy === 'undo') right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line wait">Restoring…</span></span>';
+    else if (restoreError.undo) right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line"><span class="bad">' + esc(restoreError.undo) + '</span></span></span>';
+    else if (canUndoRestore) right = '<span class="ask" style="display:flex;grid-column:auto"><a class="tip-left" data-undo-restore="1" data-tip="Go back to before the restore">Undo</a></span>';
+    else right = '';
+    return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="name">Restored to ' + esc(t) + '</span>' + right + '</div></div>';
+  }
+
+  function updateFold() {
+    var cand = groups.filter(function (g) { return !isUndone(g); });
+    var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
+    var f = document.getElementById('fold');
+    f.setAttribute('data-tip', allOpen ? 'Collapse all' : 'Expand all');
+    f.innerHTML = '<svg><use href="#i-' + (allOpen ? 'collapse' : 'expand') + '"/></svg>';
+    f.style.visibility = groups.length ? 'visible' : 'hidden';
+  }
+  function updateGear() {
+    var g = document.getElementById('gear');
+    g.setAttribute('data-tip', caps.open_settings ? 'Remote API settings' : (caps.settings_hint || 'Settings'));
+    g.innerHTML = '<svg><use href="#i-gear"/></svg>';
+  }
+
+  function render() {
+    groups = Core.groupRows(history);
+    var html = '';
+    if (api === 'off') {
+      html += '<div class="empty offnote">The Remote API is off.' + (caps.open_settings
+        ? ' <a data-settings="1">Open the Remote API settings</a>'
+        : (caps.settings_hint ? '<br>' + esc(caps.settings_hint) : '')) + '</div>';
+    }
+    if (!groups.length) {
+      if (api !== 'off') html += '<div class="empty">When an assistant changes something, it shows up here.</div>';
+    } else {
+      html += restoredLineHtml();
+      html += groups.map(groupHtml).join('');
+    }
+    var list = document.getElementById('list');
+    var top = list.scrollTop;
+    list.innerHTML = html;
+    list.scrollTop = top;
+    updateFold();
+    updateGear();
+  }
+
+  function applyHistory(m) {
+    history = { rows: m.rows || [], groups: m.groups || [] };
+    var c = m.capabilities || {};
+    caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '' };
+    restoredTo = has(m.restored_to) || m.restored_to === 0 ? m.restored_to : null;
+    canUndoRestore = !!m.can_undo_restore;
+    var gs = Core.groupRows(history);
+    var newest = gs.length ? gs[0].id : null;
+    gs.forEach(function (g, i) { if (!(g.id in openGroups)) openGroups[g.id] = (i === 0); });
+    if (newest !== null && newest !== newestSeen && newestSeen !== null) openGroups[newest] = true;
+    newestSeen = newest;
+    // rows that the host now reports as reverted no longer need the local mark
+    history.rows.forEach(function (r) { if (has(r.undone_at)) { delete revertedHere[r.id]; delete pendingUndo[r.id]; } });
+    if (restoreBusy !== null) { restoreBusy = null; }
+    asking = null;
+    render();
+    send({ action: 'live' });
+  }
+
+  function applyResult(m) {
+    if (m.action === 'undo') {
+      var id = m.row;
+      delete pendingUndo[id];
+      if (m.status === 'ok') { revertedHere[id] = true; delete undoError[id]; }
+      else if (m.status === 'failed') { undoError[id] = m.reason || 'Could not revert'; openRows[id] = true; }
+    } else {
+      var key = m.action === 'undo_restore' ? 'undo' : m.group;
+      if (restoreBusy === 'undo' || restoreBusy === m.group) restoreBusy = null;
+      restoreBusy = null;
+      if (m.status === 'failed') restoreError[key === undefined ? 'undo' : key] = m.reason || 'Could not restore';
+    }
+    render();
+  }
+
+  function receive(m) {
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'history') applyHistory(m);
+    else if (m.type === 'live') { live = m.values || {}; render(); }
+    else if (m.type === 'state') { api = m.api === 'off' ? 'off' : 'on'; render(); }
+    else if (m.type === 'result') applyResult(m);
+  }
+  window.__mcpPanelReceive = receive;
+  if (window.orca && window.orca.onMessage) window.orca.onMessage(receive);
+
+  function ancestor(el, attr) {
+    while (el && el !== document) { if (el.getAttribute && el.hasAttribute(attr)) return el; el = el.parentNode; }
+    return null;
+  }
+  document.addEventListener('click', function (e) {
+    var el;
+    if ((el = ancestor(e.target, 'data-undo'))) {
+      e.stopPropagation();
+      var id = Number(el.getAttribute('data-undo'));
+      pendingUndo[id] = 'busy'; delete undoError[id];
+      render(); send({ action: 'undo', row: id }); return;
+    }
+    if (ancestor(e.target, 'data-undo-restore')) {
+      restoreBusy = 'undo'; delete restoreError.undo;
+      render(); send({ action: 'undo_restore' }); return;
+    }
+    if ((el = ancestor(e.target, 'data-yes'))) {
+      var gid = Number(el.getAttribute('data-yes'));
+      asking = null; restoreBusy = gid; delete restoreError[gid];
+      render(); send({ action: 'restore', group: gid }); return;
+    }
+    if (ancestor(e.target, 'data-no')) { asking = null; render(); return; }
+    if ((el = ancestor(e.target, 'data-dismiss'))) { delete restoreError[Number(el.getAttribute('data-dismiss'))]; render(); return; }
+    if ((el = ancestor(e.target, 'data-ask'))) { asking = Number(el.getAttribute('data-ask')); render(); return; }
+    if (ancestor(e.target, 'data-settings')) { send({ action: 'open_settings' }); return; }
+    if (ancestor(e.target, 'gear') || e.target.id === 'gear' || (e.target.closest && e.target.closest('#gear'))) {
+      if (caps.open_settings) send({ action: 'open_settings' });
+      return;
+    }
+    if (e.target.closest && e.target.closest('#fold')) {
+      var cand = groups.filter(function (g) { return !isUndone(g); });
+      var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
+      cand.forEach(function (g) { openGroups[g.id] = !allOpen; });
+      render(); return;
+    }
+    if (e.target.closest && e.target.closest('.more')) return;
+    if ((el = e.target.closest && e.target.closest('.row'))) {
+      var rid = Number(el.getAttribute('data-row'));
+      openRows[rid] = !openRows[rid]; render(); return;
+    }
+    if ((el = e.target.closest && e.target.closest('[data-toggle]'))) {
+      var tid = Number(el.getAttribute('data-toggle'));
+      if (asking === tid || restoreBusy === tid) return;
+      openGroups[tid] = !openGroups[tid]; render(); return;
+    }
+  });
+  render();
+  send({ action: 'ready' });
+  send({ action: 'live' });
+})();
 </script>
 </body>
 </html>
