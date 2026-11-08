@@ -288,7 +288,7 @@ static nlohmann::json config_to_json(const DynamicPrintConfig &cfg,
 
 Response Controller::handle_status()
 {
-    nlohmann::json j = run_on_ui([this]() -> nlohmann::json {
+    nlohmann::json j = run_on_ui([]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         auto *plater = wxGetApp().plater();
 

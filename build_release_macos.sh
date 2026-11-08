@@ -344,7 +344,10 @@ function build_slicer() {
                     ${CMAKE_POLICY_COMPAT} \
                     "${EXTRA_CMAKE_ARGS[@]}"
             fi
-            cmake --build . --config "$BUILD_CONFIG" --target "$SLICER_BUILD_TARGET"
+            # OrcaSlicer MCP: with Ninja, keep compiling after an error, so one CI run lists every error.
+            _keep_going=()
+            if [[ "$SLICER_CMAKE_GENERATOR" == Ninja* ]]; then _keep_going=(-- -k 0); fi
+            cmake --build . --config "$BUILD_CONFIG" --target "$SLICER_BUILD_TARGET" ${_keep_going[@]+"${_keep_going[@]}"}
         )
 
         # -T also runs the tests; ORCA_TESTS_BUILD_ONLY=1 builds them without

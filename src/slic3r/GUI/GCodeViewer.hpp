@@ -45,7 +45,7 @@ namespace GUI {
 
 class PartPlateList;
 class OpenGLManager;
-class Camera;
+struct Camera;
 
 static const float GCODE_VIEWER_SLIDER_SCALE = 0.6f;
 static const float SLIDER_DEFAULT_RIGHT_MARGIN  = 10.0f;
