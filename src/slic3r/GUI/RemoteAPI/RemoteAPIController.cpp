@@ -717,6 +717,7 @@ Response Controller::handle_put_config(const std::string &body)
         const int              nozzles  = bundle->get_printer_extruder_count();
         const auto            *colours0 = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         const size_t           filaments_before = colours0 == nullptr ? 0 : colours0->values.size();
+        const std::vector<std::string> colours_before = colours0 == nullptr ? std::vector<std::string>{} : colours0->values;
         const int              plate_idx = wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
 
         for (auto it = in.begin(); it != in.end(); ++it) {
@@ -904,6 +905,28 @@ Response Controller::handle_put_config(const std::string &body)
             }
             if (touched_flush)
                 wxGetApp().sidebar().set_flushing_volume_warning(is_flush_config_modified());
+
+            if (proj_keys.count("filament_colour")) {
+                // Same follow-ups as the sidebar colour picker
+                // (PresetComboBox::sync_colour_config) for each slot whose colour
+                // changed: keep a solid colour's filament_multi_colour entry in step,
+                // repaint that slot's badge (it is drawn from filament_colour only on
+                // update()) and queue EVT_FILAMENT_COLOR_CHANGED (flush recalculation).
+                const auto &colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values;
+                auto       *multi   = bundle->project_config.option<ConfigOptionStrings>("filament_multi_colour");
+                auto       &combos  = wxGetApp().sidebar().combos_filament();
+                for (size_t i = 0; i < colours.size(); ++i) {
+                    if (i < colours_before.size() && colours_before[i] == colours[i])
+                        continue;
+                    if (multi != nullptr && i < multi->values.size() && multi->values[i].find(' ') == std::string::npos)
+                        multi->values[i] = colours[i];
+                    if (i < combos.size())
+                        combos[i]->update();
+                    wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
+                    evt->SetInt(int(i));
+                    wxQueueEvent(plater, evt);
+                }
+            }
 
             bundle->export_selections(*wxGetApp().app_config);
             // Once per request: it re-arms the auto-backup exporter.
