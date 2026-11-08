@@ -1202,6 +1202,13 @@ Response Controller::handle_slice()
         // is false here nothing is coming and the state would wedge at
         // "slicing" forever. Flip it to error instead.
         if (!plater->is_background_process_slicing()) {
+            // 2.5.0: a plate whose result flag was cleared while its print stayed the
+            // same (a new plate widening the plate grid) has nothing to redo: reslice()
+            // starts no job and sets the flag again. That is the old result, not an error.
+            if (plater->get_partplate_list().get_curr_plate()->is_slice_result_valid()) {
+                sync_slice_state_to_current_plate("slice.done");
+                return {{"started", false}, {"already_valid", true}};
+            }
             set_slice_state([](SliceState &s) {
                 s.state = "error"; s.percent = -1;
                 s.message = "plate cannot be sliced (object outside bed or invalid state)";
@@ -2166,12 +2173,17 @@ Response Controller::handle_create_plate(const std::string &body)
         }
         // Same steps as the toolbar's "Add plate" (Plater::priv::on_action_add_plate).
         plater->take_snapshot("add partplate");
+        // 2.5.0: when the new plate adds a column to the plate grid, create_plate
+        // rebuilds plate membership (reload_all_objects), which drops every plate's
+        // slice result, as the toolbar button does. Follow that in /slice/status.
+        const bool was_valid = plates.get_curr_plate()->is_slice_result_valid();
         const int idx = plates.create_plate();
         if (idx < 0) return {{"error", "max_plates"}, {"max", (int) PartPlateList::MAX_PLATES_COUNT}};
         if (select) plater->select_plate(idx, false);
         plater->update();
         plater->get_camera().requires_zoom_to_plate = REQUIRES_ZOOM_TO_ALL_PLATE;
-        if (select) sync_slice_state_to_current_plate("slice.plate_changed");
+        if (select || plates.get_curr_plate()->is_slice_result_valid() != was_valid)
+            sync_slice_state_to_current_plate("slice.plate_changed");
         api_notify("Added plate " + std::to_string(idx + 1));
         return {{"created", true}, {"index", idx},
                 {"count", plates.get_plate_count()},

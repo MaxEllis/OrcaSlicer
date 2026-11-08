@@ -260,6 +260,11 @@ The body is optional; `select` defaults to `true` (the new plate becomes current
 as with the toolbar button). Errors: `422 max_plates` (the limit is reported in
 `max`), `409 slicing`.
 
+On OrcaSlicer 2.5, a new plate that adds a column to the plate grid (the 2nd, 5th,
+10th, ... plate) makes OrcaSlicer rebuild which objects sit on which plate, and every
+plate's slice result is dropped, as with the toolbar button. `/slice/status` follows:
+it turns `idle` and a `slice.plate_changed` event is sent. Slice again afterwards.
+
 ### POST /plates/{i}/select
 
 ```json
