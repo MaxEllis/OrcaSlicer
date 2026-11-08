@@ -281,6 +281,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/HMSPanel.hpp
     GUI/HttpServer.cpp
     GUI/HttpServer.hpp
+    GUI/RemoteAPI/RemoteAPIConfig.cpp
+    GUI/RemoteAPI/RemoteAPIConfig.hpp
+    GUI/RemoteAPI/RemoteAPIServer.cpp
+    GUI/RemoteAPI/RemoteAPIServer.hpp
+    GUI/RemoteAPI/RemoteAPIController.cpp
+    GUI/RemoteAPI/RemoteAPIController.hpp
     GUI/I18N.cpp
     GUI/I18N.hpp
     GUI/DragDropPanel.cpp
@@ -458,6 +464,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/PhysicalPrinterDialog.hpp
     GUI/Plater.cpp
     GUI/Plater.hpp
+    GUI/ElegooCanvasGate.hpp
+    GUI/ElegooCanvasMappingDialog.cpp
+    GUI/ElegooCanvasMappingDialog.hpp
+    GUI/ElegooCanvasState.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
     GUI/PrebuildQueue.hpp
@@ -764,6 +774,15 @@ set(SLIC3R_GUI_SOURCES
     Utils/Duet.hpp
     Utils/ElegooLink.cpp
     Utils/ElegooLink.hpp
+    Utils/ElegooCanvas.cpp
+    Utils/ElegooCanvas.hpp
+    Utils/ElegooCanvasMatch.cpp
+    Utils/ElegooCanvasMatch.hpp
+    Utils/ElegooCanvasSession.cpp
+    Utils/ElegooCanvasSession.hpp
+    Utils/ElegooColorBuckets.hpp
+    Utils/ElegooMqtt.cpp
+    Utils/ElegooMqtt.hpp
     Utils/EmbossStyleManager.cpp
     Utils/EmbossStyleManager.hpp
     Utils/ESP3D.cpp

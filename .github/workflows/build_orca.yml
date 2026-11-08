@@ -363,6 +363,29 @@ jobs:
           # Load the `retry` and `create_dmg` helpers.
           source ${{ github.workspace }}/scripts/retry.sh
           source ${{ github.workspace }}/scripts/create_dmg.sh
+          # orca-mcp: unsigned builds are linker-signed on arm64 only, so macOS cannot derive a
+          # designated requirement and never remembers a privacy grant (the ~/Downloads prompt
+          # returns on every launch, orcaslicer-mcp #8). Ad-hoc sign any app without a valid
+          # signature, then require a DR. Like the notarized path above, sign every nested
+          # Mach-O explicitly (--deep cannot sign the bundled Python runtime), then the bundle.
+          for app in OrcaSlicer OrcaSlicer_profile_validator; do
+            APP=${{ github.workspace }}/build/universal/OrcaSlicer/$app.app
+            [ -d "$APP" ] || continue
+            if ! codesign --verify --deep --strict "$APP" 2>/dev/null; then
+              machos=()
+              while IFS= read -r f; do machos+=("$f"); done < <(
+                find "$APP" -type f -print0 |
+                  xargs -0 file --no-pad --mime-type -- |
+                  grep -v ' (for architecture ' |
+                  grep ': application/x-mach-binary$' |
+                  sed 's|: application/x-mach-binary$||'
+              )
+              [ "${#machos[@]}" -gt 0 ] && codesign --force --sign - "${machos[@]}"
+              codesign --force --sign - "$APP"
+            fi
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -d -r- "$APP" 2>&1 | grep -q "designated =>" || { echo "::error::$app.app has no designated requirement"; exit 1; }
+          done
           mkdir -p ${{ github.workspace }}/build/universal/OrcaSlicer_dmg
           rm -rf ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/*
           cp -R ${{ github.workspace }}/build/universal/OrcaSlicer/OrcaSlicer.app ${{ github.workspace }}/build/universal/OrcaSlicer_dmg/
@@ -765,9 +788,16 @@ jobs:
         timeout-minutes: 20
         shell: bash
         run: |
+          # orca-mcp: pin the external test repo. Its HEAD tracks upstream main, so a
+          # suite written for a newer engine can fail this release-based build and skip
+          # the AppImage upload. 4674f68bbc is the HEAD upstream's own v2.5.0 release
+          # build passed against (release/v2.5.0, run 42325739954).
+          test_repo_ref="4674f68bbc784b303c15a3e8b9e47b45fb151725"
           test_repo_dir="${{ runner.temp }}/orca-test-repo"
           rm -rf "$test_repo_dir"
-          git clone --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_dir"
+          git init -q "$test_repo_dir"
+          git -C "$test_repo_dir" fetch -q --depth 1 https://github.com/OrcaSlicer/orca-test-repo.git "$test_repo_ref"
+          git -C "$test_repo_dir" checkout -q FETCH_HEAD
           python3 "$test_repo_dir/run_test.py" "${{ github.workspace }}/build/package/bin/orca-slicer"
 
       - name: Build orca_custom_preset_tests

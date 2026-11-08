@@ -1,0 +1,274 @@
+#include <catch2/catch_all.hpp>
+
+#define ELEGOO_CANVAS_GATE_NO_CONFIG
+#include "slic3r/GUI/ElegooCanvasGate.hpp"
+#include "slic3r/GUI/ElegooCanvasState.hpp"
+#include "slic3r/Utils/ElegooCanvas.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include <stdexcept>
+
+using namespace Slic3r::ElegooCanvas;
+using nlohmann::json;
+
+namespace {
+json tray(int id, int status, const char *type, const char *name, const char *color)
+{
+    return json{{"tray_id", id},
+                {"brand", "Elegoo"},
+                {"filament_type", type},
+                {"filament_name", name},
+                {"filament_code", "0x1234"},
+                {"filament_color", color},
+                {"min_nozzle_temp", 190},
+                {"max_nozzle_temp", 230},
+                {"status", status}};
+}
+
+json one_tray_info(const json &t)
+{
+    return json{{"active_canvas_id", 0},
+                {"active_tray_id", 1},
+                {"auto_refill", false},
+                {"canvas_list", json::array({json{{"canvas_id", 0}, {"connected", 1}, {"tray_list", json::array({t})}}})}};
+}
+} // namespace
+
+TEST_CASE("parse_canvas_info reads a normal loaded tray", "[elegoo_canvas]")
+{
+    Info info = parse_canvas_info(one_tray_info(tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")));
+    REQUIRE(info.units.size() == 1);
+    CHECK(info.connected());
+    CHECK(info.active_canvas_id == 0);
+    CHECK(info.active_tray_id == 1);
+    CHECK_FALSE(info.auto_refill);
+    const Tray *t = info.find(0, 1);
+    REQUIRE(t != nullptr);
+    CHECK(t->ready());
+    CHECK(t->label() == "A1");
+    CHECK(t->status == TrayStatus::Loaded);
+    CHECK(t->filament_type == "PLA");
+    CHECK(t->filament_color == "#BCBCBC");
+    CHECK(t->min_nozzle_temp == 190);
+    CHECK(t->max_nozzle_temp == 230);
+    CHECK_FALSE(t->unknown_filament);
+    CHECK(info.find(0, 2) == nullptr);
+    CHECK(info.find(3, 1) == nullptr);
+}
+
+TEST_CASE("preloaded tray with empty name is unknown and not ready", "[elegoo_canvas]")
+{
+    Info info = parse_canvas_info(one_tray_info(tray(2, 1, "PLA", "", "#BCBCBC")));
+    const Tray *t = info.find(0, 2);
+    REQUIRE(t != nullptr);
+    CHECK(t->status == TrayStatus::Preloaded);
+    CHECK(t->unknown_filament);
+    CHECK_FALSE(t->ready());
+}
+
+TEST_CASE("colour normalisation", "[elegoo_canvas]")
+{
+    auto parse = [](const char *c) { return parse_canvas_info(one_tray_info(tray(0, 2, "PLA", "PLA Basic", c))).units[0].trays[0]; };
+    CHECK_FALSE(parse("").ready());
+    CHECK(parse("").filament_color.empty());
+    CHECK_FALSE(parse("bcbcbc").ready());
+    CHECK(parse("bcbcbc").filament_color.empty());
+    CHECK(parse("#bcbcbc").filament_color == "#BCBCBC");
+    CHECK(parse("#bcbcbc").ready());
+    CHECK(parse("#BCBCB").filament_color.empty());
+    CHECK(parse("#BCBCBCB").filament_color.empty());
+    CHECK(parse("#GGGGGG").filament_color.empty());
+}
+
+TEST_CASE("tray status mapping and readiness", "[elegoo_canvas]")
+{
+    auto st = [](int s) { return parse_canvas_info(one_tray_info(tray(0, s, "PLA", "PLA Basic", "#000000"))).units[0].trays[0]; };
+    CHECK(st(0).status == TrayStatus::Disconnected);
+    CHECK_FALSE(st(0).ready());
+    CHECK(st(1).status == TrayStatus::Preloaded);
+    CHECK(st(1).ready());
+    CHECK(st(2).status == TrayStatus::Loaded);
+    CHECK(st(3).status == TrayStatus::Error);
+    CHECK_FALSE(st(3).ready());
+    CHECK(st(-1).status == TrayStatus::Error);
+}
+
+TEST_CASE("missing fields take defaults, missing canvas_list throws", "[elegoo_canvas]")
+{
+    Info info = parse_canvas_info(json{{"canvas_list", json::array({json{{"canvas_id", 1}, {"connected", true}, {"tray_list", json::array({json::object()})}}})}});
+    CHECK(info.active_canvas_id == -1);
+    CHECK(info.active_tray_id == -1);
+    REQUIRE(info.units.size() == 1);
+    CHECK(info.units[0].connected);
+    CHECK(info.units[0].canvas_id == 1);
+    REQUIRE(info.units[0].trays.size() == 1);
+    const Tray &t = info.units[0].trays[0];
+    CHECK(t.tray_id == 0);
+    CHECK(t.filament_type.empty());
+    CHECK(t.unknown_filament);
+    CHECK_FALSE(t.ready());
+    CHECK(t.label() == "A0"); // letter follows list order, not canvas_id
+    CHECK(info.units[0].canvas_id == 1);
+
+    CHECK_THROWS_AS(parse_canvas_info(json::object()), std::invalid_argument);
+    CHECK_THROWS_AS(parse_canvas_info(json{{"canvas_list", "x"}}), std::invalid_argument);
+    CHECK_THROWS_AS(parse_canvas_info(json{{"canvas_list", json::object()}}), std::invalid_argument);
+    Info empty = parse_canvas_info(json{{"canvas_list", json::array()}});
+    CHECK_FALSE(empty.connected());
+}
+
+TEST_CASE("label letters follow unit order", "[elegoo_canvas]")
+{
+    json b = json{{"canvas_list",
+                   json::array({json{{"canvas_id", 0}, {"connected", 1}, {"tray_list", json::array()}},
+                                json{{"canvas_id", 1}, {"connected", 0}, {"tray_list", json::array({tray(3, 2, "PETG", "PETG", "#112233")})}}})}};
+    Info info = parse_canvas_info(b);
+    CHECK(info.connected());
+    const Tray *t = info.find(1, 3);
+    REQUIRE(t != nullptr);
+    CHECK(t->label() == "B3");
+    CHECK(t->canvas_id == 1);
+    CHECK_FALSE(t->unit_connected); // unit 1 reports connected: 0
+    CHECK_FALSE(t->ready());
+}
+
+TEST_CASE("trays of a disconnected unit are not ready", "[elegoo_canvas]")
+{
+    json b = json{{"canvas_list",
+                   json::array({json{{"canvas_id", 0}, {"connected", 1}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}},
+                                json{{"canvas_id", 1}, {"connected", false}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}},
+                                json{{"canvas_id", 2}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}}})}};
+    Info info = parse_canvas_info(b);
+    CHECK(info.connected());
+    REQUIRE(info.find(0, 1) != nullptr);
+    CHECK(info.find(0, 1)->unit_connected);
+    CHECK(info.find(0, 1)->ready());
+    REQUIRE(info.find(1, 1) != nullptr);
+    CHECK_FALSE(info.find(1, 1)->ready()); // connected: false
+    REQUIRE(info.find(2, 1) != nullptr);
+    CHECK_FALSE(info.find(2, 1)->ready()); // connected missing = false
+
+    json api = info_json(info);
+    REQUIRE(api["trays"].size() == 3);
+    CHECK(api["trays"][0]["ready"] == true);
+    CHECK(api["trays"][1]["ready"] == false);
+    CHECK(api["trays"][2]["ready"] == false);
+
+    json none = json{{"canvas_list", json::array({json{{"canvas_id", 0}, {"connected", 0}, {"tray_list", json::array({tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")})}}})}};
+    Info off  = parse_canvas_info(none);
+    CHECK_FALSE(off.connected());
+    CHECK_FALSE(off.find(0, 1)->ready());
+}
+
+TEST_CASE("slot_map_json", "[elegoo_canvas]")
+{
+    json j = slot_map_json({{0, 0, 1}, {1, 0, 3}});
+    CHECK(j == json::parse(R"([{"t":0,"canvas_id":0,"tray_id":1},{"t":1,"canvas_id":0,"tray_id":3}])"));
+    CHECK(slot_map_json({}) == json::array());
+}
+
+TEST_CASE("info_json has the API shape", "[elegoo_canvas]")
+{
+    Info info = parse_canvas_info(one_tray_info(tray(1, 2, "PLA", "PLA Basic", "#bcbcbc")));
+    info.firmware = "1.2.3";
+    json j = info_json(info);
+    CHECK(j["connected"] == true);
+    CHECK(j["active"]["canvas_id"] == 0);
+    CHECK(j["active"]["tray_id"] == 1);
+    CHECK(j["auto_refill"] == false);
+    CHECK(j["firmware"] == "1.2.3");
+    REQUIRE(j["trays"].size() == 1);
+    const json &t = j["trays"][0];
+    CHECK(t["canvas_id"] == 0);
+    CHECK(t["tray_id"] == 1);
+    CHECK(t["label"] == "A1");
+    CHECK(t["status"] == "loaded");
+    CHECK(t["ready"] == true);
+    CHECK(t["unknown_filament"] == false);
+    CHECK(t["filament_type"] == "PLA");
+    CHECK(t["filament_name"] == "PLA Basic");
+    CHECK(t["brand"] == "Elegoo");
+    CHECK(t["filament_color"] == "#BCBCBC");
+    CHECK(t["min_nozzle_temp"] == 190);
+    CHECK(t["max_nozzle_temp"] == 230);
+
+    auto word = [](int s) { return info_json(parse_canvas_info(one_tray_info(tray(0, s, "PLA", "x", "#000000"))))["trays"][0]["status"]; };
+    CHECK(word(0) == "disconnected");
+    CHECK(word(1) == "preloaded");
+    CHECK(word(2) == "loaded");
+    CHECK(word(9) == "error");
+}
+
+TEST_CASE("elegoo_canvas_enabled gates on host type, CC2 model and the multi-filament flag", "[ElegooCanvas]")
+{
+    using Slic3r::elegoo_canvas_enabled;
+    CHECK(elegoo_canvas_enabled("elegoolink", true, "1"));
+    CHECK(elegoo_canvas_enabled("elegoolink", true, "\"1\""));
+    CHECK(elegoo_canvas_enabled("elegoolink", true, ""));          // key not loaded into the preset
+    CHECK_FALSE(elegoo_canvas_enabled("elegoolink", false, "1"));  // original Centauri Carbon
+    CHECK_FALSE(elegoo_canvas_enabled("elegoolink", true, "0"));
+    CHECK_FALSE(elegoo_canvas_enabled("elegoolink", true, "\"0\""));
+    CHECK_FALSE(elegoo_canvas_enabled("octoprint", true, "1"));
+    CHECK_FALSE(elegoo_canvas_enabled("", true, "1"));
+}
+
+TEST_CASE("CanvasState drops the API mapping when the project key changes", "[elegoo_canvas]")
+{
+    Slic3r::GUI::CanvasState state;
+    const std::string key_a = Slic3r::GUI::CanvasState::make_project_key("/p/a.3mf", 2);
+    state.reset_if_project_changed(key_a);
+    Mapping m;
+    m.index  = 0;
+    m.tray   = std::make_pair(0, 1);
+    m.source = MatchSource::Api;
+    state.api_mapping = {m};
+
+    // Same project, same filament count: kept.
+    state.reset_if_project_changed(Slic3r::GUI::CanvasState::make_project_key("/p/a.3mf", 2));
+    REQUIRE(state.api_mapping.size() == 1);
+    CHECK(state.project_key == key_a);
+
+    // Another filament count: cleared, key follows.
+    const std::string key_a3 = Slic3r::GUI::CanvasState::make_project_key("/p/a.3mf", 3);
+    CHECK(key_a3 != key_a);
+    state.reset_if_project_changed(key_a3);
+    CHECK(state.api_mapping.empty());
+    CHECK(state.project_key == key_a3);
+
+    // Another project: cleared.
+    state.api_mapping = {m};
+    state.reset_if_project_changed(Slic3r::GUI::CanvasState::make_project_key("/p/b.3mf", 3));
+    CHECK(state.api_mapping.empty());
+
+    // Unsaved project ("") is its own key.
+    CHECK(Slic3r::GUI::CanvasState::make_project_key("", 2) != key_a);
+}
+
+TEST_CASE("CanvasState slot cache is per printer", "[elegoo_canvas]")
+{
+    using Slic3r::GUI::CanvasState;
+    CanvasState state;
+    const std::string cc2_a = CanvasState::make_printer_key("Elegoo-CC2", "192.0.2.10");
+    const std::string cc2_b = CanvasState::make_printer_key("Elegoo-CC2", "192.0.2.11");
+    CHECK(cc2_a != cc2_b);
+    CHECK(CanvasState::make_printer_key("Elegoo-CC", "192.0.2.10") != cc2_a);
+
+    CHECK_FALSE(state.cached_info(cc2_a).has_value()); // nothing read yet
+
+    Info a = parse_canvas_info(one_tray_info(tray(1, 2, "PLA", "PLA Basic", "#BCBCBC")));
+    state.store_info(cc2_a, a);
+    REQUIRE(state.cached_info(cc2_a).has_value());
+    CHECK(state.cached_info(cc2_a)->find(0, 1) != nullptr);
+    CHECK_FALSE(state.cached_info(cc2_b).has_value()); // another printer: no cache
+
+    // A read from the other printer replaces the cache; the first printer's is gone.
+    Info b = parse_canvas_info(one_tray_info(tray(3, 2, "PETG", "PETG", "#112233")));
+    state.store_info(cc2_b, b);
+    CHECK_FALSE(state.cached_info(cc2_a).has_value());
+    REQUIRE(state.cached_info(cc2_b).has_value());
+    CHECK(state.cached_info(cc2_b)->find(0, 3) != nullptr);
+
+    state.clear_info();
+    CHECK_FALSE(state.cached_info(cc2_b).has_value());
+}

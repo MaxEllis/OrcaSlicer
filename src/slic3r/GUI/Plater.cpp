@@ -3,6 +3,7 @@
 #include "IPrinterAgent.hpp"
 #include "CalibUtils.hpp"
 #include "Flashforge.hpp"
+#include "RemoteAPI/RemoteAPIController.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r_version.h"
 
@@ -202,6 +203,14 @@
 #include "GUI_Factories.hpp"
 #include "wxExtensions.hpp"
 #include "../Utils/PrintHost.hpp"
+#include "../Utils/ElegooLink.hpp"
+#include "../Utils/ElegooCanvas.hpp"
+#include "ElegooCanvasGate.hpp"
+#include "../Utils/ElegooCanvasMatch.hpp"
+#include "ElegooCanvasMappingDialog.hpp"
+#include "ElegooCanvasState.hpp"
+#include <atomic>
+#include <thread>
 #include "MainFrame.hpp"
 #ifdef SLIC3R_CAD
 #include "slic3r/GUI/CAD/DesignPanel.hpp"
@@ -376,7 +385,7 @@ static std::string get_diameter_string(float diameter)
     std::string s = stream.str();
     if (s.find('.') != std::string::npos) {   // Remove trailing zeros, but keep at least one decimal if needed
         s.erase(s.find_last_not_of('0') + 1);
-        if (s.back() == '.') s += '0';        // Ensure "1." → "1.0"
+        if (s.back() == '.') s += '0';        // Ensure "1." -> "1.0"
     }
     return s;
 }
@@ -3647,7 +3656,7 @@ Sidebar::Sidebar(Plater *parent)
     SetSizer(sizer);
 }
 
-Sidebar::~Sidebar() {}
+Sidebar::~Sidebar() { m_alive->store(false); }
 
 void Sidebar::on_enter_image_printer_bed(wxMouseEvent &evt) {
     //p->image_printer_bed->Bind(wxEVT_LEAVE_WINDOW, &Sidebar::on_leave_image_printer_bed, this);
@@ -3818,6 +3827,7 @@ void Sidebar::update_all_preset_comboboxes()
         //p->btn_connect_printer->Hide();
         p->m_printer_connect->Hide();
         //only show sync-ams button for BBL printer
+        p->m_bpButton_ams_filament->SetToolTip(_L("Synchronize filament list from AMS"));
         p->m_bpButton_ams_filament->Show();
         //update print button default value for bbl or third-party printer
         p_mainframe->set_print_button_to_default(MainFrame::PrintSelectType::ePrintPlate);
@@ -3828,7 +3838,10 @@ void Sidebar::update_all_preset_comboboxes()
 
         // ORCA: show/hide sync-ams button based on filament sync mode
         auto agent = wxGetApp().getAgent();
-        if (agent && agent->get_filament_sync_mode() != FilamentSyncMode::none)
+        const bool canvas_sync = elegoo_canvas_enabled(cfg);
+        p->m_bpButton_ams_filament->SetToolTip(canvas_sync ? _L("Synchronize filament list from CANVAS") :
+                                                             _L("Synchronize filament list from AMS"));
+        if (canvas_sync || (agent && agent->get_filament_sync_mode() != FilamentSyncMode::none))
             p->m_bpButton_ams_filament->Show();
         else
             p->m_bpButton_ams_filament->Hide();
@@ -6076,7 +6089,7 @@ void Sidebar::on_bed_type_change(BedType bed_type)
  *       ↓
  *   MachineObject::parse_json() (updates device state)
  *       ├── vt_slot (std::vector<DevAmsTray>) - virtual tray data for external filament
- *       └── DevFilaSystem → DevAms → DevAmsTray - AMS unit hierarchy
+ *       └── DevFilaSystem -> DevAms -> DevAmsTray - AMS unit hierarchy
  *       ↓
  *   build_filament_ams_list() [THIS FUNCTION] - aggregates into DynamicPrintConfig maps
  *
@@ -6308,6 +6321,11 @@ void Sidebar::load_ams_list(MachineObject* obj)
 
 void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
 {
+    if (!wxGetApp().preset_bundle->use_bbl_network() &&
+        elegoo_canvas_enabled(wxGetApp().preset_bundle->printers.get_edited_preset().config)) {
+        sync_canvas_list();
+        return;
+    }
     wxBusyCursor cursor;
     // Force load ams list
     auto obj = wxGetApp().getDeviceManager()->get_selected_machine();
@@ -6329,6 +6347,12 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         p->plater->pop_warning_and_go_to_device_page(printer_name, Plater::PrinterWarningType::NOT_CONNECTED, _L("Sync printer information"));
         return;
     }
+    apply_synced_ams_list(obj, is_from_big_sync_btn);
+}
+
+void Sidebar::apply_synced_ams_list(MachineObject *obj, bool is_from_big_sync_btn)
+{
+    auto & list = wxGetApp().preset_bundle->filament_ams_list;
     bool exist_at_list_one_filament =false;
     for (auto &cur : list) {
         auto temp_config    = cur.second;
@@ -6340,14 +6364,14 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         }
     }
     if (!exist_at_list_one_filament) {
-        if (!obj->is_filament_installed()) {
+        if (obj && !obj->is_filament_installed()) {
             p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::UNINSTALL_FILAMENT, _L("Sync printer information"));
             return;
         }
         p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::EMPTY_FILAMENT, _L("Sync printer information"));
         return;
     }
-    if (!wxGetApp().plater()->is_same_printer_for_connected_and_selected()) {
+    if (obj && !wxGetApp().plater()->is_same_printer_for_connected_and_selected()) {
         return;
     }
     std::string ams_filament_ids = wxGetApp().app_config->get("ams_filament_ids", p->ams_list_device);
@@ -6355,34 +6379,38 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     if (!ams_filament_ids.empty()) {
         boost::algorithm::split(list2, ams_filament_ids, boost::algorithm::is_any_of(","));
     }
-    wxGetApp().plater()->update_all_plate_thumbnails(true);//preview thumbnail for sync_dlg
-    SyncAmsInfoDialog::SyncInfo temp_info;
-    temp_info.use_dialog_pos = false;
-    temp_info.cancel_text_to_later = is_from_big_sync_btn;
-    if (m_sync_dlg == nullptr) {
-        m_sync_dlg = new SyncAmsInfoDialog(this, temp_info);
-    } else {
-        m_sync_dlg->set_info(temp_info);
-    }
-    int dlg_res{(int) wxID_CANCEL};
-    if (m_sync_dlg->is_need_show()) {
-        m_sync_dlg->deal_only_exist_ext_spool(obj);
-        if (m_sync_dlg->is_dirty_filament()) {
-            wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", false, true);
-            wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
-            update_dynamic_filament_list();
+    SyncAmsInfoDialog::SyncResult sync_result; // CANVAS (no obj): default result, direct sync, no dialog
+    int dlg_res{(int) wxID_YES};
+    if (obj) {
+        wxGetApp().plater()->update_all_plate_thumbnails(true);//preview thumbnail for sync_dlg
+        SyncAmsInfoDialog::SyncInfo temp_info;
+        temp_info.use_dialog_pos = false;
+        temp_info.cancel_text_to_later = is_from_big_sync_btn;
+        if (m_sync_dlg == nullptr) {
+            m_sync_dlg = new SyncAmsInfoDialog(this, temp_info);
+        } else {
+            m_sync_dlg->set_info(temp_info);
         }
-        m_sync_dlg->set_check_dirty_fialment(false);
-        dlg_res = m_sync_dlg->ShowModal();
-    } else {
-        dlg_res =(int) wxID_YES;
-    }
-    if (dlg_res == wxID_CANCEL)
-        return;
-    auto sync_result = m_sync_dlg->get_result();
-    if (!sync_result.is_same_printer) {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "check error: sync_result.is_same_printer value is false";
-        return;
+        dlg_res = wxID_CANCEL;
+        if (m_sync_dlg->is_need_show()) {
+            m_sync_dlg->deal_only_exist_ext_spool(obj);
+            if (m_sync_dlg->is_dirty_filament()) {
+                wxGetApp().get_tab(Preset::TYPE_FILAMENT)->select_preset(wxGetApp().preset_bundle->filament_presets[0], false, "", false, true);
+                wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
+                update_dynamic_filament_list();
+            }
+            m_sync_dlg->set_check_dirty_fialment(false);
+            dlg_res = m_sync_dlg->ShowModal();
+        } else {
+            dlg_res =(int) wxID_YES;
+        }
+        if (dlg_res == wxID_CANCEL)
+            return;
+        sync_result = m_sync_dlg->get_result();
+        if (!sync_result.is_same_printer) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "check error: sync_result.is_same_printer value is false";
+            return;
+        }
     }
     list2.resize(list.size());
     auto iter = list.begin();
@@ -6570,6 +6598,157 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish pop_finsish_sync_ams_dialog";
 }
 
+
+void Sidebar::load_canvas_list(const ElegooCanvas::Info &info)
+{
+    PresetBundle *preset_bundle = wxGetApp().preset_bundle;
+    // Trays rarely carry a filament_code the presets know (the printer often sends ""), and PresetBundle::sync_ams_list
+    // skips an entry with an empty filament_id. So resolve each tray to a preset by name/type with the matcher's rules,
+    // among the printer-compatible base presets (the ones sync_ams_list looks a filament_id up in).
+    // A filament_id is NOT unique: Elegoo's profiles share one per family (every "Elegoo PETG*" and "Elegoo PET-CF"
+    // preset is EPETGB00), and sync_ams_list / the filament combo take the FIRST compatible preset with the id. So the
+    // matched preset's name travels with the tray as "filament_preset_name", which both prefer.
+    std::vector<ElegooCanvas::ProjectFilament> candidates;
+    for (const Preset &preset : preset_bundle->filaments) {
+        if (!preset.is_compatible || preset.filament_id.empty() || preset_bundle->filaments.get_preset_base(preset) != &preset)
+            continue;
+        ElegooCanvas::ProjectFilament c;
+        c.filament_id = preset.filament_id;
+        c.setting_id  = preset.setting_id;
+        // The filament's own vendor ("Elegoo", "Generic"), not the profile bundle's: an Orca filament library preset
+        // belongs to the "OrcaFilamentLibrary" bundle whatever brand it describes.
+        if (const auto *fv = preset.config.option<ConfigOptionStrings>("filament_vendor"); fv != nullptr && !fv->values.empty())
+            c.vendor = fv->values.front();
+        if (c.vendor.empty() && preset.vendor != nullptr)
+            c.vendor = preset.vendor->name;
+        c.name    = preset.name;
+        c.alias   = preset.alias;
+        c.library = preset.m_from_orca_filament_lib;
+        if (const auto *type = preset.config.option<ConfigOptionStrings>("filament_type"); type != nullptr && !type->values.empty())
+            c.type = type->values.front();
+        candidates.push_back(std::move(c));
+    }
+
+    std::map<int, DynamicPrintConfig> filament_ams_list;
+    for (const auto &unit : info.units) {
+        for (const auto &tray : unit.trays) {
+            if (!tray.ready())
+                continue;
+            std::string filament_id, preset_name;
+            std::optional<FilamentBaseInfo> base;
+            if (!tray.filament_code.empty()) {
+                base = preset_bundle->get_filament_by_filament_id(tray.filament_code);
+                if (base.has_value())
+                    filament_id = tray.filament_code;
+            }
+            if (filament_id.empty()) {
+                if (const auto hit = ElegooCanvas::match_tray_preset(tray, candidates); hit.has_value()) {
+                    filament_id = candidates[*hit].filament_id;
+                    preset_name = candidates[*hit].name;
+                    base        = preset_bundle->get_filament_by_filament_id(filament_id);
+                } else {
+                    // Nothing matches: sync_ams_list falls back to "Generic <type>" and lists it as unknown.
+                    filament_id = UNKNOWN_FILAMENT_ID;
+                }
+            }
+            DynamicPrintConfig tray_config;
+            tray_config.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
+            if (!preset_name.empty())
+                tray_config.set_key_value("filament_preset_name", new ConfigOptionStrings{preset_name});
+            tray_config.set_key_value("tag_uid", new ConfigOptionStrings{std::string()});
+            tray_config.set_key_value("ams_id", new ConfigOptionStrings{std::to_string(tray.canvas_id)});
+            tray_config.set_key_value("slot_id", new ConfigOptionStrings{std::to_string(tray.tray_id)});
+            tray_config.set_key_value("filament_type", new ConfigOptionStrings{tray.filament_type});
+            tray_config.set_key_value("tray_name", new ConfigOptionStrings{tray.label()});
+            tray_config.set_key_value("filament_colour", new ConfigOptionStrings{tray.filament_color});
+            tray_config.set_key_value("filament_multi_colour", new ConfigOptionStrings{});
+            tray_config.set_key_value("filament_colour_type", new ConfigOptionStrings{std::string("0")});
+            tray_config.set_key_value("filament_exist", new ConfigOptionBools{true});
+            tray_config.set_key_value("filament_slot_placeholder", new ConfigOptionBools{false});
+            tray_config.set_key_value("filament_is_support", new ConfigOptionBools{base.has_value() ? base->is_support : false});
+            filament_ams_list.emplace(tray.canvas_id * 4 + tray.tray_id, std::move(tray_config));
+        }
+    }
+
+    const std::string device = "elegoo-canvas:" + into_u8(p->plater->get_selected_printer_name_in_combox());
+    const bool device_change = p->ams_list_device != device;
+    p->ams_list_device       = device;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": %1% items") % filament_ams_list.size();
+    if (preset_bundle->filament_ams_list == filament_ams_list && !device_change)
+        return;
+    preset_bundle->filament_ams_list = filament_ams_list;
+    for (auto c : p->combos_filament) {
+        c->update();
+        if (device_change)
+            c->ShowBadge(false);
+    }
+    p->combo_printer->update();
+}
+
+void Sidebar::sync_canvas_list()
+{
+    if (m_canvas_sync_running)
+        return;
+    // The ElegooLink is built from a copy of the edited printer preset; the network work (MQTT, HTTP serial lookup)
+    // runs on a worker thread and only the result comes back to the GUI thread.
+    const Preset            &printer      = wxGetApp().preset_bundle->printers.get_edited_preset();
+    DynamicPrintConfig       cfg          = printer.config;
+    const std::string        printer_name = printer.name;                    // a switch meanwhile drops the result
+    const std::string        printer_key  = elegoo_canvas_printer_key(cfg); // CanvasState slot cache identity
+    std::shared_ptr<std::atomic<bool>> alive = m_alive;
+
+    m_canvas_sync_running = true;
+    wxBeginBusyCursor(); // ended on the GUI thread in the CallAfter below
+    try {
+        // Detached straight away: no code runs between creating the thread and detaching it, so no path leaves
+        // a joinable std::thread behind.
+        std::thread([this, cfg, alive, printer_name, printer_key]() mutable {
+            auto info   = std::make_shared<ElegooCanvas::Info>();
+            auto result = std::make_shared<ElegooCanvas::Session::Result>();
+            try {
+                ElegooLink link(&cfg);
+                *result = link.get_canvas_info(*info);
+            } catch (const std::exception &e) {
+                result->ok         = false;
+                result->error_code = "unreachable";
+                result->message    = e.what();
+            } catch (...) {
+                result->ok         = false;
+                result->error_code = "unreachable";
+                result->message    = "unknown error";
+            }
+            wxGetApp().CallAfter([this, alive, info, result, printer_name, printer_key]() {
+                wxEndBusyCursor();
+                // App teardown: the sidebar (`this`) may be gone. Nothing touches `this` before these checks.
+                if (!alive->load() || wxGetApp().mainframe == nullptr || wxGetApp().plater() == nullptr ||
+                    wxGetApp().preset_bundle == nullptr)
+                    return;
+                m_canvas_sync_running = false;
+                if (wxGetApp().preset_bundle->printers.get_edited_preset().name != printer_name) {
+                    BOOST_LOG_TRIVIAL(info) << "CANVAS sync result dropped: the printer changed from " << printer_name;
+                    return;
+                }
+                if (!result->ok) {
+                    CanvasState::get().clear_info();
+                    MessageDialog dlg(this, from_u8(result->message), _L("Sync printer information"), wxOK);
+                    dlg.ShowModal();
+                    return;
+                }
+                CanvasState::get().store_info(printer_key, *info);
+                load_canvas_list(*info);
+                if (wxGetApp().preset_bundle->filament_ams_list.empty()) {
+                    p->plater->pop_warning_and_go_to_device_page("", Plater::PrinterWarningType::EMPTY_FILAMENT, _L("Sync printer information"));
+                    return;
+                }
+                apply_synced_ams_list(nullptr, false);
+            });
+        }).detach();
+    } catch (const std::exception &e) { // std::system_error: the thread could not be started
+        m_canvas_sync_running = false;
+        wxEndBusyCursor();
+        BOOST_LOG_TRIVIAL(error) << "CANVAS sync could not start: " << e.what();
+    }
+}
 
 bool Sidebar::should_show_SEMM_buttons()
 {
@@ -9954,7 +10133,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 // convert_model_if(model, answer_convert_from_imperial_units == wxID_YES);
             }
 
-             if (!is_project_file && model.looks_like_multipart_object()) {
+             // Remote API loads must not block on a modal; keep the solids as separate
+             // objects (the dialog's No answer) and let the client decide.
+             if (!is_project_file && model.looks_like_multipart_object()
+                 && !RemoteAPI::Controller::api_ui_task_active()) {
                MessageDialog msg_dlg(q, _L("This file contains several objects positioned at multiple heights.\nInstead of considering them as multiple objects, should the file be loaded as a single object with multiple parts\?") + "\n",
                     _L("Multi-part object detected"), wxICON_WARNING | wxYES | wxNO);
                 if (msg_dlg.ShowModal() == wxID_YES) {
@@ -10296,7 +10478,9 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
 #endif
     if (tolal_model_count <= 0 && !q->m_exported_file && (!loaded_cad_recipe || !cad_can_show)) {
         dlg.Hide();
-        if (!is_user_cancel) {
+        // A Remote API open or load has no one to click OK: skip the modal (the
+        // reply already says objects: 0) instead of blocking the GUI thread.
+        if (!is_user_cancel && !RemoteAPI::Controller::api_ui_task_active()) {
             const wxString text = loaded_cad_recipe
                 ? _L("This project contains a model made in the Design tab and no other geometry. "
                      "Enable \"CAD feature (experimental)\" in Preferences and restart to see and edit it; "
@@ -14453,7 +14637,7 @@ void Plater::priv::set_project_name(const wxString& project_name)
     if (!m_project_name.IsEmpty())
         wxGetApp().mainframe->update_title_colour_after_set_title();
 #else
-    wxGetApp().mainframe->SetTitle(m_project_name + " - OrcaSlicer");
+    wxGetApp().mainframe->SetTitle(m_project_name + " - OrcaSlicer MCP");
     wxGetApp().mainframe->topbar()->SetTitle(m_project_name);
 #endif
 }
@@ -14473,7 +14657,7 @@ void Plater::priv::update_title_dirty_status()
     wxGetApp().mainframe->SetTitle(title);
     wxGetApp().mainframe->update_title_colour_after_set_title();
 #else
-    wxGetApp().mainframe->SetTitle(title + " - OrcaSlicer");
+    wxGetApp().mainframe->SetTitle(title + " - OrcaSlicer MCP");
     wxGetApp().mainframe->topbar()->SetTitle(title);
 #endif    
 }
@@ -16302,6 +16486,9 @@ void Plater::load_project(wxString const& filename2,
     sidebar().set_flushing_volume_warning(has_modify);
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << __LINE__ << " load project done";
+    // m_loading_project is cleared by the ScopeGuard at the top of this function
+    // in 2.5, so only the notification is carried over.
+    Slic3r::GUI::RemoteAPI::Controller::notify_project_opened();
 }
 
 // BBS: save logic
@@ -21014,6 +21201,60 @@ void Plater::reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &
     // and let the background processing start.
     this->p->restart_background_process(state | priv::UPDATE_BACKGROUND_PROCESS_FORCE_RESTART);
 }
+// Elegoo CANVAS: read the printer's trays (worker thread, busy GUI), let the user map every filament the plate uses to a
+// ready tray, and put the result into the upload as slot_map. Returns false when the send must stop: the slot read
+// failed (hard error: the job cannot be mapped) or the user cancelled the mapping.
+// `plate_filaments` = the sent plate's filaments as PartPlate::get_extruders() returns them (1-based); only those get
+// rows and slot_map entries. Empty = every project filament.
+static bool elegoo_canvas_map_filaments(Plater *plater, const DynamicPrintConfig &printer_cfg, const std::vector<int> &plate_filaments,
+                                        PrintHostUpload &upload_data)
+{
+    ElegooCanvas::Info info;
+    wxString           error;
+    if (!elegoo_canvas_read_info(printer_cfg, info, error)) {
+        show_error(plater, format_wxstr(_L("Could not read the CANVAS trays from the printer, so the filaments cannot be mapped and "
+                                           "the job was not sent.\n%1%"),
+                                        error),
+                   false);
+        return false;
+    }
+    if (!info.connected()) {
+        // Every tray would be "not ready"; a mapping dialog with nothing to pick helps no one.
+        show_error(plater, _L("The printer reports no connected CANVAS. Use Upload only, or send a single-filament project."), false);
+        return false;
+    }
+
+    // The plate's filaments; index = position in the project (= the G-code T number slot_map's t refers to).
+    const std::vector<ElegooCanvas::ProjectFilament> filaments = elegoo_canvas_project_filaments(plate_filaments);
+    ElegooCanvas::MappingStore                       store     = elegoo_canvas_mapping_store();
+
+    // Pre-fill: the API-set mapping for this project, else saved choices and the matcher.
+    CanvasState &state = CanvasState::get();
+    state.reset_if_project_changed(elegoo_canvas_project_key());
+    std::vector<ElegooCanvas::Mapping> initial = !state.api_mapping.empty() ? state.api_mapping
+                                                                             : ElegooCanvas::auto_match(filaments, info, store);
+
+    ElegooCanvasMappingDialog dlg(plater, filaments, info, std::move(initial));
+    if (dlg.ShowModal() != wxID_OK)
+        return false;
+
+    const std::vector<ElegooCanvas::SlotMapEntry> slots = dlg.slot_map();
+    upload_data.extended_info["slot_map"]               = ElegooCanvas::slot_map_json(slots).dump();
+
+    // Remember each choice against the slot list the dialog showed (it may have been refreshed).
+    const ElegooCanvas::Info &shown = dlg.info();
+    for (const ElegooCanvas::SlotMapEntry &e : slots) {
+        auto f = std::find_if(filaments.begin(), filaments.end(), [&e](const ElegooCanvas::ProjectFilament &pf) { return pf.index == e.t; });
+        if (f == filaments.end())
+            continue;
+        if (const ElegooCanvas::Tray *tray = shown.find(e.canvas_id, e.tray_id); tray != nullptr)
+            store.remember(*f, *tray);
+    }
+    store.save();
+    state.api_mapping.clear();
+    return true;
+}
+
 void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
 {
     // if physical_printer is selected, send gcode for this printer
@@ -21196,6 +21437,17 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn)
         if (use_3mf) {
             const int plateindex = (plate_idx == PLATE_ALL_IDX ? get_partplate_list().get_curr_plate_index() : resolved_plate_idx) + 1;
             upload_job.upload_data.extended_info["plateindex"] = std::to_string(plateindex);
+        }
+
+        // Elegoo CANVAS: a multi-filament print on a gated CC2 maps the filaments to trays before the job is queued;
+        // the start command at the end of the upload carries the mapping as slot_map. Single-filament projects and
+        // upload-only sends skip this and carry no slot_map.
+        if (host_type == htElegooLink && upload_job.upload_data.post_action == PrintHostPostUploadAction::StartPrint &&
+            preset_bundle->filament_presets.size() > 1 && elegoo_canvas_enabled(*physical_printer_config)) {
+            // The plate being sent: as for plateindex above, "All plates" means the current plate.
+            const std::vector<int> plate_filaments = elegoo_canvas_send_plate_filaments(plate_idx);
+            if (!elegoo_canvas_map_filaments(this, *physical_printer_config, plate_filaments, upload_job.upload_data))
+                return;
         }
     }
 
@@ -23669,6 +23921,14 @@ void Plater::set_bed_position(Vec2d& pos)
 bool Plater::is_background_process_slicing() const
 {
     return p->m_is_slicing;
+}
+
+// Remote API (F2): abort the background slice from the API's cancel route.
+void Plater::stop_background_slicing()
+{
+    if (p->background_process.running())
+        p->background_process.stop();
+    p->m_is_slicing = false;
 }
 
 //BBS: update slicing context

@@ -3226,6 +3226,24 @@ void GCodeViewer::render_translucent_toolpaths(int canvas_width, int canvas_heig
     render_markers(canvas_width, canvas_height);
 }
 
+void GCodeViewer::render_toolpaths_with_camera(const Camera& camera)
+{
+    // Same matrix conversion as render_toolpaths(), but with the camera passed
+    // in (the plater camera belongs to the on-screen canvas) and without any
+    // ImGui/debug overlay - this draws into an offscreen FBO.
+    const libvgcode::Mat4x4 converted_view_matrix =
+        libvgcode::convert(static_cast<Matrix4f>(camera.get_view_matrix().matrix().cast<float>()));
+    const libvgcode::Mat4x4 converted_projection_matrix =
+        libvgcode::convert(static_cast<Matrix4f>(camera.get_projection_matrix().matrix().cast<float>()));
+    m_viewer.render(converted_view_matrix, converted_projection_matrix);
+    // 2.5: translucent filaments draw in a second pass (render_translucent_toolpaths
+    // on screen); without it they would be missing from the render.
+    if (m_viewer.has_translucent_toolpaths()) {
+        m_viewer.render_translucent(converted_view_matrix, converted_projection_matrix);
+        glsafe(::glEnable(GL_DEPTH_TEST)); // as render_translucent_toolpaths() restores it
+    }
+}
+
 void GCodeViewer::render_toolpaths()
 {
     const Camera& camera = wxGetApp().plater()->get_camera();

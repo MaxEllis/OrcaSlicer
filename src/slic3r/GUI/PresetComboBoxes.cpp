@@ -608,6 +608,14 @@ bool PresetComboBox::add_ams_filaments(std::string selected, bool alias_name)
             }
             auto iter = std::find_if(filaments.begin(), filaments.end(),
                 [&filament_id, this](auto &f) { return f.is_compatible && m_collection->get_preset_base(f) == &f && f.filament_id == filament_id; });
+            // Orca: prefer the exact preset the entry names (CANVAS sync), as PresetBundle::sync_ams_list does; a
+            // filament_id can be shared by several presets.
+            if (const auto *hint = tray.option<ConfigOptionStrings>("filament_preset_name"); hint != nullptr && !hint->values.empty() && !hint->values.front().empty()) {
+                auto named = std::find_if(filaments.begin(), filaments.end(), [&filament_id, &hint, this](auto &f) {
+                    return f.name == hint->values.front() && f.is_compatible && m_collection->get_preset_base(f) == &f && f.filament_id == filament_id; });
+                if (named != filaments.end())
+                    iter = named;
+            }
             if (iter == filaments.end()) {
                 auto filament_type = tray.opt_string("filament_type", 0u);
                 if (!filament_type.empty()) {

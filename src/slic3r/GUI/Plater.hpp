@@ -81,9 +81,11 @@ class SLAPrint;
 class PartPlateList;
 class SlicingStatusEvent;
 class BackgroundSlicingProcess;
+class SlicingProcessCompletedEvent;
 enum SLAPrintObjectStep : unsigned int;
 enum class ConversionType : int;
 class DevAms;
+namespace ElegooCanvas { struct Info; }
 
 using ModelInstancePtrs = std::vector<ModelInstance*>;
 
@@ -123,6 +125,7 @@ inline constexpr int kSidebarContextMenuFilamentId = -2;
 
 //BBS: add EVT_SLICING_UPDATE declare here
 wxDECLARE_EVENT(EVT_SLICING_UPDATE, Slic3r::SlicingStatusEvent);
+wxDECLARE_EVENT(EVT_PROCESS_COMPLETED, Slic3r::SlicingProcessCompletedEvent);
 wxDECLARE_EVENT(EVT_OPEN_PLATESETTINGSDIALOG,        wxCommandEvent);
 
 // Explanation of int param
@@ -171,6 +174,9 @@ class Sidebar : public wxPanel
     int                                     m_last_combo_bedtype_count{0};
     bool                                    m_begin_sync_printer_status{false};
     SyncAmsInfoDialog*                      m_sync_dlg{nullptr};
+    bool                                    m_canvas_sync_running{false};
+    // Cleared by ~Sidebar: a CANVAS sync result that arrives after the sidebar is gone is dropped.
+    std::shared_ptr<std::atomic<bool>>      m_alive{std::make_shared<std::atomic<bool>>(true)};
 
     void update_sync_ams_btn_enable(wxUpdateUIEvent &e);
 
@@ -226,6 +232,11 @@ public:
     void load_ams_list(MachineObject* obj);
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list(bool is_from_big_sync_btn = false);
+    // Elegoo CANVAS (Centauri Carbon 2): fetch the unit info off the GUI thread, then fill the AMS list from it.
+    void sync_canvas_list();
+    void load_canvas_list(const ElegooCanvas::Info &info);
+    // Shared tail of sync_ams_list: validate the loaded list and apply it. `obj` is null for CANVAS (no sync dialog).
+    void apply_synced_ams_list(MachineObject *obj, bool is_from_big_sync_btn);
     bool sync_extruder_list();
     bool is_fila_switch_ready();
     void reset_fila_switch();
@@ -605,6 +616,9 @@ public:
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
     void reslice();
+    // Remote API (F2): stop a running background slice (no-op when idle) and
+    // clear the is-slicing flag. Public sibling of the private stop() calls.
+    void stop_background_slicing();
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &object, bool postpone_error_messages = false);

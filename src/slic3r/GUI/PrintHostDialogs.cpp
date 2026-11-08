@@ -1496,6 +1496,15 @@ void PrintHostQueueDialog::on_cancel(Event &evt)
 
 void PrintHostQueueDialog::on_info(Event& evt)
 {
+    // Elegoo CC2: the upload succeeded but the printer refused the MQTT start (ElegooLink::start_print_cc2).
+    // The rest of this handler is disabled in this fork, so surface just this outcome as a notification.
+    // Events are queued to this dialog, so this runs on the GUI thread.
+    if (evt.tag == L"Uploaded") {
+        if (NotificationManager* ntf = wxGetApp().notification_manager(); ntf != nullptr)
+            ntf->push_notification(NotificationType::CustomNotification, NotificationManager::NotificationLevel::WarningNotificationLevel,
+                                   into_u8(_L("Uploaded.") + " " + evt.status));
+        return;
+    }
     /*
     wxCHECK_RET(evt.job_id < (size_t)job_list->GetItemCount(), "Out of bounds access to job list");
     
@@ -1607,7 +1616,9 @@ void ElegooPrintHostSendDialog::init() {
     auto preset_bundle = wxGetApp().preset_bundle;
     auto model_id = preset_bundle->printers.get_edited_preset().get_printer_type(preset_bundle);
 
-    if (model_id != "Elegoo-CC" && model_id != "Elegoo-C") {
+    // The Centauri Carbon 2 takes the same print options (sent in its MQTT start command, ElegooLink::start_print_cc2).
+    const bool is_cc2 = model_id == "Elegoo-CC2";
+    if (model_id != "Elegoo-CC" && model_id != "Elegoo-C" && !is_cc2) {
         PrintHostSendDialog::init();
         return;
     }
@@ -1631,8 +1642,13 @@ void ElegooPrintHostSendDialog::init() {
     if (!heatedBedLeveling.empty())
         m_heatedBedLeveling = std::stoi(heatedBedLeveling);
     std::string bedType = app_config->get("recent", CONFIG_KEY_BEDTYPE);
-    if (!bedType.empty())
+    if (!bedType.empty()) {
         m_BedType = static_cast<BedType>(std::stoi(bedType));
+    } else if (is_cc2) {
+        // Nothing remembered yet: follow the project's plate (side B = the smooth PC plate, side A otherwise).
+        if (const auto* bed_opt = preset_bundle->project_config.option<ConfigOptionEnum<BedType>>("curr_bed_type"); bed_opt != nullptr)
+            m_BedType = bed_opt->value == BedType::btPC ? BedType::btPC : BedType::btPTE;
+    }
 
     auto* label_dir_hint = new wxStaticText(this, wxID_ANY, _L("Use forward slashes ( / ) as a directory separator if needed."));
     label_dir_hint->Wrap(CONTENT_WIDTH * wxGetApp().em_unit());

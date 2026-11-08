@@ -197,6 +197,9 @@ enum class NotificationType
     // Active preset references a capability the installed+loaded plugin does not provide (outdated
     // plugin). Informational; cannot be auto-resolved; persistent, blocks slicing.
     OrcaPluginCapabilityUnavailableError,
+	// Remote API change toasts (RemoteAPIController); own type so coalescing
+	// close/re-push never touches other features' notifications.
+	RemoteAPIChange,
     NotificationTypeCount
 
 };

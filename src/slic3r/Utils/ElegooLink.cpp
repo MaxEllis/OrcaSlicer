@@ -36,6 +36,7 @@
 #include <thread>
 #include <vector>
 #include <wx/progdlg.h>
+#include <wx/thread.h>
 
 #include "OctoPrint.hpp"
 #include "PrintHost.hpp"
@@ -121,10 +122,17 @@ namespace Slic3r {
             if (host_ip.empty() || sn.empty())
                 return;
             cache_sn(host_ip, token, sn);
-            AppConfig* app_cfg = GUI::get_app_config();
-            if (app_cfg == nullptr)
-                return;
-            app_cfg->set_str(ELEGOO_DEV_SN_SECTION, host_ip, sn);
+            // AppConfig is not thread-safe and the CANVAS slot read and print upload call this
+            // from worker threads: write on the UI thread. The cache above answers lookups meanwhile.
+            auto write = [host_ip, sn]() {
+                AppConfig* app_cfg = GUI::get_app_config();
+                if (app_cfg != nullptr)
+                    app_cfg->set_str(ELEGOO_DEV_SN_SECTION, host_ip, sn);
+            };
+            if (wxThread::IsMain())
+                write();
+            else if (wxTheApp != nullptr)
+                GUI::wxGetApp().CallAfter(write);
         }
 
         enum class ElegooPrinterType {
@@ -411,11 +419,70 @@ namespace Slic3r {
     const char* ElegooLink::get_name() const { return "ElegooLink"; }
     PrintHostPostUploadActions ElegooLink::get_post_upload_actions() const
     {
-        if (classify_printer_model(m_printerModel) == ElegooPrinterType::CC2) {
-            return PrintHostPostUploadAction::None;
-        } else {
-            return PrintHostPostUploadAction::StartPrint;
+        // CC2 starts over MQTT (method 1020) after the chunked upload; CC over the SDCP websocket.
+        return PrintHostPostUploadAction::StartPrint;
+    }
+
+    bool ElegooLink::is_cc2_model(const std::string& printer_model)
+    {
+        return classify_printer_model(printer_model) == ElegooPrinterType::CC2;
+    }
+
+    bool ElegooLink::is_cc2() const
+    {
+        return is_cc2_model(m_printerModel);
+    }
+
+    ElegooCanvas::Endpoint ElegooLink::canvas_endpoint(const std::string& host_override) const
+    {
+        ElegooCanvas::Endpoint ep;
+        ep.host = Http::get_host_from_url(host_override.empty() ? m_host : host_override);
+        if (ep.host.size() > 2 && ep.host.front() == '[' && ep.host.back() == ']') // IPv6 literal
+            ep.host = ep.host.substr(1, ep.host.size() - 2);
+        ep.access_code = cc2_token();
+        ep.serial      = lookup_cc2_serial_impl(m_printerModel, m_host, m_apikey);
+        if (ep.serial.empty() && is_cc2()) {
+            // Not cached yet: the CC2 HTTP test reads system/info and stores the serial.
+            wxString msg;
+            if (elegoo_cc2_test(msg))
+                ep.serial = lookup_cc2_serial_impl(m_printerModel, m_host, m_apikey);
+            else // e.g. the printer is off: say so rather than "serial number is unknown"
+                ep.serial_error = msg.empty() ? _u8L("CC2 device not detected") : GUI::into_u8(msg);
         }
+        return ep;
+    }
+
+    ElegooCanvas::Session::Result ElegooLink::get_canvas_info(ElegooCanvas::Info& out) const
+    {
+        ElegooCanvas::Session session(canvas_endpoint());
+        return session.get_canvas_info(out);
+    }
+
+    bool ElegooLink::start_print_cc2(const std::string& filename, const PrintHostUpload& upload_data, ErrorFn error_fn, InfoFn info_fn,
+                                     const std::string& host_override) const
+    {
+        (void) error_fn; // a refused start after a good upload is a soft outcome (spec 11.2)
+        std::string failure;
+        try {
+            const bool           pc_plate = upload_data.extended("bedType") == std::to_string((int) BedType::btPC);
+            const nlohmann::json config   = ElegooCanvas::start_print_config(upload_data.extended("timeLapse") == "1",
+                                                                             upload_data.extended("heatedBedLeveling") == "1", pc_plate,
+                                                                             upload_data.extended("slot_map"));
+            ElegooCanvas::Session         session(canvas_endpoint(host_override));
+            ElegooCanvas::Session::Result r = session.start_print(filename, config);
+            if (r.ok) {
+                BOOST_LOG_TRIVIAL(info) << get_name() << ": CC2 print started: " << filename;
+                return true;
+            }
+            failure = r.message;
+        } catch (const std::exception& e) {
+            failure = e.what();
+        }
+        BOOST_LOG_TRIVIAL(warning) << get_name() << ": CC2 start print failed: " << failure;
+        if (info_fn)
+            info_fn(L"Uploaded", GUI::format_wxstr(_L("The printer did not accept the start command (%1%). Start the print from the Device tab."),
+                                                   failure));
+        return false;
     }
 
     std::string ElegooLink::get_sn() const
@@ -1022,10 +1089,12 @@ namespace Slic3r {
                 break;
         }
 
+        // The upload succeeded either way; a refused start is reported through info_fn, not as an error.
+        // Start over MQTT on the host the chunks went to: on Windows `url` may carry a Bonjour-resolved IP for a
+        // .local print_host, which the system resolver might not find a second time.
         if (res && upload_data.post_action == PrintHostPostUploadAction::StartPrint)
-            BOOST_LOG_TRIVIAL(info) << get_name() << ": CC2 upload completed; start print is not supported.";
+            start_print_cc2(upload_filename, upload_data, error_fn, info_fn, url);
 
-        (void) info_fn;
         return res;
     }
 
