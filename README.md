@@ -13,9 +13,9 @@
   <a href="LICENSE.txt"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-555"></a>
 </p>
 
-<p align="center"><img src="doc/images/readme/story.png" alt="Three steps. 1: you ask 'This takes 2 hours. Can it print faster?' over the sliced model. 2: the panel in OrcaSlicer lists the changes (layer height 0.28 mm, sparse infill 15%, inner wall speed 200 mm/s) and the new slice, 1h 22m, was 2h 06m. 3: you revert the layer height, and the assistant keeps your choice and re-slices: 1h 41m."></p>
+<p align="center"><img src="doc/images/readme/story.png" alt="Three steps, each showing your assistant app above and OrcaSlicer below. 1: in the assistant app you write that the brackets will hold up a shelf and must not snap, without doubling the print time; OrcaSlicer shows the bracket, estimated 1h 40m. 2: the assistant explains that a bracket's strength is mostly in its walls; in OrcaSlicer wall loops go from 2 to 4, sparse infill from 15% to 25% gyroid, nozzle temperature from 210 to 220 °C, each change listed and undoable. 3: the assistant compares the two slices, 1h 40m and 18 g before, 2h 05m and 23 g stronger: 25 minutes more, not double."></p>
 
-This is the **OrcaSlicer MCP build**: [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) 2.5.0 with two additions. A local API lets an AI assistant change settings, load and slice models, and read back the result, through the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. A panel beside the 3D view lists every change it makes, with a way to undo each one. Everything else is OrcaSlicer, rebuilt from the upstream release, and it uses your existing printers and presets.
+This is the **OrcaSlicer MCP build**: [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) 2.5.0 with two additions. A local API lets an AI assistant, which you talk to in your usual AI app, change settings, load and slice models, and read back the result, through the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. A panel beside the 3D view lists every change it makes, with a way to undo each one. Everything else is OrcaSlicer, rebuilt from the upstream release, and it uses your existing printers and presets.
 
 Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslicer-mcp#two-ways-to-run-it) covers settings and presets.
 
