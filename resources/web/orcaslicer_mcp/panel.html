@@ -57,11 +57,13 @@
 
   function groupTitle(group) {
     if (group.id === 0) return START_TITLE;
-    var rows = group.rows || [];
-    if (!rows.length) return '';
-    if (rows.every(function (r) { return r.kind === 'slice'; })) {
-      var s = rows[rows.length - 1];
-      return 'Sliced ' + (s.where || '').trim();
+    var all = group.rows || [];
+    if (!all.length) return '';
+    var rows = all.filter(function (r) { return r.kind !== 'slice' && r.kind !== 'refused'; });
+    if (!rows.length) {
+      var refused = all.filter(function (r) { return r.kind === 'refused'; });
+      if (refused.length) return (refused[0].label || '') + ' not allowed';
+      return 'Sliced ' + (all[all.length - 1].where || '').trim();
     }
     var more = rows.length - 1;
     var win = null;
@@ -98,6 +100,23 @@
     return { text: text, warn: warn };
   }
 
+  var NUM_RE = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*?)\s*$/;
+  function parseNum(v) {
+    var m = NUM_RE.exec(String(v));
+    if (!m) return null;
+    var n = Number(m[1]);
+    return isFinite(n) ? { n: n, unit: m[2] } : null;
+  }
+  // Numbers match within 1e-6 relative (same unit text required); anything else exactly.
+  function sameValue(a, b) {
+    var x = parseNum(a), y = parseNum(b);
+    if (x && y) {
+      if (x.unit !== y.unit) return false;
+      return Math.abs(x.n - y.n) <= 1e-6 * Math.max(Math.abs(x.n), Math.abs(y.n), 1e-12);
+    }
+    return String(a) === String(b);
+  }
+
   function liveEntry(row, live) {
     return live && Object.prototype.hasOwnProperty.call(live, row.id) ? live[row.id] : null;
   }
@@ -107,7 +126,7 @@
     var e = isNewest ? liveEntry(row, live) : null;
     if (!e) return { value: shown, note: '' };
     if (!e.present) return { value: shown, note: 'removed since' };
-    if (String(e.value) !== shown) return { value: String(e.value), note: 'changed by you' };
+    if (!sameValue(e.value, shown)) return { value: String(e.value), note: 'changed by you' };
     return { value: shown, note: '' };
   }
 
@@ -120,7 +139,7 @@
         var name = row.where || row.value || row.label || 'It';
         return { available: false, why: name + ' is no longer on the plate' };
       }
-      if (String(e.value) !== (has(row.value) ? String(row.value) : '')) {
+      if (!sameValue(e.value, has(row.value) ? String(row.value) : '')) {
         return {
           available: false,
           why: isNewest ? 'You changed it since' : 'Changed again since; restore an earlier point instead'

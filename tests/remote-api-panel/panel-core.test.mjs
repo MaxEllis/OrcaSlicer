@@ -112,3 +112,25 @@ test('no_undo_for_slice_rows', () => {
   const r = row({ id: 915, kind: 'slice', undo: null });
   assert.equal(C.undoState(r, {}, true).available, false);
 });
+
+test('title_change_plus_slice', () => {
+  const g = C.groupRows({ rows: [row({}), row({ kind: 'slice', label: 'Sliced', value: '', before: '', where: 'plate 1', undo: null })], groups: [meta(1, 100)] })[0];
+  assert.equal(C.groupTitle(g), 'Wall loops \u2192 3');
+});
+test('title_three_settings_plus_slice', () => {
+  const g = C.groupRows({ rows: [row({}), row({ label: 'Infill' }), row({ label: 'Speed' }), row({ kind: 'slice', where: 'plate 1', undo: null })], groups: [meta(1, 100)] })[0];
+  assert.equal(C.groupTitle(g), 'Wall loops and 2 more');
+});
+test('title_refused_only', () => {
+  const g = C.groupRows({ rows: [row({ kind: 'refused', label: 'Filament start G-code', undo: null, error: 'blocked' })], groups: [meta(1, 100)] })[0];
+  assert.equal(C.groupTitle(g), 'Filament start G-code not allowed');
+});
+test('tolerant_numeric_compare', () => {
+  const same = (live, logged) => C.undoState(row({ id: 950, value: logged }), { 950: { value: live, present: true } }, true).available;
+  assert.equal(same('3.0', '3'), true);
+  assert.equal(same('0.2000001', '0.2'), true);
+  assert.equal(same('15.0%', '15%'), true);
+  assert.equal(same('4', '3'), false);
+  assert.equal(same('160 %', '160 mm/s'), false);
+  assert.equal(C.liveDisplay(row({ id: 951, value: '3' }), { 951: { value: '3.0', present: true } }, true).note, '');
+});
