@@ -306,7 +306,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -724,6 +724,7 @@ Response Controller::handle_put_config(const std::string &body)
         const int              nozzles  = bundle->get_printer_extruder_count();
         const auto            *colours0 = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
         const size_t           filaments_before = colours0 == nullptr ? 0 : colours0->values.size();
+        const std::vector<std::string> colours_before = colours0 == nullptr ? std::vector<std::string>{} : colours0->values;
         const int              plate_idx = wxGetApp().plater()->get_partplate_list().get_curr_plate_index();
 
         for (auto it = in.begin(); it != in.end(); ++it) {
@@ -911,6 +912,28 @@ Response Controller::handle_put_config(const std::string &body)
             }
             if (touched_flush)
                 wxGetApp().sidebar().set_flushing_volume_warning(is_flush_config_modified());
+
+            if (proj_keys.count("filament_colour")) {
+                // Same follow-ups as the sidebar colour picker
+                // (PresetComboBox::sync_colour_config) for each slot whose colour
+                // changed: keep a solid colour's filament_multi_colour entry in step,
+                // repaint that slot's badge (it is drawn from filament_colour only on
+                // update()) and queue EVT_FILAMENT_COLOR_CHANGED (flush recalculation).
+                const auto &colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values;
+                auto       *multi   = bundle->project_config.option<ConfigOptionStrings>("filament_multi_colour");
+                auto       &combos  = wxGetApp().sidebar().combos_filament();
+                for (size_t i = 0; i < colours.size(); ++i) {
+                    if (i < colours_before.size() && colours_before[i] == colours[i])
+                        continue;
+                    if (multi != nullptr && i < multi->values.size() && multi->values[i].find(' ') == std::string::npos)
+                        multi->values[i] = colours[i];
+                    if (i < combos.size())
+                        combos[i]->update();
+                    wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
+                    evt->SetInt(int(i));
+                    wxQueueEvent(plater, evt);
+                }
+            }
 
             bundle->export_selections(*wxGetApp().app_config);
             // Once per request: it re-arms the auto-backup exporter.
@@ -1359,6 +1382,53 @@ Response Controller::handle_select_preset(const std::string &body)
                         type_s == "printer"  ? Preset::TYPE_PRINTER : Preset::TYPE_INVALID;
     if (type == Preset::TYPE_INVALID)
         return { 400, {{"error", "unknown_type"}} };
+
+    // Optional "slot" (0-based): choose the filament of one extruder/tool on a
+    // multi-filament printer, as the sidebar's per-filament combo does. This
+    // touches only that slot, so unlike the Filament tab path below it discards
+    // no unsaved edits. Without "slot" the request behaves exactly as before.
+    if (in.contains("slot")) {
+        if (type != Preset::TYPE_FILAMENT || !in["slot"].is_number_integer() || in["slot"].get<int>() < 0)
+            return { 400, {{"error", "invalid_slot"}} };
+        const size_t slot = in["slot"].get<size_t>();
+        nlohmann::json r = run_on_ui([slot, name]() -> nlohmann::json {
+            auto    *bundle  = wxGetApp().preset_bundle;
+            Plater  *plater  = wxGetApp().plater();
+            Sidebar &sidebar = plater->sidebar();
+            if (slot >= bundle->filament_presets.size())
+                return {{"error", "slot_out_of_range"}, {"filament_count", bundle->filament_presets.size()}};
+            const Preset *preset = bundle->filaments.find_preset(name, false, true);
+            if (preset == nullptr)
+                return {{"error", "unknown_preset"}};
+            if (!preset->is_compatible)
+                return {{"error", "incompatible_preset"}};
+            // Single-filament printer: slot 0 is the Filament tab's preset.
+            if (!sidebar.is_multifilament())
+                return {{"use_tab", true}};
+            // Same steps as Plater::priv::on_select_preset() for a filament combo.
+            bundle->set_filament_preset(slot, name);
+            plater->update_project_dirty_from_presets();
+            bundle->export_selections(*wxGetApp().app_config);
+            sidebar.update_dynamic_filament_list();
+            plater->on_filament_change(slot);
+            auto &combos = sidebar.combos_filament();
+            if (slot < combos.size())
+                combos[slot]->update();
+            return {{"selected", name}, {"slot", slot}, {"filaments", bundle->filament_presets}};
+        });
+        if (!r.contains("use_tab")) {
+            if (r.contains("error")) {
+                const std::string err = r["error"].get<std::string>();
+                if (err == "unknown_preset" || err == "incompatible_preset" || err == "slot_out_of_range") {
+                    api_notify("Can't use filament preset '" + name + "' for filament " + std::to_string(slot + 1), true);
+                    return { 422, r };
+                }
+                return { 500, r };
+            }
+            api_notify("Filament " + std::to_string(slot + 1) + " switched to '" + name + "'");
+            return { 200, r };
+        }
+    }
 
     nlohmann::json r = run_on_ui([type, name]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
