@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OrcaSlicer MCP</title>
+</head>
+<body>
+<div id="app"></div>
+<script id="panel-core">
+(function (root) {
+  'use strict';
+
+  var PROTOCOL_VERSION = 1;
+  var START_TITLE = 'Before the assistant started';
+
+  function has(s) { return s !== null && s !== undefined && s !== ''; }
+
+  // history = {rows, groups}; returns groups newest first (start point, id 0, last),
+  // each {id, ts, time, restore, rows}.
+  function groupRows(history) {
+    var rows = (history && history.rows) || [];
+    var metas = (history && history.groups) || [];
+    var byId = {};
+    var list = [];
+    function ensure(id, ts, time) {
+      if (!byId[id]) {
+        byId[id] = { id: id, ts: ts || 0, time: time || '', restore: null, rows: [] };
+        list.push(byId[id]);
+      }
+      return byId[id];
+    }
+    metas.forEach(function (m) {
+      var g = ensure(m.id, m.ts, m.time);
+      g.ts = m.ts || 0;
+      g.time = m.time || '';
+      g.restore = m.restore || null;
+    });
+    rows.forEach(function (r) {
+      var g = ensure(r.group, r.ts, r.time);
+      g.rows.push(r);
+    });
+    list.sort(function (a, b) {
+      if (a.id === 0 && b.id !== 0) return 1;
+      if (b.id === 0 && a.id !== 0) return -1;
+      if (a.ts !== b.ts) return b.ts - a.ts;
+      return b.id - a.id;
+    });
+    return list;
+  }
+
+  function singleText(r) {
+    var label = r.label || '';
+    var value = has(r.value) ? String(r.value) : '';
+    if (!value) return label;
+    return label + (has(r.before) ? ' → ' : ' ') + value;
+  }
+
+  function groupTitle(group) {
+    if (group.id === 0) return START_TITLE;
+    var rows = group.rows || [];
+    if (!rows.length) return '';
+    if (rows.every(function (r) { return r.kind === 'slice'; })) {
+      var s = rows[rows.length - 1];
+      return 'Sliced ' + (s.where || '').trim();
+    }
+    var more = rows.length - 1;
+    var win = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].title_hint === 'added' || rows[i].title_hint === 'opened') { win = rows[i]; break; }
+    }
+    if (win) {
+      var t = (win.label || '') + (has(win.value) ? ' ' + win.value : '');
+      return more > 0 ? t + ' and ' + more + ' more' : t;
+    }
+    if (more === 0) return singleText(rows[0]);
+    return (rows[0].label || '') + ' and ' + more + ' more';
+  }
+
+  function formatDuration(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return sec + 's';
+    var mins = Math.round(sec / 60);
+    if (mins < 60) return mins + 'm';
+    var h = Math.floor(mins / 60);
+    return h + 'h ' + (mins % 60) + 'm';
+  }
+
+  function groupResult(group) {
+    var rows = group.rows || [];
+    var text = '';
+    var warn = false;
+    rows.forEach(function (r) {
+      if (r.kind === 'refused' || has(r.error)) warn = true;
+      if (r.kind === 'slice' && r.result && typeof r.result.seconds === 'number') {
+        text = formatDuration(r.result.seconds);
+      }
+    });
+    return { text: text, warn: warn };
+  }
+
+  function liveEntry(row, live) {
+    return live && Object.prototype.hasOwnProperty.call(live, row.id) ? live[row.id] : null;
+  }
+
+  function liveDisplay(row, live, isNewest) {
+    var shown = has(row.value) ? String(row.value) : '';
+    var e = isNewest ? liveEntry(row, live) : null;
+    if (!e) return { value: shown, note: '' };
+    if (!e.present) return { value: shown, note: 'removed since' };
+    if (String(e.value) !== shown) return { value: String(e.value), note: 'changed by you' };
+    return { value: shown, note: '' };
+  }
+
+  function undoState(row, live, isNewest) {
+    if (!row.undo) return { available: false, why: '' };
+    if (has(row.undone_at)) return { available: false, why: 'Reverted at ' + row.undone_at };
+    var e = liveEntry(row, live);
+    if (e) {
+      if (!e.present) {
+        var name = row.where || row.value || row.label || 'It';
+        return { available: false, why: name + ' is no longer on the plate' };
+      }
+      if (String(e.value) !== (has(row.value) ? String(row.value) : '')) {
+        return {
+          available: false,
+          why: isNewest ? 'You changed it since' : 'Changed again since; restore an earlier point instead'
+        };
+      }
+    }
+    return { available: true, why: '' };
+  }
+
+  root.McpPanelCore = {
+    PROTOCOL_VERSION: PROTOCOL_VERSION,
+    groupRows: groupRows,
+    groupTitle: groupTitle,
+    groupResult: groupResult,
+    liveDisplay: liveDisplay,
+    undoState: undoState
+  };
+})(window);
+</script>
+</body>
+</html>
