@@ -37,21 +37,25 @@ struct McpGroup {
     bool        checkpoint_failed = false;
 };
 
+// What begin_change did. prev_point is the restore point a checkpoint taken NOW represents: the previous
+// group's id, or 0 (the start point) before any group. Valid only when opened is true.
+struct McpChange {
+    bool opened     = false;
+    int  prev_point = 0;
+};
+
 class McpHistory {
 public:
     static constexpr int64_t kBurstGapS    = 60;
     static constexpr size_t  kMaxCheckpoints = 20;
 
-    // True when this change opens a new group (also for the first change ever).
-    bool begin_change(int64_t now_s);
+    // opened = this change opens a new group (also for the first change ever); see McpChange.
+    McpChange begin_change(int64_t now_s);
     // Fills id and group; returns the row id.
     int  add_row(McpRow row);
     // After an API slice result: the next change starts a new group.
     void close_group();
 
-    // Call BEFORE begin_change: the group whose end state a checkpoint taken now represents
-    // (0 = the start point, before any group).
-    int  restore_point_for_new_group() const;
     // point 0 = start point, otherwise a group id. Unknown points are ignored.
     void set_checkpoint(int point, std::string file, bool failed);
     // Clears checkpoints beyond the kMaxCheckpoints newest; returns their files for deletion.
@@ -62,7 +66,8 @@ public:
     const std::vector<McpRow>   &rows() const   { return m_rows; }
     const std::vector<McpGroup> &groups() const { return m_groups; } // real groups only (not the start point)
 
-    // {"rows":[...],"groups":[...]} for the page's history message.
+    // {"rows":[...],"groups":[...]} for the page's history message. A row's "error" is text there:
+    // "" when none, else its where (or value, or "Failed").
     nlohmann::json page_history() const;
 
     nlohmann::json to_json() const;
@@ -79,7 +84,8 @@ private:
     int                   m_next_row  = 1;
 };
 
-// "untitled" for an empty path, else 16 lowercase hex chars of FNV-1a 64 over the lexically normalised path.
+// "untitled" for an empty path, else 16 lowercase hex chars of FNV-1a 64 over the lexically normalised path
+// (read as UTF-8 and hashed as UTF-8, so non-ASCII paths key the same on every platform).
 std::string mcp_history_key(const std::string &project_path_utf8);
 
 // Names of directories whose mtime is more than max_age_s before now_s.

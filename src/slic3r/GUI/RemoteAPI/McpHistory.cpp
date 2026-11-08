@@ -9,18 +9,20 @@ namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
 using nlohmann::json;
 
-bool McpHistory::begin_change(int64_t now_s)
+McpChange McpHistory::begin_change(int64_t now_s)
 {
-    const bool open_new = m_groups.empty() || m_closed || now_s - m_last_ts >= kBurstGapS;
-    if (open_new) {
+    McpChange c;
+    c.opened = m_groups.empty() || m_closed || now_s - m_last_ts >= kBurstGapS;
+    if (c.opened) {
+        c.prev_point = m_groups.empty() ? 0 : m_groups.back().id;
         McpGroup g;
-        g.id = m_groups.empty() ? 1 : m_groups.back().id + 1;
+        g.id = c.prev_point + 1;
         g.ts = now_s;
         m_groups.push_back(std::move(g));
     }
     m_closed  = false;
     m_last_ts = now_s;
-    return open_new;
+    return c;
 }
 
 int McpHistory::add_row(McpRow row)
@@ -34,8 +36,6 @@ int McpHistory::add_row(McpRow row)
 }
 
 void McpHistory::close_group() { m_closed = true; }
-
-int McpHistory::restore_point_for_new_group() const { return m_groups.empty() ? 0 : m_groups.back().id; }
 
 void McpHistory::set_checkpoint(int point, std::string file, bool failed)
 {
@@ -90,6 +90,15 @@ static json restore_json(const McpGroup &g)
     return nullptr;
 }
 
+// The page treats `error` as text: has(x) is true for anything but null/undefined/"" (false included).
+static std::string page_error(const McpRow &r)
+{
+    if (!r.error) return std::string();
+    if (!r.where.empty()) return r.where;
+    if (!r.value.empty()) return r.value;
+    return "Failed";
+}
+
 json McpHistory::page_history() const
 {
     json rows = json::array();
@@ -103,7 +112,7 @@ json McpHistory::page_history() const
                         {"label", r.label}, {"value", r.value}, {"before", r.before}, {"where", r.where},
                         {"undo", undo}, {"undone_at", r.undone_at},
                         {"title_hint", r.title_hint.empty() ? json(nullptr) : json(r.title_hint)},
-                        {"result", r.result.is_null() ? json(nullptr) : r.result}, {"error", r.error},
+                        {"result", r.result.is_null() ? json(nullptr) : r.result}, {"error", page_error(r)},
                         {"on_disk", r.on_disk}});
     }
     json groups = json::array();
@@ -191,7 +200,8 @@ McpHistory McpHistory::from_json(const json &j, const std::function<bool(const s
 std::string mcp_history_key(const std::string &project_path_utf8)
 {
     if (project_path_utf8.empty()) return "untitled";
-    const std::string norm = std::filesystem::path(project_path_utf8).lexically_normal().generic_string();
+    // u8path/generic_u8string: on Windows the plain std::string forms go through the ANSI code page.
+    const std::string norm = std::filesystem::u8path(project_path_utf8).lexically_normal().generic_u8string();
     uint64_t hash = 14695981039346656037ULL;
     for (unsigned char c : norm) {
         hash ^= c;

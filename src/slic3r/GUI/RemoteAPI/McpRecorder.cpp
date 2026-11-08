@@ -1,0 +1,455 @@
+#include "McpRecorder.hpp"
+#include "RemoteAPIController.hpp" // set_backup_in_progress: the F8 gate around the checkpoint export
+
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/Utils.hpp" // data_dir, ScopeGuard
+#include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/Plater.hpp"
+
+#include <wx/datetime.h>
+#include <wx/thread.h>
+
+#include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
+#include <boost/nowide/fstream.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <ctime>
+#include <exception>
+#include <stdexcept>
+#include <thread>
+#include <utility>
+#include <vector>
+
+namespace Slic3r { namespace GUI { namespace RemoteAPI {
+
+namespace fs = boost::filesystem;
+using nlohmann::json;
+
+std::atomic<bool>    McpRecorder::s_project_opened{false};
+std::atomic<int64_t> McpRecorder::s_clock_offset{0};
+std::atomic<int>     McpRecorder::s_checkpoint_delay{0};
+
+static const char *const kMiddleDot = "\xC2\xB7"; // U+00B7, as the page writes it
+
+static fs::path history_root() { return fs::path(data_dir()) / "mcp_history"; }
+
+// Writes text to a temp file beside dst, then renames it over dst (replaces an existing file).
+static bool write_file_atomic(const fs::path &dst, const std::string &text)
+{
+    const fs::path tmp = dst.parent_path() / (dst.filename().string() + ".tmp");
+    boost::system::error_code ec;
+    try {
+        {
+            boost::nowide::ofstream out(tmp.string().c_str(), std::ios::binary | std::ios::trunc);
+            if (!out) throw std::runtime_error("cannot open for writing");
+            out << text;
+            out.close();
+            if (!out) throw std::runtime_error("write failed");
+        }
+        fs::rename(tmp, dst, ec);
+        if (ec) throw std::runtime_error(ec.message());
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: " << dst.string() << " not written: " << e.what();
+        fs::remove(tmp, ec);
+        return false;
+    }
+    return true;
+}
+
+// Moves a history dir (replacing what is at `to`); rename, else copy file by file.
+static bool move_history_dir(const fs::path &from, const fs::path &to)
+{
+    boost::system::error_code ec;
+    if (!fs::is_directory(from, ec)) return true; // nothing recorded there yet
+    fs::remove_all(to, ec);
+    ec.clear();
+    fs::rename(from, to, ec);
+    if (!ec) return true;
+    ec.clear();
+    fs::create_directories(to, ec);
+    if (ec) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: history not moved to " << to.string() << ": " << ec.message();
+        return false;
+    }
+    for (fs::directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+        boost::system::error_code cec;
+        fs::copy_file(it->path(), to / it->path().filename(), fs::copy_options::overwrite_existing, cec);
+        if (cec) {
+            BOOST_LOG_TRIVIAL(error) << "MCP panel: history not moved to " << to.string() << ": " << cec.message();
+            return false;
+        }
+    }
+    fs::remove_all(from, ec);
+    return true;
+}
+
+// The page's formatDuration: 40s, 48m, 1h 48m.
+static std::string duration_text(double sec)
+{
+    const long s = std::lround(std::max(0.0, sec));
+    if (s < 60) return std::to_string(s) + "s";
+    const long mins = std::lround(std::max(0.0, sec) / 60.0);
+    if (mins < 60) return std::to_string(mins) + "m";
+    return std::to_string(mins / 60) + "h " + std::to_string(mins % 60) + "m";
+}
+
+static std::string grams_text(double g)
+{
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.1f g", g);
+    return buf;
+}
+
+McpRecorder &McpRecorder::get()
+{
+    static McpRecorder instance;
+    return instance;
+}
+
+int64_t McpRecorder::now_s() const { return static_cast<int64_t>(std::time(nullptr)) + s_clock_offset.load(); }
+
+std::string McpRecorder::hhmm(int64_t epoch_s)
+{
+    return std::string(wxDateTime(static_cast<time_t>(epoch_s)).Format("%H:%M").ToUTF8().data());
+}
+
+std::string McpRecorder::history_dir() const
+{
+    return m_loaded ? (history_root() / m_key).string() : std::string();
+}
+
+std::string McpRecorder::checkpoint_path(const std::string &file) const
+{
+    if (!m_loaded || file.empty()) return std::string();
+    return (history_root() / m_key / file).string();
+}
+
+void McpRecorder::notify()
+{
+    if (m_listener) m_listener();
+}
+
+void McpRecorder::changed()
+{
+    save();
+    notify();
+}
+
+void McpRecorder::save()
+{
+    if (!m_loaded) return;
+    // Nothing recorded: no folder for every project the pane merely looked at.
+    if (m_history.rows().empty() && m_history.groups().empty()) return;
+    const fs::path dir = history_root() / m_key;
+    boost::system::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: cannot create " << dir.string() << ": " << ec.message();
+        return;
+    }
+    write_file_atomic(dir / "history.json", m_history.to_json().dump());
+}
+
+void McpRecorder::load(const std::string &key, bool fresh)
+{
+    m_key    = key;
+    m_loaded = true;
+    m_open   = false;
+    m_history = McpHistory();
+    const fs::path dir = history_root() / key;
+    boost::system::error_code ec;
+    if (fresh) {
+        // Untitled keeps only the latest session.
+        fs::remove_all(dir, ec);
+        return;
+    }
+    const fs::path file = dir / "history.json";
+    if (!fs::exists(file, ec)) return;
+    json j;
+    try {
+        boost::nowide::ifstream in(file.string().c_str(), std::ios::binary);
+        if (!in) throw std::runtime_error("cannot open for reading");
+        j = json::parse(in);
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: " << file.string() << " ignored: " << e.what();
+        return;
+    }
+    m_history = McpHistory::from_json(j, [dir](const std::string &name) {
+        boost::system::error_code fec;
+        return !name.empty() && fs::exists(dir / name, fec);
+    });
+    // Reopened: the next change starts a group of its own, whatever the file says.
+    m_history.close_group();
+}
+
+void McpRecorder::sweep_stale_dirs(const std::string &keep)
+{
+    const fs::path root = history_root();
+    boost::system::error_code ec;
+    if (!fs::is_directory(root, ec)) return;
+    std::vector<std::pair<std::string, int64_t>> dirs;
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        boost::system::error_code dec;
+        if (!fs::is_directory(it->path(), dec)) continue;
+        const std::string name = it->path().filename().string();
+        if (name == keep) continue;
+        const fs::path h = it->path() / "history.json";
+        const std::time_t t = fs::exists(h, dec) ? fs::last_write_time(h, dec) : fs::last_write_time(it->path(), dec);
+        if (dec) continue;
+        dirs.emplace_back(name, static_cast<int64_t>(t));
+    }
+    // Real time, not the test clock: a test hook must never age out real history.
+    for (const std::string &name : mcp_stale_history_dirs(dirs, static_cast<int64_t>(std::time(nullptr)), kStaleAgeS)) {
+        boost::system::error_code rec;
+        fs::remove_all(root / name, rec);
+        BOOST_LOG_TRIVIAL(info) << "MCP panel: deleted unused history " << name;
+    }
+}
+
+void McpRecorder::sync_project()
+{
+    if (!wxThread::IsMain()) return;
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr) return;
+    const std::string path   = plater->get_project_filename(".3mf").ToUTF8().data();
+    const std::string key    = mcp_history_key(path);
+    const bool        opened = s_project_opened.exchange(false);
+
+    if (!m_swept) {
+        m_swept = true;
+        sweep_stale_dirs(key);
+    }
+
+    if (!m_loaded) {
+        load(key, key == "untitled");
+    } else if (key == m_key) {
+        // The same project opened again: keep the timeline, start a new group.
+        if (opened) {
+            m_history.close_group();
+            m_open = false;
+        }
+        return;
+    } else if (opened || key == "untitled") {
+        // Another project opened, or a new (Untitled) project.
+        save();
+        load(key, key == "untitled");
+    } else if (m_key == "untitled") {
+        // First save of an Untitled project: its history becomes the file's.
+        move_history_dir(history_root() / m_key, history_root() / key);
+        m_key = key;
+        save();
+    } else {
+        // Save As to another path: the old path keeps its history, the new one starts empty here.
+        save();
+        boost::system::error_code ec;
+        fs::remove_all(history_root() / key, ec);
+        m_key     = key;
+        m_open    = false;
+        m_history = McpHistory();
+    }
+    notify();
+}
+
+void McpRecorder::project_moved(const std::string &old_path_utf8, const std::string &new_path_utf8)
+{
+    if (!wxThread::IsMain()) return;
+    if (old_path_utf8.empty() || new_path_utf8.empty()) return;
+    const std::string from = mcp_history_key(old_path_utf8);
+    const std::string to   = mcp_history_key(new_path_utf8);
+    if (from == to) return;
+    if (m_loaded && m_key == from) {
+        save();
+        move_history_dir(history_root() / from, history_root() / to);
+        m_key = to;
+        save();
+        notify();
+    } else if (m_loaded && m_key == to) {
+        // A sync ran between the move and this call and took it for a Save As (empty history): adopt the
+        // moved history instead. Never replace a history that already has rows.
+        if (!m_history.rows().empty()) return;
+        move_history_dir(history_root() / from, history_root() / to);
+        load(to, false);
+        notify();
+    } else {
+        // Not the open project: its history (if any) follows the file.
+        move_history_dir(history_root() / from, history_root() / to);
+    }
+}
+
+bool McpRecorder::write_preset_checkpoint(const std::string &path_utf8)
+{
+    const PresetBundle *b = wxGetApp().preset_bundle;
+    if (b == nullptr) return false;
+    // The edited preset's values of each dirty option (the unsaved edits over the selected preset).
+    auto edits = [](const PresetCollection &c) {
+        json o = json::object();
+        const DynamicPrintConfig &cfg = c.get_edited_preset().config;
+        for (const std::string &k : c.current_dirty_options())
+            if (const ConfigOption *opt = cfg.option(k)) o[k] = opt->serialize();
+        return o;
+    };
+    json j = json::object();
+    j["printer"]   = b->printers.get_selected_preset_name();
+    j["print"]     = b->prints.get_selected_preset_name();
+    j["filaments"] = b->filament_presets;
+    j["edits"]     = {{"print", edits(b->prints)}, {"filament", edits(b->filaments)}, {"printer", edits(b->printers)}};
+    return write_file_atomic(fs::path(path_utf8), j.dump());
+}
+
+std::string McpRecorder::write_checkpoint(const std::string &stem)
+{
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr || !m_loaded) return std::string();
+    const fs::path dir = history_root() / m_key;
+    boost::system::error_code ec;
+    fs::create_directories(dir, ec);
+    // An empty project cannot be opened as a 3MF: keep the presets and their edits instead.
+    const bool        empty_plate = plater->model().objects.empty();
+    const std::string name        = stem + (empty_plate ? ".json" : ".3mf");
+    const fs::path    file        = dir / name;
+
+    const auto t0 = std::chrono::steady_clock::now();
+    bool ok = false;
+    if (!ec) {
+        const int delay = s_checkpoint_delay.load();
+        if (delay > 0) std::this_thread::sleep_for(std::chrono::seconds(delay));
+        if (empty_plate) {
+            ok = write_preset_checkpoint(file.string());
+        } else {
+            // export_3mf pumps the event queue: park API tasks for its duration (F8), as the auto-backup does.
+            Controller::set_backup_in_progress(true);
+            ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
+            try {
+                ok = plater->export_3mf_copy(file);
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << "MCP panel: checkpoint export failed: " << e.what();
+                ok = false;
+            } catch (...) {
+                ok = false;
+            }
+        }
+    }
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (!ok || secs > double(kCheckpointMaxS)) {
+        boost::system::error_code rec;
+        fs::remove(file, rec);
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: no checkpoint " << name << (ok ? " (took " : " (failed after ") << secs
+                                   << " s)";
+        return std::string();
+    }
+    return name;
+}
+
+void McpRecorder::take_checkpoint(int point)
+{
+    if (!m_loaded) return;
+    const std::string name = write_checkpoint("cp-" + std::to_string(point));
+    m_history.set_checkpoint(point, name, name.empty());
+    const fs::path dir = history_root() / m_key;
+    for (const std::string &gone : m_history.prune_checkpoints()) {
+        boost::system::error_code rec;
+        fs::remove(dir / gone, rec);
+    }
+}
+
+void McpRecorder::before_change()
+{
+    if (!wxThread::IsMain()) return;
+    sync_project();
+    const McpChange c = m_history.begin_change(now_s());
+    m_open = true;
+    if (!c.opened) return;
+    take_checkpoint(c.prev_point);
+    save();
+    notify();
+}
+
+int McpRecorder::record(McpRow row)
+{
+    if (!wxThread::IsMain()) return 0;
+    sync_project();
+    if (!m_open) before_change();
+    row.ts   = now_s();
+    row.time = hhmm(row.ts);
+    const int id = m_history.add_row(std::move(row));
+    save();
+    notify();
+    return id;
+}
+
+void McpRecorder::record_refusal(std::string label, std::string why)
+{
+    if (!wxThread::IsMain()) return;
+    before_change(); // a refused change still belongs to the burst
+    McpRow r;
+    r.kind  = "refused";
+    r.label = std::move(label);
+    r.value = "Not allowed";
+    r.where = std::move(why);
+    r.error = true;
+    record(std::move(r));
+}
+
+void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &error)
+{
+    if (!wxThread::IsMain()) return;
+    sync_project();
+    if (!m_open) before_change();
+    Plater *plater = wxGetApp().plater();
+    const int plate_no = plater != nullptr ? plater->get_partplate_list().get_curr_plate_index() + 1 : 1;
+
+    McpRow r;
+    r.kind  = "slice";
+    r.where = "plate " + std::to_string(plate_no);
+    if (ok) {
+        double secs = -1, grams = -1;
+        if (stats.is_object()) {
+            auto it = stats.find("estimated_time_seconds");
+            if (it != stats.end() && it->is_number()) secs = it->get<double>();
+            it = stats.find("filament_used_g");
+            if (it != stats.end() && it->is_number()) grams = it->get<double>();
+        }
+        r.label = "Sliced";
+        if (secs >= 0 && grams >= 0) r.value = duration_text(secs) + " " + kMiddleDot + " " + grams_text(grams);
+        else if (secs >= 0)          r.value = duration_text(secs);
+        else if (grams >= 0)         r.value = grams_text(grams);
+        if (secs >= 0) r.result = {{"seconds", secs}, {"grams", std::max(0.0, grams)}};
+        // The same plate's previous API slice, if any.
+        const std::vector<McpRow> &rows = m_history.rows();
+        for (auto it = rows.rbegin(); it != rows.rend(); ++it)
+            if (it->kind == "slice" && !it->error && it->where == r.where && it->result.is_object()) {
+                r.before = it->value;
+                break;
+            }
+    } else if (error == "cancelled") {
+        r.label = "Slicing cancelled";
+    } else {
+        r.label = "Slicing failed";
+        r.error = true;
+        std::string reason = error.substr(0, error.find('\n'));
+        if (reason.size() > 80) {
+            size_t cut = 77;
+            while (cut > 0 && (static_cast<unsigned char>(reason[cut]) & 0xC0) == 0x80) --cut; // UTF-8 boundary
+            reason = reason.substr(0, cut) + "...";
+        }
+        r.value = reason.empty() ? "OrcaSlicer reported an error" : reason;
+        if (!error.empty() && error != reason) r.where += std::string(" ") + kMiddleDot + " " + error;
+    }
+    r.ts   = now_s();
+    r.time = hhmm(r.ts);
+    m_history.add_row(std::move(r));
+    // A group normally ends with its result.
+    m_history.close_group();
+    m_open = false;
+    save();
+    notify();
+}
+
+}}} // namespace Slic3r::GUI::RemoteAPI

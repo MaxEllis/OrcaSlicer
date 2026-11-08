@@ -289,6 +289,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteAPI/RemoteAPIController.hpp
     GUI/RemoteAPI/McpHistory.cpp
     GUI/RemoteAPI/McpHistory.hpp
+    GUI/RemoteAPI/McpRecorder.cpp
+    GUI/RemoteAPI/McpRecorder.hpp
     GUI/I18N.cpp
     GUI/I18N.hpp
     GUI/DragDropPanel.cpp

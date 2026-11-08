@@ -1,5 +1,6 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIController.cpp
 #include "RemoteAPIController.hpp"
+#include "McpRecorder.hpp"
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -144,6 +145,9 @@ void Controller::notify_config_changed(int preset_type)
 
 void Controller::notify_project_opened()
 {
+    // MCP panel: the next history sync takes a path change for an open, not a save. Also while the API
+    // is off, so a project opened then has its timeline back once the API is turned on.
+    McpRecorder::note_project_opened();
     if (g_controller == nullptr) return;
     // On the GUI thread at the end of Plater::load_project.
     std::string name = wxGetApp().plater()->get_project_filename().ToUTF8().data();
