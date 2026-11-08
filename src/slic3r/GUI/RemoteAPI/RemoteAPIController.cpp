@@ -306,7 +306,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -1337,6 +1337,53 @@ Response Controller::handle_select_preset(const std::string &body)
                         type_s == "printer"  ? Preset::TYPE_PRINTER : Preset::TYPE_INVALID;
     if (type == Preset::TYPE_INVALID)
         return { 400, {{"error", "unknown_type"}} };
+
+    // Optional "slot" (0-based): choose the filament of one extruder/tool on a
+    // multi-filament printer, as the sidebar's per-filament combo does. This
+    // touches only that slot, so unlike the Filament tab path below it discards
+    // no unsaved edits. Without "slot" the request behaves exactly as before.
+    if (in.contains("slot")) {
+        if (type != Preset::TYPE_FILAMENT || !in["slot"].is_number_integer() || in["slot"].get<int>() < 0)
+            return { 400, {{"error", "invalid_slot"}} };
+        const size_t slot = in["slot"].get<size_t>();
+        nlohmann::json r = run_on_ui([slot, name]() -> nlohmann::json {
+            auto    *bundle  = wxGetApp().preset_bundle;
+            Plater  *plater  = wxGetApp().plater();
+            Sidebar &sidebar = plater->sidebar();
+            if (slot >= bundle->filament_presets.size())
+                return {{"error", "slot_out_of_range"}, {"filament_count", bundle->filament_presets.size()}};
+            const Preset *preset = bundle->filaments.find_preset(name, false, true);
+            if (preset == nullptr)
+                return {{"error", "unknown_preset"}};
+            if (!preset->is_compatible)
+                return {{"error", "incompatible_preset"}};
+            // Single-filament printer: slot 0 is the Filament tab's preset.
+            if (!sidebar.is_multifilament())
+                return {{"use_tab", true}};
+            // Same steps as Plater::priv::on_select_preset() for a filament combo.
+            bundle->set_filament_preset(slot, name);
+            plater->update_project_dirty_from_presets();
+            bundle->export_selections(*wxGetApp().app_config);
+            sidebar.update_dynamic_filament_list();
+            plater->on_filament_change(slot);
+            auto &combos = sidebar.combos_filament();
+            if (slot < combos.size())
+                combos[slot]->update();
+            return {{"selected", name}, {"slot", slot}, {"filaments", bundle->filament_presets}};
+        });
+        if (!r.contains("use_tab")) {
+            if (r.contains("error")) {
+                const std::string err = r["error"].get<std::string>();
+                if (err == "unknown_preset" || err == "incompatible_preset" || err == "slot_out_of_range") {
+                    api_notify("Can't use filament preset '" + name + "' for filament " + std::to_string(slot + 1), true);
+                    return { 422, r };
+                }
+                return { 500, r };
+            }
+            api_notify("Filament " + std::to_string(slot + 1) + " switched to '" + name + "'");
+            return { 200, r };
+        }
+    }
 
     nlohmann::json r = run_on_ui([type, name]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;

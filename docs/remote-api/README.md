@@ -128,6 +128,28 @@ The next merge then spliced that whole list in at *every* slot using that preset
 so the value grew on each write (5 entries → 13 → …) and the per-slot settings were
 lost. If you hit that, re-select the filament preset to restore it.
 
+#### Choosing the filament preset of one slot
+
+`PUT /preset` with `"type": "filament"` switches the preset open in the Filament
+tab. On a multi-filament printer, add a 0-based `slot` to choose the preset of one
+extruder/tool instead, the same as picking it in that slot's sidebar combo:
+
+```bash
+curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"type":"filament","name":"Generic PETG","slot":1}' \
+  http://localhost:13130/api/v1/preset
+```
+```json
+{ "selected": "Generic PETG", "slot": 1, "filaments": ["Generic PLA", "Generic PETG", "Generic PLA", "Generic PLA"] }
+```
+
+Only that slot changes; no unsaved edits are discarded. `422` with `slot_out_of_range`
+(and `filament_count`), `unknown_preset` or `incompatible_preset` (not compatible with
+the selected printer) changes nothing. `slot` with any other `type` is `400 invalid_slot`.
+On a single-filament printer `slot: 0` behaves like the request without `slot`.
+Builds that support it list `preset_slot` in `GET /status` `capabilities`; older builds
+ignore `slot` and switch the Filament tab preset, so check the capability first.
+
 #### Project-scope keys (multi-material / CFS)
 
 Most keys resolve against the edited print, filament or printer preset. A few
