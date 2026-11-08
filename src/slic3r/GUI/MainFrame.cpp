@@ -793,8 +793,10 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             else if (action == 1) {
                 // Remote API (F8): never export while an API mutation is on the
                 // stack (this callback can run from a nested event pump inside
-                // it) - skip and re-arm for the next cycle instead.
-                if (Slic3r::GUI::RemoteAPI::Controller::api_ui_task_active()) {
+                // it), nor inside another bracketed export (an MCP panel
+                // checkpoint) - skip and re-arm for the next cycle instead.
+                if (Slic3r::GUI::RemoteAPI::Controller::api_ui_task_active() ||
+                    Slic3r::GUI::RemoteAPI::Controller::backup_in_progress()) {
                     Slic3r::backup_soon();
                     return;
                 }

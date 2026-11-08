@@ -1,6 +1,7 @@
 #include "McpRecorder.hpp"
 #include "RemoteAPIController.hpp" // set_backup_in_progress: the F8 gate around the checkpoint export
 
+#include "libslic3r/Format/bbs_3mf.hpp" // backup_defer
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -187,6 +188,8 @@ void McpRecorder::load(const std::string &key, bool fresh)
     });
     // Reopened: the next change starts a group of its own, whatever the file says.
     m_history.close_group();
+    // "Not opened for 30 days" is judged by this file's mtime: opening counts, not only API changes.
+    fs::last_write_time(file, std::time(nullptr), ec);
 }
 
 void McpRecorder::sweep_stale_dirs(const std::string &keep)
@@ -218,6 +221,14 @@ void McpRecorder::sync_project()
     if (!wxThread::IsMain()) return;
     Plater *plater = wxGetApp().plater();
     if (plater == nullptr) return;
+    // Mid-load (events pumped inside Plater::load_project, the pane refreshing) the project name may
+    // already be the new file's while notify_project_opened has not run yet: judging the path now would
+    // take the open for a Save As / first save. Wait for the load to end. notify_project_opened runs at
+    // the end of load_project while m_loading_project is still true (its ScopeGuard clears it on return),
+    // so by the time this check passes, the opened flag of that load is set. The flag is read only after
+    // this check, so a mid-load sync cannot consume it either. Every other path change (save, Save As,
+    // New project, an API move via project_moved) happens outside a load and needs no flag.
+    if (plater->is_loading_project()) return;
     const std::string path   = plater->get_project_filename(".3mf").ToUTF8().data();
     const std::string key    = mcp_history_key(path);
     const bool        opened = s_project_opened.exchange(false);
@@ -324,6 +335,9 @@ std::string McpRecorder::write_checkpoint(const std::string &stem)
             ok = write_preset_checkpoint(file.string());
         } else {
             // export_3mf pumps the event queue: park API tasks for its duration (F8), as the auto-backup does.
+            // Also safe outside an API task (the restore snapshot): the periodic auto-backup is pushed out
+            // past the longest checkpoint we keep, and MainFrame skips it while backup_in_progress() anyway.
+            Slic3r::backup_defer(static_cast<long>(kCheckpointMaxS));
             Controller::set_backup_in_progress(true);
             ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
             try {
@@ -359,14 +373,18 @@ void McpRecorder::take_checkpoint(int point)
     }
 }
 
-void McpRecorder::before_change()
+void McpRecorder::before_change() { open_change(true); }
+
+void McpRecorder::open_change(bool checkpoint)
 {
     if (!wxThread::IsMain()) return;
     sync_project();
     const McpChange c = m_history.begin_change(now_s());
     m_open = true;
     if (!c.opened) return;
-    take_checkpoint(c.prev_point);
+    // No checkpoint when slice_finished opens the group: it runs from the slicing-completed event, not
+    // inside an API task, and a slice changes nothing in the project. That point gets no restore.
+    if (checkpoint) take_checkpoint(c.prev_point);
     save();
     notify();
 }
@@ -401,7 +419,7 @@ void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &
 {
     if (!wxThread::IsMain()) return;
     sync_project();
-    if (!m_open) before_change();
+    if (!m_open) open_change(false);
     Plater *plater = wxGetApp().plater();
     const int plate_no = plater != nullptr ? plater->get_partplate_list().get_curr_plate_index() + 1 : 1;
 

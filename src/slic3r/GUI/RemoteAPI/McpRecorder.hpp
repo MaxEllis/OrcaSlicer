@@ -30,10 +30,12 @@ public:
     void record_refusal(std::string label, std::string why);
     // An API slice ended: a "slice" row in the current group, then the group closes. ok=false with
     // error "cancelled" records "Slicing cancelled"; any other failure records "Slicing failed" (error row).
+    // When no group is open (the last one was closed by a slice) it opens one WITHOUT a checkpoint: this runs
+    // from the slicing-completed event, outside any API task.
     // stats = the GET /slice/status stats (estimated_time_seconds, filament_used_g).
     void slice_finished(const nlohmann::json &stats, bool ok, const std::string &error);
 
-    // Follows the open project: loads its history on an open, rekeys untitled/ on the first save of an
+    // Does nothing while a project is loading (Plater::is_loading_project). Follows the open project: loads its history on an open, rekeys untitled/ on the first save of an
     // Untitled project, starts an empty history on a Save As. Called by the members above and by the pane.
     void sync_project();
     // An API move/rename of a project file: its history dir moves with it (also when it is the open project).
@@ -76,6 +78,7 @@ public:
 private:
     McpRecorder() = default;
 
+    void open_change(bool checkpoint); // before_change; checkpoint=false when slice_finished opens a group
     void take_checkpoint(int point);
     bool write_preset_checkpoint(const std::string &path_utf8);
     void load(const std::string &key, bool fresh);

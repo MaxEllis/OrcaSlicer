@@ -207,7 +207,9 @@ struct UiTask : std::enable_shared_from_this<UiTask>
 };
 
 int  s_api_ui_task_depth  = 0;
-bool s_backup_in_progress = false;
+// Depth, not a flag: the auto-backup and an MCP panel checkpoint both bracket an export with
+// set_backup_in_progress(true/false); with a flag the inner `false` would clear the outer gate.
+int  s_backup_depth       = 0;
 std::deque<std::shared_ptr<UiTask>> s_deferred_ui_tasks;
 
 void flush_deferred_ui_tasks()
@@ -227,7 +229,7 @@ void UiTask::run()
     // after the first timed out; it then runs inside the first one's event pump
     // (load_project and export_3mf show progress dialogs) and would change the
     // model or presets halfway through that work.
-    if (s_backup_in_progress || s_api_ui_task_depth > 0) {
+    if (s_backup_depth > 0 || s_api_ui_task_depth > 0) {
         s_deferred_ui_tasks.push_back(shared_from_this());
         return;
     }
@@ -241,7 +243,7 @@ void UiTask::run()
         promise->set_exception(std::current_exception());
     }
     --s_api_ui_task_depth;
-    if (s_api_ui_task_depth == 0 && !s_backup_in_progress)
+    if (s_api_ui_task_depth == 0 && s_backup_depth == 0)
         flush_deferred_ui_tasks();
 }
 
@@ -251,10 +253,15 @@ bool Controller::api_ui_task_active() { return s_api_ui_task_depth > 0; }
 
 void Controller::set_backup_in_progress(bool v)
 {
-    s_backup_in_progress = v;
-    if (!v && s_api_ui_task_depth == 0)
+    if (v)
+        ++s_backup_depth;
+    else if (s_backup_depth > 0)
+        --s_backup_depth;
+    if (s_backup_depth == 0 && s_api_ui_task_depth == 0)
         flush_deferred_ui_tasks();
 }
+
+bool Controller::backup_in_progress() { return s_backup_depth > 0; }
 
 nlohmann::json Controller::run_on_ui(std::function<nlohmann::json()> fn, int timeout_s)
 {

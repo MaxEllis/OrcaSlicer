@@ -44,6 +44,9 @@ public:
     static bool api_ui_task_active();          // an API task is on the stack
     static void set_backup_in_progress(bool);  // MainFrame brackets export_3mf;
                                                // false flushes deferred API tasks
+                                               // (nests: a depth count, so an inner
+                                               // false never clears an outer bracket)
+    static bool backup_in_progress();          // an export is bracketed right now
 
     SliceState slice_state() const { std::lock_guard<std::mutex> lk(m_mutex); return m_slice; }
 
