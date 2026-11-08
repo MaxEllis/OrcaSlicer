@@ -146,7 +146,8 @@ curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 Only that slot changes; no unsaved edits are discarded. `422` with `slot_out_of_range`
 (and `filament_count`), `unknown_preset` or `incompatible_preset` (not compatible with
 the selected printer) changes nothing. `slot` with any other `type` is `400 invalid_slot`.
-On a single-filament printer `slot: 0` behaves like the request without `slot`.
+On a single-filament printer `slot: 0` behaves like the request without `slot`, including
+discarding unsaved edits.
 Builds that support it list `preset_slot` in `GET /status` `capabilities`; older builds
 ignore `slot` and switch the Filament tab preset, so check the capability first.
 
@@ -159,7 +160,7 @@ belong to the *project* instead, and only these seven are writable:
 |---|---|---|
 | `flush_volumes_matrix` | `,`-separated floats | exactly `filaments² × nozzles` values, each in `[0, 20000]` |
 | `flush_multiplier` | `,`-separated floats | one per nozzle, each in `[0, 3]` |
-| `filament_colour` | `;`-separated `#RRGGBB` | recolour only — the count is fixed by the filament presets |
+| `filament_colour` | `;`-separated `#RRGGBB` | recolour only — the count is fixed by the filament presets; a recoloured slot becomes a solid colour, as in the colour picker |
 | `curr_bed_type` | enum name | `"Default Plate"` is rejected |
 | `prime_volume_mode` | enum name | — |
 | `wipe_tower_x`, `wipe_tower_y` | float | applies to the current plate only |

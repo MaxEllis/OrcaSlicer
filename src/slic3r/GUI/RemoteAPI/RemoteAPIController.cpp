@@ -908,18 +908,27 @@ Response Controller::handle_put_config(const std::string &body)
 
             if (proj_keys.count("filament_colour")) {
                 // Same follow-ups as the sidebar colour picker
-                // (PresetComboBox::sync_colour_config) for each slot whose colour
-                // changed: keep a solid colour's filament_multi_colour entry in step,
-                // repaint that slot's badge (it is drawn from filament_colour only on
-                // update()) and queue EVT_FILAMENT_COLOR_CHANGED (flush recalculation).
+                // (PlaterPresetComboBox::sync_colour_config) choosing one colour, for
+                // each slot whose colour changed: the slot becomes a solid colour
+                // (filament_multi_colour = that colour, filament_colour_type "1"; a
+                // gradient left there would keep drawing the old colours), its badge is
+                // repainted (drawn from the config only on update()) and
+                // EVT_FILAMENT_COLOR_CHANGED is queued (flush recalculation).
                 const auto &colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values;
                 auto       *multi   = bundle->project_config.option<ConfigOptionStrings>("filament_multi_colour");
+                auto       *ctype   = bundle->project_config.option<ConfigOptionStrings>("filament_colour_type");
                 auto       &combos  = wxGetApp().sidebar().combos_filament();
                 for (size_t i = 0; i < colours.size(); ++i) {
                     if (i < colours_before.size() && colours_before[i] == colours[i])
                         continue;
-                    if (multi != nullptr && i < multi->values.size() && multi->values[i].find(' ') == std::string::npos)
+                    if (multi != nullptr) {
+                        if (i >= multi->values.size()) multi->values.resize(i + 1);
                         multi->values[i] = colours[i];
+                    }
+                    if (ctype != nullptr) {
+                        if (i >= ctype->values.size()) ctype->values.resize(i + 1);
+                        ctype->values[i] = "1";
+                    }
                     if (i < combos.size())
                         combos[i]->update();
                     wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
@@ -1366,7 +1375,7 @@ Response Controller::handle_select_preset(const std::string &body)
     // touches only that slot, so unlike the Filament tab path below it discards
     // no unsaved edits. Without "slot" the request behaves exactly as before.
     if (in.contains("slot")) {
-        if (type != Preset::TYPE_FILAMENT || !in["slot"].is_number_integer() || in["slot"].get<int>() < 0)
+        if (type != Preset::TYPE_FILAMENT || !in["slot"].is_number_integer() || in["slot"].get<long long>() < 0)
             return { 400, {{"error", "invalid_slot"}} };
         const size_t slot = in["slot"].get<size_t>();
         nlohmann::json r = run_on_ui([slot, name]() -> nlohmann::json {
@@ -1384,10 +1393,14 @@ Response Controller::handle_select_preset(const std::string &body)
             if (!sidebar.is_multifilament())
                 return {{"use_tab", true}};
             // Same steps as Plater::priv::on_select_preset() for a filament combo.
+            const bool was_support = is_support_filament(int(slot));
             bundle->set_filament_preset(slot, name);
             plater->update_project_dirty_from_presets();
             bundle->export_selections(*wxGetApp().app_config);
             sidebar.update_dynamic_filament_list();
+            // A switch between a support filament and a normal one changes the flush volumes.
+            if (was_support != is_support_filament(int(slot)) && wxGetApp().app_config->get("auto_calculate_flush") == "all")
+                sidebar.auto_calc_flushing_volumes(int(slot));
             plater->on_filament_change(slot);
             auto &combos = sidebar.combos_filament();
             if (slot < combos.size())
