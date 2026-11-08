@@ -92,6 +92,13 @@ public:
     // Call right after the file moved and BEFORE recording the row for it.
     void project_moved(const std::string &old_path_utf8, const std::string &new_path_utf8);
 
+    // A panel restore: the next change starts a group of its own (and takes the checkpoint of the restored state
+    // for the newest point, unless that point already has one). Call changed() afterwards.
+    void close_group();
+    // Gives a restore point a checkpoint file written by write_checkpoint (a panel restore keeps its pre-restore
+    // snapshot as the newest point's end state), then prunes beyond the 20 newest.
+    void set_point_checkpoint(int point, const std::string &file);
+
     // Called after any change of the history (the pane refreshes).
     void set_listener(std::function<void()> fn) { m_listener = std::move(fn); }
     // After editing history() directly (mark_undone, ...): saves and calls the listener.
@@ -152,6 +159,7 @@ private:
 
     void open_change(bool checkpoint); // before_change; checkpoint=false when slice_finished opens a group
     void take_checkpoint(int point);
+    void prune(); // checkpoints beyond the 20 newest, files removed
     bool write_preset_checkpoint(const std::string &path_utf8);
     void load(const std::string &key, bool fresh);
     void save();

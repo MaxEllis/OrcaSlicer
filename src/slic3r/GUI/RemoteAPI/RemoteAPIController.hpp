@@ -7,8 +7,12 @@
 #include <functional>
 #include <mutex>
 #include <set>
+#include <string>
+#include <vector>
 
 namespace Slic3r { namespace ElegooCanvas { struct Info; } }
+namespace Slic3r { class DynamicPrintConfig; }
+namespace Slic3r { namespace GUI { class Plater; } }
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -49,6 +53,35 @@ public:
     static bool backup_in_progress();          // an export is bracketed right now
 
     SliceState slice_state() const { std::lock_guard<std::mutex> lk(m_mutex); return m_slice; }
+
+    // ---- Shared by the API handlers and the MCP panel's actions (McpActions). GUI thread only. -------------------
+    // POST /project/open's work once the request is read: checks (file, slicing, loading), the sensitive-key check
+    // when policy_check, before_load (may add to the reply, or return {"error", ...} to stop), then the open with
+    // OrcaSlicer's prompts answered and, with keep_presets, the earlier presets selected back. Returns the reply's
+    // fields or {"error", ...}. Records nothing in the MCP panel.
+    static nlohmann::json open_project_from(Plater *plater, const std::string &path, bool keep_presets, bool policy_check,
+                                            const std::function<nlohmann::json(nlohmann::json &)> &before_load = {});
+    // The project-scope epilogue of PUT /config: applies the staged project config; proj_keys = keys changed,
+    // colours_before = filament_colour before (for the per-slot colour follow-ups).
+    static void apply_project_config(const DynamicPrintConfig &proj_new, const std::set<std::string> &proj_keys,
+                                     const std::vector<std::string> &colours_before);
+    // The filament preset of one slot, as the sidebar combo switches it (slot and preset already checked).
+    static void select_filament_slot(size_t slot, const std::string &name);
+    // DELETE /preset's rules ("" = may delete, else the error token) and its deletion. type: print|filament|printer.
+    static std::string preset_delete_refusal(const std::string &type, const std::string &name);
+    static bool        delete_user_preset(const std::string &type, const std::string &name);
+    // Drops the File > Recent entries that name this file.
+    static void forget_recent(const std::string &path_utf8);
+    // /slice/status describes the current plate again (after a restore replaced the project).
+    static void slice_state_follows_plate();
+    // POST /project/move undone: moves `moved_to` back to `moved_from` (only onto a free name), with the window,
+    // recent list and MCP history following as for the move. "" or an error token (file_not_found, exists,
+    // same_path, move_failed).
+    static std::string move_project_file_back(const std::string &moved_from, const std::string &moved_to);
+    // CANVAS: the tray a filament prints from now, as the slot-mapping rows name it ("A2", "none"); false when no
+    // slot list has been read. revert_slot_mapping puts one filament's earlier tray back ("" or an error token).
+    static bool        slot_mapping_label(int filament, std::string &label);
+    static std::string revert_slot_mapping(const nlohmann::json &target);
 
     // Call once on the GUI thread after the plater exists (from start_remote_api()).
     // Idempotent: guarded by m_events_bound.
@@ -93,6 +126,8 @@ private:
     Response handle_browse_projects(const std::string &target);     // project: GET /project/browse?dir=
     Response handle_move_project_file(const std::string &body);     // project: POST /project/move
     Response handle_delete_project_file(const std::string &body);   // project: DELETE /project/file
+    // MCP panel: POST /activity/test/<name> (only with ORCA_MCP_PANEL_TEST=1 at start)
+    Response handle_activity_test(const std::string &name, const std::string &body);
     Response handle_printer_slots();                        // CANVAS: GET /printer/slots
     Response handle_get_slot_mapping();                     // CANVAS: GET /printer/slot_mapping
     Response handle_put_slot_mapping(const std::string &body); // CANVAS: PUT /printer/slot_mapping

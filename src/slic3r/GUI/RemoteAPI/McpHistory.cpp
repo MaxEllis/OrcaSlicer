@@ -71,6 +71,14 @@ std::vector<std::string> McpHistory::prune_checkpoints()
     return out;
 }
 
+std::string McpHistory::checkpoint_of(int point) const
+{
+    if (point == 0) return m_has_start ? m_start.checkpoint : std::string();
+    for (const McpGroup &g : m_groups)
+        if (g.id == point) return g.checkpoint;
+    return std::string();
+}
+
 McpRow *McpHistory::row(int id)
 {
     for (McpRow &r : m_rows)

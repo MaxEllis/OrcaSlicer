@@ -1,5 +1,6 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIController.cpp
 #include "RemoteAPIController.hpp"
+#include "McpActions.hpp"
 #include "McpRecorder.hpp"
 
 #include "libslic3r/Preset.hpp"
@@ -44,6 +45,7 @@
 #include <atomic>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <deque>
 #include <fstream>
@@ -438,6 +440,9 @@ void Controller::notify_config_changed(int preset_type)
 
 void Controller::notify_project_opened()
 {
+    // MCP panel: a restore opens a checkpoint file and then puts the project's own name and path back; that is
+    // not a project being opened (no event, and the recorder keeps the project's timeline).
+    if (McpActions::restoring()) return;
     // MCP panel: the next history sync takes a path change for an open, not a save. Also while the API
     // is off, so a project opened then has its timeline back once the API is turned on.
     McpRecorder::note_project_opened();
@@ -611,7 +616,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -984,6 +989,94 @@ static size_t config_vector_size(const DynamicPrintConfig &cfg, const std::strin
                : static_cast<const ConfigOptionVectorBase *>(opt)->size();
 }
 
+// The project-scope epilogue of PUT /config: applies a staged copy of project_config and runs the follow-ups its
+// keys need. Also the MCP panel's Revert of a project key. GUI thread only.
+void Controller::apply_project_config(const DynamicPrintConfig &proj_new, const std::set<std::string> &proj_keys,
+                                      const std::vector<std::string> &colours_before)
+{
+    // Project scope has no Tab, so the preset path of PUT /config does not apply. There
+    // is no single "apply a project config change" helper in-tree either - every
+    // GUI writer hand-composes this epilogue (WipeTowerDialog::open_flushing_dialog,
+    // Sidebar::auto_calc_flushing_volumes, Plater::priv::on_select_bed_type,
+    // PlaterPresetComboBox::sync_colour_config). This mirrors them, once per
+    // request rather than once per key.
+    if (proj_keys.empty()) return;
+    auto   *bundle = wxGetApp().preset_bundle;
+    Plater *plater = wxGetApp().plater();
+    bundle->project_config.apply(proj_new);
+
+    const bool touched_flush = proj_keys.count("flush_volumes_matrix") ||
+                               proj_keys.count("flush_multiplier") ||
+                               proj_keys.count("flush_multiplier_fast");
+    const bool touched_tower = proj_keys.count("wipe_tower_x") || proj_keys.count("wipe_tower_y");
+
+    if (proj_keys.count("curr_bed_type")) {
+        // The bed type is cached in AppConfig as well, globally and per
+        // printer, and export_selections below reads the global copy back -
+        // so these have to run first. on_bed_type_change (not
+        // Sidebar::set_bed_type_accord_combox) because the latter fires
+        // wxEVT_COMBOBOX and would re-enter this same write path.
+        BedType    bt = bundle->project_config.opt_enum<BedType>("curr_bed_type");
+        AppConfig *ac = wxGetApp().app_config;
+        ac->set("curr_bed_type", std::to_string(int(bt)));
+        ac->set_printer_setting(bundle->printers.get_selected_preset_name(),
+                                "curr_bed_type", std::to_string(int(bt)));
+        plater->on_bed_type_change(bt);
+    }
+    if (touched_flush)
+        wxGetApp().sidebar().set_flushing_volume_warning(is_flush_config_modified());
+
+    if (proj_keys.count("filament_colour")) {
+        // Same follow-ups as the sidebar colour picker
+        // (PlaterPresetComboBox::sync_colour_config) choosing one colour, for
+        // each slot whose colour changed: the slot becomes a solid colour
+        // (filament_multi_colour = that colour, filament_colour_type "1"; a
+        // gradient left there would keep drawing the old colours), its badge is
+        // repainted (drawn from the config only on update()) and
+        // EVT_FILAMENT_COLOR_CHANGED is queued (flush recalculation).
+        const auto &colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values;
+        auto       *multi   = bundle->project_config.option<ConfigOptionStrings>("filament_multi_colour");
+        auto       *ctype   = bundle->project_config.option<ConfigOptionStrings>("filament_colour_type");
+        auto       &combos  = wxGetApp().sidebar().combos_filament();
+        for (size_t i = 0; i < colours.size(); ++i) {
+            if (i < colours_before.size() && colours_before[i] == colours[i])
+                continue;
+            if (multi != nullptr) {
+                if (i >= multi->values.size()) multi->values.resize(i + 1);
+                multi->values[i] = colours[i];
+            }
+            if (ctype != nullptr) {
+                if (i >= ctype->values.size()) ctype->values.resize(i + 1);
+                ctype->values[i] = "1";
+            }
+            if (i < combos.size())
+                combos[i]->update();
+            wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
+            evt->SetInt(int(i));
+            wxQueueEvent(plater, evt);
+        }
+    }
+
+    bundle->export_selections(*wxGetApp().app_config);
+    // Once per request: it re-arms the auto-backup exporter.
+    plater->update_project_dirty_from_presets();
+
+    // Flip the flag synchronously. on_config_change only arms a 500 ms
+    // one-shot timer, so a GET /status issued right after this 200 would
+    // otherwise still report the stale slice as valid.
+    plater->get_partplate_list().invalid_all_slice_result();
+
+    // Most project keys are outside Plater::priv::config's whitelist and so
+    // are ignored by the per-key loop, but the unconditional tail is what we
+    // want: schedule_background_process + title dirty + auto-reslice.
+    plater->on_config_change(bundle->full_config());
+
+    if (touched_flush || touched_tower) {
+        plater->get_view3D_canvas3D()->reload_scene(true);
+        plater->update();
+    }
+}
+
 Response Controller::handle_put_config(const std::string &body)
 {
     // May throw nlohmann::json::parse_error - caught by the dispatch route
@@ -1264,87 +1357,7 @@ Response Controller::handle_put_config(const std::string &body)
                 wxGetApp().plater()->on_config_change(t.cfg);
             }
 
-        // Project scope has no Tab, so the preset path above does not apply. There
-        // is no single "apply a project config change" helper in-tree either - every
-        // GUI writer hand-composes this epilogue (WipeTowerDialog::open_flushing_dialog,
-        // Sidebar::auto_calc_flushing_volumes, Plater::priv::on_select_bed_type,
-        // PlaterPresetComboBox::sync_colour_config). This mirrors them, once per
-        // request rather than once per key.
-        if (!proj_keys.empty()) {
-            Plater *plater = wxGetApp().plater();
-            bundle->project_config.apply(proj_new);
-
-            const bool touched_flush = proj_keys.count("flush_volumes_matrix") ||
-                                       proj_keys.count("flush_multiplier") ||
-                                       proj_keys.count("flush_multiplier_fast");
-            const bool touched_tower = proj_keys.count("wipe_tower_x") || proj_keys.count("wipe_tower_y");
-
-            if (proj_keys.count("curr_bed_type")) {
-                // The bed type is cached in AppConfig as well, globally and per
-                // printer, and export_selections below reads the global copy back -
-                // so these have to run first. on_bed_type_change (not
-                // Sidebar::set_bed_type_accord_combox) because the latter fires
-                // wxEVT_COMBOBOX and would re-enter this same write path.
-                BedType    bt = bundle->project_config.opt_enum<BedType>("curr_bed_type");
-                AppConfig *ac = wxGetApp().app_config;
-                ac->set("curr_bed_type", std::to_string(int(bt)));
-                ac->set_printer_setting(bundle->printers.get_selected_preset_name(),
-                                        "curr_bed_type", std::to_string(int(bt)));
-                plater->on_bed_type_change(bt);
-            }
-            if (touched_flush)
-                wxGetApp().sidebar().set_flushing_volume_warning(is_flush_config_modified());
-
-            if (proj_keys.count("filament_colour")) {
-                // Same follow-ups as the sidebar colour picker
-                // (PlaterPresetComboBox::sync_colour_config) choosing one colour, for
-                // each slot whose colour changed: the slot becomes a solid colour
-                // (filament_multi_colour = that colour, filament_colour_type "1"; a
-                // gradient left there would keep drawing the old colours), its badge is
-                // repainted (drawn from the config only on update()) and
-                // EVT_FILAMENT_COLOR_CHANGED is queued (flush recalculation).
-                const auto &colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour")->values;
-                auto       *multi   = bundle->project_config.option<ConfigOptionStrings>("filament_multi_colour");
-                auto       *ctype   = bundle->project_config.option<ConfigOptionStrings>("filament_colour_type");
-                auto       &combos  = wxGetApp().sidebar().combos_filament();
-                for (size_t i = 0; i < colours.size(); ++i) {
-                    if (i < colours_before.size() && colours_before[i] == colours[i])
-                        continue;
-                    if (multi != nullptr) {
-                        if (i >= multi->values.size()) multi->values.resize(i + 1);
-                        multi->values[i] = colours[i];
-                    }
-                    if (ctype != nullptr) {
-                        if (i >= ctype->values.size()) ctype->values.resize(i + 1);
-                        ctype->values[i] = "1";
-                    }
-                    if (i < combos.size())
-                        combos[i]->update();
-                    wxCommandEvent *evt = new wxCommandEvent(EVT_FILAMENT_COLOR_CHANGED);
-                    evt->SetInt(int(i));
-                    wxQueueEvent(plater, evt);
-                }
-            }
-
-            bundle->export_selections(*wxGetApp().app_config);
-            // Once per request: it re-arms the auto-backup exporter.
-            plater->update_project_dirty_from_presets();
-
-            // Flip the flag synchronously. on_config_change only arms a 500 ms
-            // one-shot timer, so a GET /status issued right after this 200 would
-            // otherwise still report the stale slice as valid.
-            plater->get_partplate_list().invalid_all_slice_result();
-
-            // Most project keys are outside Plater::priv::config's whitelist and so
-            // are ignored by the per-key loop, but the unconditional tail is what we
-            // want: schedule_background_process + title dirty + auto-reslice.
-            plater->on_config_change(bundle->full_config());
-
-            if (touched_flush || touched_tower) {
-                plater->get_view3D_canvas3D()->reload_scene(true);
-                plater->update();
-            }
-        }
+        apply_project_config(proj_new, proj_keys, colours_before);
 
         for (McpRow &row : mcp_rows) mcp_record(std::move(row));
 
@@ -1790,6 +1803,28 @@ Response Controller::handle_load_model(const std::string &body)
     return { 200, r };
 }
 
+// The filament preset of one slot, as the sidebar's per-filament combo switches it (Plater::priv::on_select_preset()
+// for a filament combo): touches only that slot, drops no unsaved edits. PUT /preset with a slot, and the MCP
+// panel's Switch back. GUI thread only; the caller has checked the slot and the preset.
+void Controller::select_filament_slot(size_t slot, const std::string &name)
+{
+    auto    *bundle  = wxGetApp().preset_bundle;
+    Plater  *plater  = wxGetApp().plater();
+    Sidebar &sidebar = plater->sidebar();
+    const bool was_support = is_support_filament(int(slot));
+    bundle->set_filament_preset(slot, name);
+    plater->update_project_dirty_from_presets();
+    bundle->export_selections(*wxGetApp().app_config);
+    sidebar.update_dynamic_filament_list();
+    // A switch between a support filament and a normal one changes the flush volumes.
+    if (was_support != is_support_filament(int(slot)) && wxGetApp().app_config->get("auto_calculate_flush") == "all")
+        sidebar.auto_calc_flushing_volumes(int(slot));
+    plater->on_filament_change(slot);
+    auto &combos = sidebar.combos_filament();
+    if (slot < combos.size())
+        combos[slot]->update();
+}
+
 // M4a: PUT /api/v1/preset  body {"type":"print|filament|printer","name":"..."}
 Response Controller::handle_select_preset(const std::string &body)
 {
@@ -1837,19 +1872,7 @@ Response Controller::handle_select_preset(const std::string &body)
             // MCP panel: a slot switched to the preset it already has changes nothing.
             const std::string before = bundle->filament_presets[slot];
             if (before != name) mcp_before_change();
-            // Same steps as Plater::priv::on_select_preset() for a filament combo.
-            const bool was_support = is_support_filament(int(slot));
-            bundle->set_filament_preset(slot, name);
-            plater->update_project_dirty_from_presets();
-            bundle->export_selections(*wxGetApp().app_config);
-            sidebar.update_dynamic_filament_list();
-            // A switch between a support filament and a normal one changes the flush volumes.
-            if (was_support != is_support_filament(int(slot)) && wxGetApp().app_config->get("auto_calculate_flush") == "all")
-                sidebar.auto_calc_flushing_volumes(int(slot));
-            plater->on_filament_change(slot);
-            auto &combos = sidebar.combos_filament();
-            if (slot < combos.size())
-                combos[slot]->update();
+            select_filament_slot(slot, name);
             if (before != name) {
                 McpRow row = mcp_row("preset", slot_label, name, before);
                 row.target = {{"type", "preset"}, {"preset_type", "filament"}, {"slot", slot}, {"before", before},
@@ -2280,6 +2303,37 @@ Response Controller::handle_get_preset_config(const std::string &body)
     return { 200, r };
 }
 
+// Why DELETE /preset (and the MCP panel's "Delete preset") will not delete a preset, or "" when it may go: never a
+// system or default preset, never the selected one, never one other presets inherit from (the GUI's rules).
+// type_s = print | filament | printer. GUI thread only.
+std::string Controller::preset_delete_refusal(const std::string &type_s, const std::string &name)
+{
+    PresetCollection *presets = api_preset_collection(type_s);
+    if (presets == nullptr) return "unknown_type";
+    const Preset *p = presets->find_preset(name, false);
+    if (p == nullptr) return "unknown_preset";
+    if (p->is_system || p->is_default) return "builtin_preset";
+    if (presets->get_selected_preset_name() == name) return "preset_selected";
+    for (const Preset &other : presets->get_presets())
+        if (other.name != name && other.inherits() == name) return "has_children";
+    return {};
+}
+
+// Removes a user preset (file + list entry) and refreshes the tab and the sidebar combo. Check
+// preset_delete_refusal first. GUI thread only.
+bool Controller::delete_user_preset(const std::string &type_s, const std::string &name)
+{
+    PresetCollection *presets = api_preset_collection(type_s);
+    if (presets == nullptr || !presets->delete_preset(name)) return false;
+    const Preset::Type type = type_s == "print" ? Preset::TYPE_PRINT :
+                              type_s == "filament" ? Preset::TYPE_FILAMENT : Preset::TYPE_PRINTER;
+    // Refresh the tab's preset list + the plater sidebar combo.
+    if (Tab *tab = wxGetApp().get_tab(type); tab != nullptr)
+        tab->update_tab_ui();
+    wxGetApp().plater()->sidebar().update_presets(type);
+    return true;
+}
+
 // DELETE /api/v1/preset  body {"type","name"} -> remove a USER preset (file + list entry).
 // Guards: never system/default, never the selected preset (select another first),
 // never a base preset that other presets inherit from (same rule as the GUI).
@@ -2303,24 +2357,15 @@ Response Controller::handle_delete_preset(const std::string &body)
             if (e["detail"].is_string() && e["detail"].get<std::string>() == name) e.erase("detail");
             return e;
         };
-        PresetCollection *presets = api_preset_collection(type_s);
-        const Preset *p = presets->find_preset(name, false);
-        if (p == nullptr) return refuse({{"error", "unknown_preset"}});
-        if (p->is_system || p->is_default) return refuse({{"error", "builtin_preset"}});
-        if (presets->get_selected_preset_name() == name)
-            return refuse({{"error", "preset_selected"},
-                           {"detail", "select another preset first, then delete"}});
-        for (const Preset &other : presets->get_presets())
-            if (other.name != name && other.inherits() == name)
-                return refuse({{"error", "has_children"},
-                               {"detail", "other presets inherit from this one"}});
+        const std::string why = preset_delete_refusal(type_s, name);
+        if (why == "preset_selected")
+            return refuse({{"error", why}, {"detail", "select another preset first, then delete"}});
+        if (why == "has_children")
+            return refuse({{"error", why}, {"detail", "other presets inherit from this one"}});
+        if (!why.empty()) return refuse({{"error", why}});
         mcp_before_change();
-        if (!presets->delete_preset(name))
+        if (!delete_user_preset(type_s, name))
             return refuse({{"error", "delete_failed"}});
-        // Refresh the tab's preset list + the plater sidebar combo.
-        if (Tab *tab = wxGetApp().get_tab(type); tab != nullptr)
-            tab->update_tab_ui();
-        wxGetApp().plater()->sidebar().update_presets(type);
         api_notify("Deleted " + type_s + " preset '" + name + "'");
         McpRow row = mcp_row("preset", "Deleted preset", name, std::string(),
                              std::string(type == Preset::TYPE_PRINT ? "Print" : type == Preset::TYPE_FILAMENT ? "Filament" : "Printer") +
@@ -3682,6 +3727,134 @@ Response Controller::handle_save_project(const std::string &body)
     return { 200, r };
 }
 
+// POST /project/open's work once the request is read, shared with the MCP panel's Restore: checks (file, slicing,
+// loading), the sensitive-key check when policy_check, then before_load (the unsaved-changes prompt and the
+// recorder; it may add to the reply or return an error), then OrcaSlicer's own open with its prompts answered and,
+// with keep_presets, the earlier presets selected back. Returns the reply's fields, or {"error", ...}. Records
+// nothing in the MCP panel. GUI thread only.
+nlohmann::json Controller::open_project_from(Plater *plater, const std::string &path, bool keep_presets, bool policy_check,
+                                             const std::function<nlohmann::json(nlohmann::json &)> &before_load)
+{
+    auto *bundle = wxGetApp().preset_bundle;
+    const wxString wpath = from_u8(path);
+    boost::system::error_code ec;
+    // file_not_found, not not_found: the MCP client reads a bare not_found as "route missing".
+    if (!boost::filesystem::is_regular_file(into_path(wpath), ec)) {
+        // File > Recent would offer to drop a missing entry; say so instead.
+        nlohmann::json e = {{"error", "file_not_found"}, {"path", path}};
+        if (!recent_entries_for(into_path(wpath)).empty())
+            e["detail"] = "the file is in the recent list but no longer on disk; DELETE /project/recent forgets it";
+        return e;
+    }
+    if (plater->is_background_process_slicing()) return {{"error", "slicing"}};
+    if (plater->is_loading_project()) return {{"error", "busy"}};
+
+    // Before anything changes: the project must not bring script, G-code or
+    // connection settings of its own unless the user allows those edits.
+    if (policy_check && !sensitive_writes_allowed()) {
+        std::set<std::string> keys;
+        try {
+            keys = project_sensitive_changes(path, !keep_presets, keep_presets ? bundle->filament_presets.size() : 0);
+        } catch (const std::exception &ex) {
+            return {{"error", "load_failed"}, {"path", path}, {"detail", ex.what()}};
+        }
+        if (!keys.empty())
+            return {{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"keys", keys},
+                    {"detail", "the project brings its own script, G-code or connection settings; open it in "
+                               "OrcaSlicer, or tick Preferences > Remote API > Allow script, G-code and "
+                               "connection edits"}};
+    }
+
+    nlohmann::json out = nlohmann::json::object();
+    if (before_load) {
+        nlohmann::json e = before_load(out);
+        if (e.is_object() && e.contains("error")) return e;
+    }
+
+    // What the open will replace. With presets: keep_current these are
+    // selected again once the project is in.
+    const std::string              printer_before   = bundle->printers.get_selected_preset_name();
+    const std::string              print_before     = bundle->prints.get_selected_preset_name();
+    const std::vector<std::string> filaments_before = bundle->filament_presets;
+
+    // Edits that are not saved to a preset would open an UnsavedChangesDialog
+    // in Plater::load_project's check. The project's config replaces them in
+    // any case (it is loaded over the presets it names), so drop them first
+    // and report that we did.
+    out["discarded_changes"] = discard_preset_edits();
+
+    // Plater::load_project asks "save changes?" through close_with_confirm,
+    // which honours the remembered answer in app config; a project whose
+    // presets carry custom G-code asks for confirmation unless that warning is
+    // off; and with a printer connected, load_files offers to sync its preset
+    // unless the choice is remembered. All three are set for the duration of
+    // the call and put back.
+    {
+        AppConfigOverride save_choice("save_project_choise", "no");
+        AppConfigOverride gcode_warn("no_warn_when_modified_gcodes", "true");
+        AppConfigOverride printer_sync("sync_after_load_file_show_flag", "false");
+        plater->load_project(wpath, "<loadall>"); // "<loadall>": open as a project, no import-type dialog
+    }
+
+    // load_project returns nothing; a file it could not read leaves the
+    // project name alone.
+    const boost::filesystem::path now = into_path(plater->get_project_filename(".3mf"));
+    const bool opened = !now.empty() && boost::filesystem::exists(now, ec) &&
+                        boost::filesystem::equivalent(now, into_path(wpath), ec);
+    if (!opened)
+        return {{"error", "load_failed"}, {"path", path},
+                {"detail", "OrcaSlicer could not open it as a project; a .3mf with no objects "
+                           "in it is not opened either"}};
+
+    if (keep_presets) {
+        // The project's config sits as edits over the presets it selected;
+        // drop those (and reload the tabs, which still show them) and select
+        // the earlier presets back, printer first so the print and filament
+        // choices are judged against it. The pre-discard is what keeps
+        // Tab::select_preset from asking about unsaved edits.
+        if (!discard_preset_edits().empty())
+            wxGetApp().load_current_presets(false, false);
+        nlohmann::json restored = nlohmann::json::array();
+        auto reselect = [&restored](Preset::Type type, PresetCollection &c, const std::string &name, const char *group) {
+            if (name.empty() || c.get_selected_preset_name() == name) return;
+            if (c.find_preset(name, false, true) == nullptr) return; // gone since; keep the project's
+            Tab *tab = wxGetApp().get_tab(type);
+            if (tab != nullptr && tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true))
+                restored.push_back(group);
+        };
+        reselect(Preset::TYPE_PRINTER, bundle->printers, printer_before, "printer");
+        reselect(Preset::TYPE_PRINT,   bundle->prints,   print_before,   "print");
+        bool filaments_changed = false;
+        for (size_t i = 0; i < filaments_before.size() && i < bundle->filament_presets.size(); ++i) {
+            if (bundle->filament_presets[i] == filaments_before[i]) continue;
+            if (bundle->filaments.find_preset(filaments_before[i], false, true) == nullptr) continue;
+            bundle->set_filament_preset(i, filaments_before[i]);
+            filaments_changed = true;
+        }
+        if (filaments_changed) {
+            restored.push_back("filament");
+            plater->sidebar().update_all_preset_comboboxes();
+            plater->sidebar().update_dynamic_filament_list();
+        }
+        // Unconditional: the discard alone changes what the plater slices with.
+        bundle->export_selections(*wxGetApp().app_config);
+        plater->update_project_dirty_from_presets();
+        plater->get_partplate_list().invalid_all_slice_result();
+        plater->on_config_change(bundle->full_config());
+        out["presets_restored"] = restored;
+    }
+
+    if (g_controller != nullptr) g_controller->sync_slice_state_to_current_plate("slice.plate_changed");
+    out["opened"]  = project_path_utf8(plater);
+    out["project"] = project_json(plater);
+    out["plates"]  = plater->get_partplate_list().get_plate_count();
+    out["objects"] = (unsigned) plater->model().objects.size();
+    out["presets"] = {{"printer", bundle->printers.get_selected_preset_name()},
+                      {"print", bundle->prints.get_selected_preset_name()},
+                      {"filaments", bundle->filament_presets}};
+    return out;
+}
+
 // POST /project/open  body {"path": "<orca-host path>.3mf" | "recent": <index>,
 //                           "if_unsaved": "save" | "discard" | "fail" (default fail),
 //                           "presets": "project" | "keep_current" (default project)}
@@ -3727,130 +3900,26 @@ Response Controller::handle_open_project(const std::string &body)
                        {"detail", "open takes a .3mf project; POST /model imports geometry"}} };
 
     // 120 s like POST /model: a large project takes a while to read and render.
-    nlohmann::json r = run_on_ui([this, path, if_unsaved, presets]() -> nlohmann::json {
+    nlohmann::json r = run_on_ui([path, if_unsaved, presets]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
-        auto   *bundle = wxGetApp().preset_bundle;
-        const wxString wpath = from_u8(path);
-        boost::system::error_code ec;
-        auto refuse = [&path](nlohmann::json e) -> nlohmann::json {
-            mcp_refused_reply("Open project " + mcp_file_name(path), e, "POST /project/open");
-            return e;
-        };
-        // file_not_found, not not_found: the MCP client reads a bare not_found as "route missing".
-        if (!boost::filesystem::is_regular_file(into_path(wpath), ec)) {
-            // File > Recent would offer to drop a missing entry; say so instead.
-            nlohmann::json e = {{"error", "file_not_found"}, {"path", path}};
-            if (!recent_entries_for(into_path(wpath)).empty())
-                e["detail"] = "the file is in the recent list but no longer on disk; DELETE /project/recent forgets it";
-            return refuse(e);
+        nlohmann::json out = open_project_from(plater, path, presets == "keep_current", /*policy_check=*/true,
+            [plater, if_unsaved](nlohmann::json &o) -> nlohmann::json {
+                const std::string err = answer_unsaved_prompt(plater, if_unsaved, o);
+                if (!err.empty()) {
+                    nlohmann::json e = {{"error", err}, {"project", project_json(plater)}, {"modified", dirty_preset_groups()}};
+                    if (err == "unsaved_changes")
+                        e["detail"] = "pass if_unsaved: \"save\" or \"discard\"";
+                    return e;
+                }
+                // MCP panel: the outgoing project's group (and checkpoint) before anything is replaced; the row
+                // is recorded after the load, into the opened project's history.
+                mcp_before_change();
+                return nullptr;
+            });
+        if (out.contains("error")) {
+            mcp_refused_reply("Open project " + mcp_file_name(path), out, "POST /project/open");
+            return out;
         }
-        if (plater->is_background_process_slicing()) return refuse({{"error", "slicing"}});
-        if (plater->is_loading_project()) return refuse({{"error", "busy"}});
-
-        // Before anything changes: the project must not bring script, G-code or
-        // connection settings of its own unless the user allows those edits.
-        if (!sensitive_writes_allowed()) {
-            const bool keep_current = presets == "keep_current";
-            std::set<std::string> keys;
-            try {
-                keys = project_sensitive_changes(path, !keep_current, keep_current ? bundle->filament_presets.size() : 0);
-            } catch (const std::exception &ex) {
-                return refuse({{"error", "load_failed"}, {"path", path}, {"detail", ex.what()}});
-            }
-            if (!keys.empty())
-                return refuse({{"error", "blocked_by_remote_api_policy"}, {"path", path}, {"keys", keys},
-                               {"detail", "the project brings its own script, G-code or connection settings; open it in "
-                                          "OrcaSlicer, or tick Preferences > Remote API > Allow script, G-code and "
-                                          "connection edits"}});
-        }
-
-        nlohmann::json out = nlohmann::json::object();
-        const std::string err = answer_unsaved_prompt(plater, if_unsaved, out);
-        if (!err.empty()) {
-            nlohmann::json e = {{"error", err}, {"project", project_json(plater)}, {"modified", dirty_preset_groups()}};
-            if (err == "unsaved_changes")
-                e["detail"] = "pass if_unsaved: \"save\" or \"discard\"";
-            return refuse(e);
-        }
-
-        // MCP panel: the outgoing project's group (and checkpoint) before anything is replaced; the row is
-        // recorded after the load, into the opened project's history.
-        mcp_before_change();
-
-        // What the open will replace. With presets: keep_current these are
-        // selected again once the project is in.
-        const std::string              printer_before   = bundle->printers.get_selected_preset_name();
-        const std::string              print_before     = bundle->prints.get_selected_preset_name();
-        const std::vector<std::string> filaments_before = bundle->filament_presets;
-
-        // Edits that are not saved to a preset would open an UnsavedChangesDialog
-        // in Plater::load_project's check. The project's config replaces them in
-        // any case (it is loaded over the presets it names), so drop them first
-        // and report that we did.
-        out["discarded_changes"] = discard_preset_edits();
-
-        // Plater::load_project asks "save changes?" through close_with_confirm,
-        // which honours the remembered answer in app config; a project whose
-        // presets carry custom G-code asks for confirmation unless that warning is
-        // off; and with a printer connected, load_files offers to sync its preset
-        // unless the choice is remembered. All three are set for the duration of
-        // the call and put back.
-        {
-            AppConfigOverride save_choice("save_project_choise", "no");
-            AppConfigOverride gcode_warn("no_warn_when_modified_gcodes", "true");
-            AppConfigOverride printer_sync("sync_after_load_file_show_flag", "false");
-            plater->load_project(wpath, "<loadall>"); // "<loadall>": open as a project, no import-type dialog
-        }
-
-        // load_project returns nothing; a file it could not read leaves the
-        // project name alone.
-        const boost::filesystem::path now = into_path(plater->get_project_filename(".3mf"));
-        const bool opened = !now.empty() && boost::filesystem::exists(now, ec) &&
-                            boost::filesystem::equivalent(now, into_path(wpath), ec);
-        if (!opened)
-            return refuse({{"error", "load_failed"}, {"path", path},
-                           {"detail", "OrcaSlicer could not open it as a project; a .3mf with no objects "
-                                      "in it is not opened either"}});
-
-        if (presets == "keep_current") {
-            // The project's config sits as edits over the presets it selected;
-            // drop those (and reload the tabs, which still show them) and select
-            // the earlier presets back, printer first so the print and filament
-            // choices are judged against it. The pre-discard is what keeps
-            // Tab::select_preset from asking about unsaved edits.
-            if (!discard_preset_edits().empty())
-                wxGetApp().load_current_presets(false, false);
-            nlohmann::json restored = nlohmann::json::array();
-            auto reselect = [&restored](Preset::Type type, PresetCollection &c, const std::string &name, const char *group) {
-                if (name.empty() || c.get_selected_preset_name() == name) return;
-                if (c.find_preset(name, false, true) == nullptr) return; // gone since; keep the project's
-                Tab *tab = wxGetApp().get_tab(type);
-                if (tab != nullptr && tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true))
-                    restored.push_back(group);
-            };
-            reselect(Preset::TYPE_PRINTER, bundle->printers, printer_before, "printer");
-            reselect(Preset::TYPE_PRINT,   bundle->prints,   print_before,   "print");
-            bool filaments_changed = false;
-            for (size_t i = 0; i < filaments_before.size() && i < bundle->filament_presets.size(); ++i) {
-                if (bundle->filament_presets[i] == filaments_before[i]) continue;
-                if (bundle->filaments.find_preset(filaments_before[i], false, true) == nullptr) continue;
-                bundle->set_filament_preset(i, filaments_before[i]);
-                filaments_changed = true;
-            }
-            if (filaments_changed) {
-                restored.push_back("filament");
-                plater->sidebar().update_all_preset_comboboxes();
-                plater->sidebar().update_dynamic_filament_list();
-            }
-            // Unconditional: the discard alone changes what the plater slices with.
-            bundle->export_selections(*wxGetApp().app_config);
-            plater->update_project_dirty_from_presets();
-            plater->get_partplate_list().invalid_all_slice_result();
-            plater->on_config_change(bundle->full_config());
-            out["presets_restored"] = restored;
-        }
-
-        sync_slice_state_to_current_plate("slice.plate_changed");
         {
             const std::string opened_path = project_path_utf8(plater);
             McpRow row = mcp_row("file", "Opened project", mcp_file_name(opened_path), std::string(), opened_path);
@@ -3858,13 +3927,6 @@ Response Controller::handle_open_project(const std::string &body)
             row.target     = {{"type", "project_opened"}, {"path", opened_path}};
             mcp_record(std::move(row)); // syncs to the opened project's history first
         }
-        out["opened"]  = project_path_utf8(plater);
-        out["project"] = project_json(plater);
-        out["plates"]  = plater->get_partplate_list().get_plate_count();
-        out["objects"] = (unsigned) plater->model().objects.size();
-        out["presets"] = {{"printer", bundle->printers.get_selected_preset_name()},
-                          {"print", bundle->prints.get_selected_preset_name()},
-                          {"filaments", bundle->filament_presets}};
         return out;
     }, /*timeout_s=*/120);
     const std::string fn = path_to_utf8(path_from_utf8(path).filename());
@@ -4533,6 +4595,172 @@ Response Controller::handle_put_slot_mapping(const std::string &body)
     return { 200, r };
 }
 
+// --- MCP panel: helpers for McpActions, the activity route and its test hooks -----------------------------------
+
+void Controller::forget_recent(const std::string &path_utf8)
+{
+    if (path_utf8.empty()) return;
+    forget_recent_entries(recent_entries_for(path_from_utf8(path_utf8)));
+}
+
+void Controller::slice_state_follows_plate()
+{
+    if (g_controller != nullptr) g_controller->sync_slice_state_to_current_plate("slice.plate_changed");
+}
+
+std::string Controller::move_project_file_back(const std::string &moved_from, const std::string &moved_to)
+{
+    Plater *plater = wxGetApp().plater();
+    const boost::filesystem::path src = path_from_utf8(moved_to);
+    const boost::filesystem::path dst = path_from_utf8(moved_from);
+    boost::system::error_code ec;
+    if (!boost::filesystem::is_regular_file(src, ec)) return "file_not_found";
+    if (!dst.parent_path().empty() && !boost::filesystem::is_directory(dst.parent_path(), ec)) return "directory_not_found";
+    if (boost::filesystem::exists(dst, ec)) {
+        // Only onto a free name; a case-only rename back names the same file and is fine.
+        if (!boost::filesystem::equivalent(src, dst, ec)) return "exists";
+        if (src.filename() == dst.filename()) return "same_path";
+    }
+    const bool                     was_open     = is_open_project_file(plater, src);
+    const std::vector<std::string> recent       = recent_entries_for(src);
+    const std::string              history_from = was_open ? project_path_utf8(plater) : moved_to;
+    boost::filesystem::rename(src, dst, ec);
+    if (ec) {
+        boost::system::error_code cec;
+        boost::filesystem::copy_file(src, dst, cec); // fails if the name is taken meanwhile
+        if (cec) return "move_failed";
+        boost::filesystem::remove(src, cec);
+        if (cec) return "move_failed";
+    }
+    forget_recent_entries(recent);
+    if (was_open) {
+        plater->set_project_filename(from_path(dst));
+        plater->update_title_dirty_status();
+    } else if (!recent.empty()) {
+        wxGetApp().mainframe->add_to_recent_projects(from_path(dst));
+    }
+    try {
+        McpRecorder::get().project_moved(history_from, was_open ? project_path_utf8(plater) : path_to_utf8(dst));
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: history not moved: " << e.what();
+    }
+    return {};
+}
+
+bool Controller::slot_mapping_label(int filament, std::string &label)
+{
+    const CanvasState &state = CanvasState::get();
+    if (!state.last_info.has_value()) return false;
+    const nlohmann::json j = canvas_mapping_json(*state.last_info);
+    for (const nlohmann::json &row : j["filaments"]) {
+        if (row["index"].get<int>() != filament) continue;
+        const nlohmann::json &t = row["tray"];
+        if (!t.is_object()) label = "none";
+        else if (t.contains("label") && t["label"].is_string()) label = t["label"].get<std::string>();
+        else label = std::to_string(t["canvas_id"].get<int>()) + "/" + std::to_string(t["tray_id"].get<int>());
+        return true;
+    }
+    return false;
+}
+
+std::string Controller::revert_slot_mapping(const nlohmann::json &target)
+{
+    CanvasState &state = CanvasState::get();
+    // The API mapping belongs to one project (and filament count); another one has none of ours to change.
+    if (state.project_key != elegoo_canvas_project_key()) return "project_changed";
+    const int filament = target.value("filament", -1);
+    if (filament < 0) return "bad_target";
+    auto &m = state.api_mapping;
+    m.erase(std::remove_if(m.begin(), m.end(), [filament](const ElegooCanvas::Mapping &x) { return x.index == filament; }),
+            m.end());
+    const nlohmann::json bt = target.value("before_tray", nlohmann::json());
+    if (bt.is_object()) {
+        // The tray it printed from before, now as an explicit choice (the send dialog shows it pre-filled).
+        ElegooCanvas::Mapping back;
+        back.index  = filament;
+        back.tray   = std::make_pair(bt.value("canvas_id", 0), bt.value("tray_id", 0));
+        back.source = ElegooCanvas::MatchSource::Api;
+        m.push_back(std::move(back));
+        std::sort(m.begin(), m.end(), [](const ElegooCanvas::Mapping &a, const ElegooCanvas::Mapping &b) { return a.index < b.index; });
+    }
+    return {};
+}
+
+// The test hooks of the MCP panel exist only when OrcaSlicer was started with ORCA_MCP_PANEL_TEST=1.
+static bool mcp_panel_test_routes()
+{
+    static const bool on = [] {
+        const char *v = std::getenv("ORCA_MCP_PANEL_TEST");
+        return v != nullptr && std::string(v) == "1";
+    }();
+    return on;
+}
+
+// Result of the last restore started with {"async": true} (GUI thread only).
+static nlohmann::json s_mcp_async_result = nullptr;
+
+// POST /api/v1/activity/test/<name>: each answers what the panel would get, {"status", "reason"?}.
+Response Controller::handle_activity_test(const std::string &name, const std::string &body)
+{
+    nlohmann::json in = body.empty() ? nlohmann::json::object() : nlohmann::json::parse(body);
+    if (!in.is_object()) return { 400, {{"error", "body_must_be_object"}} };
+    if (name == "clock") {
+        if (!in.contains("advance_s") || !in["advance_s"].is_number_integer())
+            return { 400, {{"error", "advance_s_must_be_integer"}} };
+        McpRecorder::test_set_clock_offset(McpRecorder::test_clock_offset() + in["advance_s"].get<int64_t>());
+        return { 200, {{"status", "ok"}, {"offset_s", McpRecorder::test_clock_offset()}} };
+    }
+    if (name == "checkpoint_delay") {
+        if (!in.contains("seconds") || !in["seconds"].is_number_integer() || in["seconds"].get<int>() < 0)
+            return { 400, {{"error", "seconds_must_be_integer"}} };
+        McpRecorder::test_set_checkpoint_delay(in["seconds"].get<int>());
+        return { 200, {{"status", "ok"}} };
+    }
+    if (name == "undo") {
+        if (!in.contains("row") || !in["row"].is_number_integer()) return { 400, {{"error", "row_must_be_integer"}} };
+        const int row = in["row"].get<int>();
+        return { 200, run_on_ui([row]() -> nlohmann::json {
+                     McpActions::TestCallScope scope;
+                     return McpActions::undo(row);
+                 }, /*timeout_s=*/120) };
+    }
+    if (name == "restore") {
+        if (!in.contains("group") || !in["group"].is_number_integer()) return { 400, {{"error", "group_must_be_integer"}} };
+        const int group = in["group"].get<int>();
+        if (in.value("async", false)) {
+            // As the panel does it: on the GUI thread, outside any API task, while this io thread is free to
+            // answer other requests (409 busy while the restore runs). The result: POST .../test/result.
+            run_on_ui([]() -> nlohmann::json { s_mcp_async_result = nullptr; return nullptr; });
+            wxGetApp().CallAfter([group] { s_mcp_async_result = McpActions::restore(group); });
+            return { 202, {{"status", "started"}} };
+        }
+        return { 200, run_on_ui([group]() -> nlohmann::json {
+                     McpActions::TestCallScope scope;
+                     return McpActions::restore(group);
+                 }, /*timeout_s=*/120) };
+    }
+    if (name == "undo_restore") {
+        return { 200, run_on_ui([]() -> nlohmann::json {
+                     McpActions::TestCallScope scope;
+                     return McpActions::undo_restore();
+                 }, /*timeout_s=*/120) };
+    }
+    if (name == "result") {
+        return { 200, run_on_ui([]() -> nlohmann::json {
+                     return s_mcp_async_result.is_null() ? nlohmann::json{{"status", "pending"}} : s_mcp_async_result;
+                 }) };
+    }
+    if (name == "as_user") {
+        if (!in.contains("changes") || !in["changes"].is_object()) return { 400, {{"error", "changes_must_be_object"}} };
+        nlohmann::json changes = in["changes"];
+        return { 200, run_on_ui([changes]() -> nlohmann::json {
+                     McpActions::TestCallScope scope;
+                     return McpActions::apply_as_user(changes);
+                 }, /*timeout_s=*/120) };
+    }
+    return { 404, {{"error", "not_found"}} };
+}
+
 Response Controller::dispatch(const Request &req)
 {
     try {
@@ -4544,7 +4772,24 @@ Response Controller::dispatch(const Request &req)
             size_t n = std::char_traits<char>::length(path);
             return t.compare(0, n, path) == 0 && (t.size() == n || t[n] == '?');
         };
+        // MCP panel: a restore replaces the whole project; nothing the API does may run in between.
+        if (McpActions::restoring())
+            return { 409, {{"error", "busy"}, {"detail", "the user is restoring"}} };
         if (is("GET", "/api/v1/status"))        return handle_status();
+        // The MCP panel's timeline, in the shape the panel gets (read-only: records nothing).
+        if (is("GET", "/api/v1/activity"))
+            return { 200, run_on_ui([]() -> nlohmann::json { return McpActions::activity(); }) };
+        {
+            static const std::string tpfx = "/api/v1/activity/test/";
+            if (req.method == "POST" && t.compare(0, tpfx.size(), tpfx) == 0) {
+                if (!mcp_panel_test_routes()) return { 404, {{"error", "not_found"}} };
+                try {
+                    return handle_activity_test(t.substr(0, t.find('?')).substr(tpfx.size()), req.body);
+                } catch (const nlohmann::json::parse_error &) {
+                    return { 400, {{"error", "invalid_json"}} };
+                }
+            }
+        }
         if (is("GET", "/api/v1/config"))        return handle_get_config(t);
         if (is("PUT", "/api/v1/config")) {
             try {

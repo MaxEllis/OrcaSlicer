@@ -481,13 +481,35 @@ std::string McpRecorder::write_checkpoint(const std::string &stem)
 void McpRecorder::take_checkpoint(int point)
 {
     if (!m_loaded) return;
+    // A panel restore already gave this point its end state (the pre-restore snapshot); the state now is the
+    // restored one, which belongs to the point restored to, not to this one.
+    if (!m_history.checkpoint_of(point).empty()) return;
     const std::string name = write_checkpoint("cp-" + std::to_string(point));
     m_history.set_checkpoint(point, name, name.empty());
+    prune();
+}
+
+void McpRecorder::prune()
+{
     const fs::path dir = history_root() / m_key;
     for (const std::string &gone : m_history.prune_checkpoints()) {
         boost::system::error_code rec;
         fs::remove(dir / gone, rec);
     }
+}
+
+void McpRecorder::set_point_checkpoint(int point, const std::string &file)
+{
+    if (!m_loaded || file.empty()) return;
+    m_history.set_checkpoint(point, file, false);
+    prune();
+}
+
+void McpRecorder::close_group()
+{
+    m_history.close_group();
+    m_open           = false;
+    m_deferred_point = -1;
 }
 
 void McpRecorder::before_change() { open_change(true); }

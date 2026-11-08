@@ -76,6 +76,7 @@ Base URL: `http://<host>:13130/api/v1`
 | GET | `/project/browse?dir=` | The `.3mf` files in a folder, newest first |
 | POST | `/project/move` | Move or rename a project file (`{"from", "to", "overwrite"}`); the window follows for the open project |
 | DELETE | `/project/file` | Delete a project file from disk (never the open project's) |
+| GET | `/activity` | The MCP panel's timeline of this project: the API's changes, what was undone, restore points |
 
 ### GET /status
 
@@ -246,6 +247,8 @@ Each message is a JSON object with an `event` field:
 | `slice.plate_changed` | the current plate's state after a plate route: `done` + `stats`, or `idle` + `message` |
 | `config.changed` | `tabs:[print\|filament\|printer\|sla_print\|sla_material\|other]` |
 | `project.opened` | `project:"<filename>"` |
+| `panel.reverted` | `group,row`: the user undid that row in the MCP panel |
+| `panel.restored` | `group`: the user restored the project to that point in the MCP panel (`group:null,undone:true` when they undid the restore) |
 
 > `slice.*` events carry `stats` (on done) but not the slice `warnings` array —
 > call `GET /slice/status` for warnings.
@@ -544,6 +547,61 @@ Removes a `.3mf` from disk, permanently, and from File > Recent. The open projec
 own file is refused with `409 project_is_open`: start a new project or open another
 first. Needs the file changes box. Errors: `404 file_not_found`,
 `400 not_3mf | missing_path`, `422 delete_failed | blocked_by_remote_api_policy`.
+
+## MCP panel activity
+
+The OrcaSlicer MCP panel (a dock pane) lists every change the API made, grouped into bursts, with an undo per
+row and a restore point per group. Undos and restores there are the user's own actions: they are not refused by
+the two Preferences boxes. The API side of it:
+
+### GET /activity
+
+```bash
+curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/activity
+```
+```json
+{
+  "rows": [
+    {"id": 1, "group": 1, "ts": 1762680660, "time": "10:31", "kind": "setting",
+     "label": "Wall loops", "value": "3", "before": "2", "where": "0.20mm Standard @Printer (unsaved)",
+     "undo": {"verb": "Revert", "tip": "Set Wall loops back to 2"}, "undone_at": "",
+     "title_hint": null, "result": null, "error": "", "on_disk": false},
+    {"id": 2, "group": 1, "ts": 1762680702, "time": "10:31", "kind": "slice",
+     "label": "Sliced", "value": "1h 48m · 41.2 g", "before": "", "where": "plate 1",
+     "undo": null, "undone_at": "", "title_hint": null,
+     "result": {"seconds": 6480, "grams": 41.2}, "error": "", "on_disk": false}
+  ],
+  "groups": [
+    {"id": 0, "ts": 1762680660, "time": "10:31", "restore": {"available": true, "why": ""}},
+    {"id": 1, "ts": 1762680660, "time": "10:31", "restore": null}
+  ],
+  "restored_to": null,
+  "can_undo_restore": false
+}
+```
+The same shape the panel shows. `kind` is `setting`, `preset`, `model`, `plate`, `slice`, `file` or `refused`.
+`before` is the previous value in the same form as `value`; `undone_at` is the time (HH:MM) the user undid the
+row in the panel (or the time of a restore that undid its group), else `""`. `error` is `""` or the text of a
+refusal or failure. `on_disk` marks changes written to disk (saved or moved projects, saved or deleted presets),
+which a restore does not undo. Group `0` is the point before the assistant's first change; a group's `restore`
+is `null` for the newest group, `{"available": true}` when its end state can be restored, or `available: false`
+with the reason. `restored_to` is the group the user last restored to (until the next API change), and
+`can_undo_restore` whether the panel still offers to undo that restore. Reading it changes nothing.
+
+While the user restores the project in the panel, every API request gets
+`409 {"error": "busy", "detail": "the user is restoring"}`; retry after a moment.
+
+The timeline is kept per project file in `<data dir>/mcp_history/`, with up to 20 restore points.
+
+### Test hooks
+
+Only when OrcaSlicer was started with the environment variable `ORCA_MCP_PANEL_TEST=1` (otherwise `404`):
+`POST /activity/test/undo {"row"}`, `/restore {"group", "async"?}`, `/undo_restore {}` run the panel's actions
+and answer what the panel gets, `{"status": "ok" | "cancelled" | "failed", "reason"?}` (`async: true` starts
+the restore as the panel does, outside any request, answers `202 {"status":"started"}`, and
+`/result {}` returns its result later); `/clock {"advance_s"}` moves the panel's clock forward;
+`/checkpoint_delay {"seconds"}` slows every restore-point save; `/as_user {"changes": {key: value}}` edits the
+print, filament or printer settings as the user would by hand (no row, no policy check).
 
 ## Notes & limits
 

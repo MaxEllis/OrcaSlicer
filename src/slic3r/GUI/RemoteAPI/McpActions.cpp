@@ -1,0 +1,1092 @@
+#include "McpActions.hpp"
+#include "McpRecorder.hpp"
+#include "RemoteAPIController.hpp" // the shared apply paths, the F8 gate, open_project_from
+#include "RemoteAPIServer.hpp"     // broadcast
+
+#include "libslic3r/Geometry.hpp"
+#include "libslic3r/Model.hpp"
+#include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
+#include "libslic3r/PrintConfig.hpp"
+#include "libslic3r/Slicing.hpp" // t_layer_height_range
+#include "libslic3r/Utils.hpp"   // ScopeGuard
+#include "slic3r/GUI/GUI.hpp"    // from_u8 / into_path
+#include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/GUI_ObjectList.hpp"
+#include "slic3r/GUI/I18N.hpp"
+#include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/Tab.hpp"
+
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/filesystem.hpp>
+#include <boost/log/trivial.hpp>
+#include <boost/nowide/fstream.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <exception>
+#include <map>
+#include <optional>
+#include <regex>
+#include <set>
+#include <utility>
+#include <vector>
+
+namespace Slic3r { namespace GUI { namespace RemoteAPI {
+
+namespace fs = boost::filesystem;
+using nlohmann::json;
+
+std::atomic<bool> McpActions::s_restoring{false};
+
+namespace {
+
+int                             s_test_depth = 0; // TestCallScope nesting
+McpActions::PanelActionListener s_listener;
+
+// The last restore of the open project: the "Restored to" line and its Undo. In memory only (a restart forgets
+// it, like the stashed copies behind "Put back").
+struct RestoreState
+{
+    std::string                key;              // McpRecorder::history_dir() of the project it belongs to
+    int                        restored_to = -1; // -1: none
+    size_t                     groups_at   = 0;  // history groups right after it; a new group ends it
+    std::string                snapshot;         // pre-restore checkpoint file name ("" = no Undo)
+    std::map<int, std::string> marks_before;     // row id -> undone_at before the restore
+    std::set<int>              marked_before;    // s_marked before the restore
+    int                        prev_restored_to = -1;
+};
+RestoreState  s_restore;
+// Rows a restore marked undone, so a later restore to a later point can unmark them. Per project.
+std::set<int> s_marked;
+std::string   s_marked_key;
+
+const char *const kMovedSince   = "moved since";
+const char *const kChangedSince = "changed since";
+const char *const kRemovedSince = "removed since";
+const char *const kArrow        = "\xE2\x86\x92"; // U+2192, as the move-to-plate rows write it
+
+struct Live
+{
+    bool        known   = false; // false: no live value for this row (none is sent)
+    bool        present = true;
+    std::string value;
+};
+
+Live live_value(std::string v)
+{
+    Live l;
+    l.known = true;
+    l.value = std::move(v);
+    return l;
+}
+
+Live live_gone()
+{
+    Live l;
+    l.known   = true;
+    l.present = false;
+    return l;
+}
+
+json result_ok() { return {{"status", "ok"}}; }
+json result_failed(const std::string &why) { return {{"status", "failed"}, {"reason", why}}; }
+json result_cancelled(const std::string &why) { return {{"status", "cancelled"}, {"reason", why}}; }
+
+Plater *plater() { return wxGetApp().plater(); }
+
+// The page's sameValue: numbers (with the same unit text) within 1e-6 relative, anything else exactly.
+bool parse_num(const std::string &s, double &n, std::string &unit)
+{
+    static const std::regex re(R"(^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*?)\s*$)");
+    std::smatch m;
+    if (!std::regex_match(s, m, re)) return false;
+    try {
+        n = std::stod(m[1].str());
+    } catch (const std::exception &) {
+        return false;
+    }
+    if (!std::isfinite(n)) return false;
+    unit = m[2].str();
+    return true;
+}
+
+bool same_text(const std::string &a, const std::string &b)
+{
+    double      x = 0, y = 0;
+    std::string ux, uy;
+    if (parse_num(a, x, ux) && parse_num(b, y, uy)) {
+        if (ux != uy) return false;
+        return std::abs(x - y) <= 1e-6 * std::max({std::abs(x), std::abs(y), 1e-12});
+    }
+    return a == b;
+}
+
+// Per matrix element, 1e-6 relative (absolute below 1), as the arrange/orient rows were judged when recorded.
+bool same_matrix(const json &a, const json &b)
+{
+    if (!a.is_array() || !b.is_array() || a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (!a[i].is_number() || !b[i].is_number()) return false;
+        const double x = a[i].get<double>(), y = b[i].get<double>();
+        if (std::abs(x - y) > 1e-6 * std::max({std::abs(x), std::abs(y), 1.0})) return false;
+    }
+    return true;
+}
+
+Transform3d matrix_from(const json &a)
+{
+    Transform3d t = Transform3d::Identity();
+    if (a.is_array() && a.size() == 16)
+        for (int i = 0; i < 16; ++i) t.matrix().data()[i] = a[size_t(i)].get<double>();
+    return t;
+}
+
+int object_index(uint64_t id)
+{
+    const Model &model = plater()->model();
+    for (size_t i = 0; i < model.objects.size(); ++i)
+        if ((uint64_t) model.objects[i]->id().id == id) return int(i);
+    return -1;
+}
+
+int instance_index(const ModelObject *mo, uint64_t instance_id)
+{
+    for (size_t i = 0; i < mo->instances.size(); ++i)
+        if ((uint64_t) mo->instances[i]->id().id == instance_id) return int(i);
+    return -1;
+}
+
+uint64_t u64(const json &t, const char *key) { return t.contains(key) && t[key].is_number() ? t[key].get<uint64_t>() : 0; }
+
+PresetCollection *collection(const std::string &scope)
+{
+    auto *b = wxGetApp().preset_bundle;
+    if (scope == "print") return &b->prints;
+    if (scope == "filament") return &b->filaments;
+    if (scope == "printer") return &b->printers;
+    return nullptr;
+}
+
+Preset::Type preset_type(const std::string &scope)
+{
+    return scope == "print" ? Preset::TYPE_PRINT : scope == "filament" ? Preset::TYPE_FILAMENT : Preset::TYPE_PRINTER;
+}
+
+json config_map(const ModelConfig &c)
+{
+    json m = json::object();
+    for (const std::string &k : c.keys()) m[k] = c.opt_serialize(k);
+    return m;
+}
+
+// A {key: raw} map as a config; throws on a value OrcaSlicer rejects.
+DynamicPrintConfig config_from_map(const json &m)
+{
+    DynamicPrintConfig c;
+    if (m.is_object())
+        for (auto it = m.begin(); it != m.end(); ++it)
+            if (it.value().is_string()) c.set_deserialize_strict(it.key(), it.value().get<std::string>());
+    return c;
+}
+
+std::string before_sep(const std::string &s, const std::string &sep)
+{
+    const size_t p = s.find(sep);
+    return p == std::string::npos ? s : s.substr(0, p);
+}
+
+// The object a row is about, for "<name> is no longer on the plate" and the journal line.
+std::string object_name_of(const McpRow &r)
+{
+    const std::string t = r.target.value("type", std::string());
+    if (t == "added" || t == "removed" || t == "layer_profile") return r.value;
+    if (t == "transform" || t == "height_range" || t == "height_ranges_cleared") return r.where;
+    if (t == "object_config") return before_sep(r.where, " only");
+    if (t == "duplicate") return before_sep(r.value, ", now ");
+    if (t == "instance_plate") return before_sep(r.value, std::string(" ") + kArrow);
+    if (t == "instances") return r.where.empty() ? std::string("An object") : r.where;
+    return !r.where.empty() ? r.where : (!r.value.empty() ? r.value : r.label);
+}
+
+// ---- live values ------------------------------------------------------------------------------------------------
+
+std::string project_element_raw(const DynamicPrintConfig &proj, const std::string &key, const json &index, bool &ok)
+{
+    ok = true;
+    if (index.is_number_integer()) {
+        const size_t i = index.get<size_t>();
+        if (key == "filament_colour") {
+            const auto *o = proj.option<ConfigOptionStrings>(key);
+            if (o == nullptr || i >= o->values.size()) { ok = false; return {}; }
+            return o->values[i];
+        }
+        const auto *o = proj.option<ConfigOptionFloats>(key);
+        if (o == nullptr || o->values.empty()) { ok = false; return {}; }
+        return ConfigOptionFloat(o->get_at(i)).serialize();
+    }
+    if (!proj.has(key)) { ok = false; return {}; }
+    return proj.opt_serialize(key);
+}
+
+Live live_of(const McpRow &r)
+{
+    const json       &t    = r.target;
+    const std::string type = t.is_object() ? t.value("type", std::string()) : std::string();
+    Plater           *p    = plater();
+    if (p == nullptr || type.empty()) return {};
+    auto *bundle = wxGetApp().preset_bundle;
+
+    if (type == "config") {
+        if (!t.contains("after_raw")) return {}; // a credential: never read back
+        const std::string key   = t.value("key", std::string());
+        const std::string scope = t.value("scope", std::string());
+        if (scope == "project") {
+            bool              ok  = true;
+            const std::string raw = project_element_raw(bundle->project_config, key, t.value("index", json()), ok);
+            if (!ok) return live_value(kRemovedSince);
+            return live_value(McpRecorder::config_value_text(key, raw));
+        }
+        PresetCollection *c = collection(scope);
+        if (c == nullptr) return {};
+        const ConfigOption *opt  = c->get_edited_preset().config.option(key);
+        std::string         text = opt != nullptr ? McpRecorder::config_value_text(key, opt->serialize()) : std::string("not set");
+        // Another preset is being edited now: the assistant's value is not the one shown any more.
+        const std::string sel = c->get_selected_preset_name();
+        if (t.contains("preset") && t["preset"].is_string() && t["preset"].get<std::string>() != sel) text += " in " + sel;
+        return live_value(text);
+    }
+
+    if (type == "slot_mapping") {
+        std::string label;
+        if (!Controller::slot_mapping_label(t.value("filament", -1), label)) return {};
+        return live_value(label);
+    }
+
+    if (type == "preset") {
+        const json slot = t.value("slot", json());
+        if (slot.is_number_integer()) {
+            const size_t s = slot.get<size_t>();
+            if (s >= bundle->filament_presets.size()) return live_value(kRemovedSince);
+            return live_value(bundle->filament_presets[s]);
+        }
+        PresetCollection *c = collection(t.value("preset_type", std::string()));
+        if (c == nullptr) return {};
+        return live_value(c->get_selected_preset_name());
+    }
+
+    if (type == "preset_saved") {
+        PresetCollection *c = collection(t.value("preset_type", std::string()));
+        if (c == nullptr) return {};
+        return live_value(c->find_preset(t.value("name", std::string()), false) != nullptr ? r.value : std::string("deleted since"));
+    }
+
+    if (type == "plate_added") {
+        PartPlateList &plates = p->get_partplate_list();
+        const int      idx    = t.value("index", -1);
+        if (idx < 0 || idx >= plates.get_plate_count()) return live_value("deleted since");
+        PartPlate *plate = plates.get_plate(idx);
+        return live_value(plate != nullptr && plate->empty() ? r.value : std::string("has objects now"));
+    }
+
+    if (type == "file_moved") {
+        boost::system::error_code ec;
+        const fs::path from = into_path(from_u8(t.value("from", std::string())));
+        const fs::path to   = into_path(from_u8(t.value("to", std::string())));
+        if (!fs::is_regular_file(to, ec)) return live_value(kMovedSince);
+        if (fs::exists(from, ec) && !fs::equivalent(from, to, ec)) return live_value("old name taken");
+        return live_value(r.value);
+    }
+
+    // Object rows.
+    if (type == "removed") return live_value(r.value); // its availability is decided by the stash, on click
+    if (type == "instances") {
+        const json items = t.value("items", json::array());
+        for (const json &it : items) {
+            const int oi = object_index(u64(it, "object_id"));
+            if (oi < 0) return live_gone();
+            const ModelObject *mo = p->model().objects[oi];
+            const int          ii = instance_index(mo, u64(it, "instance_id"));
+            if (ii < 0) return live_value(kMovedSince);
+            if (!same_matrix(McpRecorder::instance_matrix(*mo->instances[ii]), it.value("after", json()))) return live_value(kMovedSince);
+        }
+        return live_value(r.value);
+    }
+    if (!t.contains("object_id")) return {};
+    const int oi = object_index(u64(t, "object_id"));
+    if (oi < 0) return live_gone();
+    const ModelObject *mo = p->model().objects[oi];
+
+    if (type == "added") return live_value(r.value);
+    if (type == "object_config") {
+        const std::string key = t.value("key", std::string());
+        std::string       raw;
+        if (mo->config.has(key)) raw = mo->config.opt_serialize(key);
+        else {
+            const DynamicPrintConfig merged = bundle->full_config();
+            raw = merged.has(key) ? merged.opt_serialize(key) : std::string();
+        }
+        return live_value(McpRecorder::config_value_text(key, raw));
+    }
+    if (type == "layer_profile") {
+        const std::vector<double> now   = mo->layer_height_profile.get();
+        const json                after = t.value("after", json::array());
+        bool same = after.is_array() && after.size() == now.size();
+        for (size_t i = 0; same && i < now.size(); ++i) {
+            const double y = after[i].is_number() ? after[i].get<double>() : NAN;
+            same = std::abs(now[i] - y) <= 1e-6 * std::max({std::abs(now[i]), std::abs(y), 1.0});
+        }
+        return live_value(same ? r.value : std::string(kChangedSince));
+    }
+    if (type == "height_range") {
+        const t_layer_height_range key{t.value("min_z", 0.0), t.value("max_z", 0.0)};
+        auto it = mo->layer_config_ranges.find(key);
+        if (it == mo->layer_config_ranges.end()) return live_value(kRemovedSince);
+        return live_value(config_map(it->second) == t.value("after", json()) ? r.value : std::string(kChangedSince));
+    }
+    if (type == "height_ranges_cleared")
+        return live_value(mo->layer_config_ranges.empty() ? r.value : std::string("ranges set since"));
+    if (type == "transform" || type == "duplicate" || type == "instance_plate") {
+        const int ii = instance_index(mo, u64(t, "instance_id"));
+        if (ii < 0) return live_value(type == "duplicate" ? "copy removed since" : kMovedSince);
+        return live_value(same_matrix(McpRecorder::instance_matrix(*mo->instances[ii]), t.value("after", json())) ? r.value
+                                                                                                            : std::string(kMovedSince));
+    }
+    return {};
+}
+
+// ---- the undo of each kind ---------------------------------------------------------------------------------------
+
+// Drops every collection's unsaved edits, as PUT /preset does before a switch (Tab::select_preset would otherwise
+// open its unsaved-changes dialog). Returns the groups dropped.
+std::vector<std::string> discard_edits()
+{
+    auto                    *b = wxGetApp().preset_bundle;
+    std::vector<std::string> out;
+    auto one = [&out](PresetCollection &c, const char *g) {
+        if (c.current_is_dirty()) {
+            c.discard_current_changes();
+            out.push_back(g);
+        }
+    };
+    one(b->prints, "print");
+    one(b->filaments, "filament");
+    one(b->sla_materials, "sla_material");
+    one(b->printers, "printer");
+    return out;
+}
+
+// Writes {key: raw} into the edited preset of each collection holding the key, through the GUI's edit path
+// (Tab::load_config + Plater::on_config_change, as PUT /config). "" or the first error.
+std::string apply_preset_edits(const json &changes)
+{
+    auto *b = wxGetApp().preset_bundle;
+    struct T { Preset::Type type; DynamicPrintConfig cfg; bool touched; };
+    std::vector<T> ts{{Preset::TYPE_PRINT, b->prints.get_edited_preset().config, false},
+                      {Preset::TYPE_FILAMENT, b->filaments.get_edited_preset().config, false},
+                      {Preset::TYPE_PRINTER, b->printers.get_edited_preset().config, false}};
+    for (auto it = changes.begin(); it != changes.end(); ++it) {
+        T *tgt = nullptr;
+        for (T &x : ts)
+            if (x.cfg.option(it.key()) != nullptr) { tgt = &x; break; }
+        if (tgt == nullptr) return it.key() + ": not a print, filament or printer setting";
+        std::string raw;
+        const json &v = it.value();
+        if (v.is_string()) raw = v.get<std::string>();
+        else if (v.is_boolean()) raw = v.get<bool>() ? "1" : "0";
+        else if (v.is_number()) raw = v.dump();
+        else return it.key() + ": unsupported value";
+        try {
+            tgt->cfg.set_deserialize_strict(it.key(), raw);
+        } catch (const std::exception &e) {
+            return it.key() + ": " + e.what();
+        }
+        tgt->touched = true;
+    }
+    for (T &x : ts) {
+        if (!x.touched) continue;
+        Tab *tab = wxGetApp().get_tab(x.type);
+        if (tab == nullptr) return "the settings tab is not ready";
+        tab->load_config(x.cfg);
+        plater()->on_config_change(x.cfg);
+    }
+    return {};
+}
+
+// After an object's instances changed: plates follow the geometry, the scene and the object list refresh.
+void instances_changed(int oi, const std::vector<int> &instances)
+{
+    Plater        *p      = plater();
+    PartPlateList &plates = p->get_partplate_list();
+    for (int ii : instances) plates.notify_instance_update(oi, ii, /*is_new=*/true);
+    p->changed_object(oi);
+    wxGetApp().obj_list()->update_plate_values_for_items();
+}
+
+void set_matrix(ModelObject *mo, int ii, const json &m)
+{
+    mo->instances[ii]->set_transformation(Geometry::Transformation(matrix_from(m)));
+    mo->invalidate_bounding_box();
+}
+
+// The object list's filament column, as PUT /objects/{id}/config refreshes it after an extruder change.
+void refresh_extruder_column(int oi, const ModelObject *mo)
+{
+    ObjectList *obj_list = wxGetApp().obj_list();
+    ObjectDataViewModel *om = obj_list == nullptr ? nullptr : obj_list->GetModel();
+    if (om == nullptr) return;
+    wxDataViewItem item = om->GetItemById(oi);
+    if (!item.IsOk()) return;
+    const int ext = mo->config.has("extruder") ? mo->config.extruder() : 0;
+    om->SetExtruder(ext == 0 ? _L("default") : wxString::Format("%d", ext), item);
+    obj_list->Refresh();
+}
+
+// Returns "" (done), or the reason it failed; cancelled set when the user cancelled a dialog.
+std::string undo_row(const McpRow &r, bool &cancelled)
+{
+    cancelled = false;
+    const json       &t    = r.target;
+    const std::string type = t.value("type", std::string());
+    Plater           *p    = plater();
+    auto             *bundle = wxGetApp().preset_bundle;
+    const std::string gone   = object_name_of(r) + " is no longer on the plate";
+
+    if (type == "config") {
+        const std::string key    = t.value("key", std::string());
+        const std::string scope  = t.value("scope", std::string());
+        if (!t.contains("before_raw") || !t["before_raw"].is_string()) return "Can't set it back";
+        const std::string before = t["before_raw"].get<std::string>();
+        if (scope == "project") {
+            DynamicPrintConfig             proj = bundle->project_config;
+            const auto                    *c0   = proj.option<ConfigOptionStrings>("filament_colour");
+            const std::vector<std::string> colours_before = c0 == nullptr ? std::vector<std::string>{} : c0->values;
+            const json                     index = t.value("index", json());
+            try {
+                if (index.is_number_integer() && key == "filament_colour") {
+                    auto *o = proj.option<ConfigOptionStrings>(key);
+                    const size_t i = index.get<size_t>();
+                    if (o == nullptr || i >= o->values.size()) return "That filament is gone";
+                    o->values[i] = before;
+                } else if (index.is_number_integer()) {
+                    ConfigOptionFloat one;
+                    if (!one.deserialize(before)) return "Can't set it back";
+                    proj.option<ConfigOptionFloats>(key, true)->set_at(&one, index.get<size_t>(), 0);
+                } else {
+                    proj.set_deserialize_strict(key, before);
+                }
+            } catch (const std::exception &) {
+                return "Can't set it back";
+            }
+            Controller::apply_project_config(proj, {key}, colours_before);
+            return {};
+        }
+        PresetCollection *c = collection(scope);
+        if (c == nullptr) return "Can't set it back";
+        DynamicPrintConfig cfg = c->get_edited_preset().config;
+        try {
+            cfg.set_deserialize_strict(key, before);
+        } catch (const std::exception &) {
+            return "Can't set it back";
+        }
+        Tab *tab = wxGetApp().get_tab(preset_type(scope));
+        if (tab == nullptr) return "The settings tab is not ready";
+        tab->load_config(cfg);
+        p->on_config_change(cfg);
+        return {};
+    }
+
+    if (type == "preset") {
+        const std::string before = t.value("before", std::string());
+        const json        slot   = t.value("slot", json());
+        Sidebar          &sidebar = p->sidebar();
+        if (slot.is_number_integer() && sidebar.is_multifilament()) {
+            const size_t s = slot.get<size_t>();
+            if (s >= bundle->filament_presets.size()) return "That filament is gone";
+            const Preset *pr = bundle->filaments.find_preset(before, false, true);
+            if (pr == nullptr) return before + " is no longer there";
+            if (!pr->is_compatible) return before + " doesn't suit this printer now";
+            Controller::select_filament_slot(s, before);
+            return {};
+        }
+        const std::string scope = slot.is_number_integer() ? std::string("filament") : t.value("preset_type", std::string());
+        PresetCollection *c = collection(scope);
+        if (c == nullptr) return "Can't switch back";
+        if (c->find_preset(before, false, true) == nullptr) return before + " is no longer there";
+        Tab *tab = wxGetApp().get_tab(preset_type(scope));
+        if (tab == nullptr) return "The settings tab is not ready";
+        // The way PUT /preset avoids the unsaved-changes dialog: drop the unsaved edits first.
+        discard_edits();
+        if (!tab->select_preset(before, false, "", /*force_select=*/true, /*force_no_transfer=*/true)) {
+            cancelled = true;
+            return "Switch cancelled";
+        }
+        return {};
+    }
+
+    if (type == "preset_saved") {
+        const std::string ts = t.value("preset_type", std::string()), name = t.value("name", std::string());
+        const std::string why = Controller::preset_delete_refusal(ts, name);
+        if (why == "unknown_preset") return name + " is gone already";
+        if (why == "builtin_preset") return "Built-in preset";
+        if (why == "preset_selected") return "It is selected; switch to another preset first";
+        if (why == "has_children") return "Other presets inherit it";
+        if (!why.empty()) return "Can't delete it";
+        if (!Controller::delete_user_preset(ts, name)) return "Couldn't delete it";
+        return {};
+    }
+
+    if (type == "plate_added") {
+        PartPlateList &plates = p->get_partplate_list();
+        const int      idx    = t.value("index", -1);
+        if (idx < 0 || idx >= plates.get_plate_count()) return "Plate " + std::to_string(idx + 1) + " is gone";
+        if (!plates.get_plate(idx)->empty()) return "It has objects on it now";
+        if (!p->can_delete_plate()) return "It is the last plate";
+        if (p->delete_plate(idx) != 0) return "Couldn't delete it";
+        Controller::slice_state_follows_plate();
+        return {};
+    }
+
+    if (type == "file_moved") {
+        const std::string err = Controller::move_project_file_back(t.value("from", std::string()), t.value("to", std::string()));
+        if (err.empty()) return {};
+        if (err == "exists") return "The old name is taken now";
+        if (err == "file_not_found") return r.value + " is gone";
+        if (err == "directory_not_found") return "The old folder is gone";
+        return "Couldn't move it back";
+    }
+
+    if (type == "slot_mapping") {
+        const std::string err = Controller::revert_slot_mapping(t);
+        if (err.empty()) return {};
+        if (err == "project_changed") return "The project changed since";
+        return "Can't change it back";
+    }
+
+    if (type == "removed") {
+        const ModelObject *stash = McpRecorder::get().stashed_object(t.value("stash", 0), t.value("stash_session", std::string()));
+        if (stash == nullptr) return "Can't put it back after a restart; restore an earlier point instead";
+        Plater::TakeSnapshot snapshot(p, "Put back " + stash->name);
+        // Model::add_object clones the copy (volumes, modifiers, paint, per-object config, layer ranges,
+        // instances with their transforms). Same steps as a paste (Selection::paste_objects_from_clipboard), at
+        // the object's own position so it lands on the plate it was on.
+        p->model().add_object(*stash);
+        const int        oi = int(p->model().objects.size()) - 1;
+        std::vector<int> inst;
+        for (size_t i = 0; i < p->model().objects[oi]->instances.size(); ++i) inst.push_back(int(i));
+        for (int ii : inst) p->get_partplate_list().notify_instance_update(oi, ii, /*is_new=*/true);
+        wxGetApp().obj_list()->paste_objects_into_list({size_t(oi)});
+        wxGetApp().obj_list()->update_plate_values_for_items();
+        return {};
+    }
+
+    if (type == "instances") {
+        // Every instance back where it was, on the plates there were: plates the job added are dropped (only
+        // when they hold nothing but these instances), plates it deleted are made again first, so the plate
+        // grid is the one the matrices were taken in.
+        PartPlateList &plates        = p->get_partplate_list();
+        const int      plates_before = t.value("plates_before", plates.get_plate_count());
+        const json     items         = t.value("items", json::array());
+        std::set<std::pair<int, int>> ours;
+        for (const json &it : items) {
+            const int oi = object_index(u64(it, "object_id"));
+            if (oi < 0) return gone;
+            const int ii = instance_index(p->model().objects[oi], u64(it, "instance_id"));
+            if (ii < 0) return "Moved again since";
+            ours.insert({oi, ii});
+        }
+        for (int pi = plates_before; pi < plates.get_plate_count(); ++pi) {
+            PartPlate *plate = plates.get_plate(pi);
+            const Model &model = p->model();
+            for (size_t oi = 0; oi < model.objects.size(); ++oi)
+                for (size_t ii = 0; ii < model.objects[oi]->instances.size(); ++ii)
+                    if (plate->contain_instance(int(oi), int(ii)) && ours.count({int(oi), int(ii)}) == 0)
+                        return "Plate " + std::to_string(pi + 1) + " holds other objects now";
+        }
+        Plater::TakeSnapshot snapshot(p, "Put back");
+        while (plates.get_plate_count() < plates_before)
+            if (plates.create_plate() < 0) break;
+        while (plates.get_plate_count() > plates_before && plates.get_plate_count() > 1)
+            if (p->delete_plate(plates.get_plate_count() - 1) != 0) break;
+        std::map<int, std::vector<int>> by_object;
+        for (const json &it : items) {
+            const int    oi = object_index(u64(it, "object_id"));
+            ModelObject *mo = p->model().objects[oi];
+            const int    ii = instance_index(mo, u64(it, "instance_id"));
+            if (ii < 0) continue;
+            set_matrix(mo, ii, it.value("before", json()));
+            by_object[oi].push_back(ii);
+        }
+        for (const auto &kv : by_object) instances_changed(kv.first, kv.second);
+        p->update();
+        Controller::slice_state_follows_plate();
+        return {};
+    }
+
+    // Rows about one object.
+    const int oi = object_index(u64(t, "object_id"));
+    if (oi < 0) return gone;
+    ModelObject *mo = p->model().objects[oi];
+
+    if (type == "added") {
+        Plater::TakeSnapshot snapshot(p, "Delete Object: " + mo->name);
+        p->remove(size_t(oi));
+        return {};
+    }
+    if (type == "object_config") {
+        const std::string key = t.value("key", std::string());
+        DynamicPrintConfig cfg = mo->config.get();
+        try {
+            if (t.value("had_override", false)) cfg.set_deserialize_strict(key, t.value("before_raw", std::string()));
+            else cfg.erase(key);
+        } catch (const std::exception &) {
+            return "Can't set it back";
+        }
+        Plater::TakeSnapshot snapshot(p, "Change Object Settings");
+        mo->config.assign_config(std::move(cfg));
+        p->changed_object(oi);
+        if (key == "extruder") refresh_extruder_column(oi, mo);
+        return {};
+    }
+    if (type == "layer_profile") {
+        std::vector<double> before;
+        for (const json &v : t.value("before", json::array()))
+            if (v.is_number()) before.push_back(v.get<double>());
+        if (before.empty()) mo->layer_height_profile.clear();
+        else mo->layer_height_profile.set(std::move(before));
+        p->schedule_background_process();
+        wxGetApp().obj_list()->update_info_items(size_t(oi));
+        return {};
+    }
+    if (type == "height_range" || type == "height_ranges_cleared") {
+        std::vector<std::pair<t_layer_height_range, DynamicPrintConfig>> put;
+        try {
+            if (type == "height_ranges_cleared")
+                for (const json &rg : t.value("ranges", json::array()))
+                    put.emplace_back(t_layer_height_range{rg.value("min_z", 0.0), rg.value("max_z", 0.0)},
+                                     config_from_map(rg.value("config", json())));
+            else if (!t.value("before", json()).is_null())
+                put.emplace_back(t_layer_height_range{t.value("min_z", 0.0), t.value("max_z", 0.0)},
+                                 config_from_map(t["before"]));
+        } catch (const std::exception &) {
+            return "Can't put the ranges back";
+        }
+        Plater::TakeSnapshot snapshot(p, type == "height_range" ? "Delete Height Range" : "Add Height Range");
+        if (type == "height_range" && t.value("before", json()).is_null())
+            mo->layer_config_ranges.erase(t_layer_height_range{t.value("min_z", 0.0), t.value("max_z", 0.0)});
+        for (auto &kv : put) mo->layer_config_ranges[kv.first].assign_config(std::move(kv.second));
+        p->changed_object(oi);
+        wxGetApp().obj_list()->update_info_items(size_t(oi));
+        return {};
+    }
+    if (type == "transform" || type == "instance_plate") {
+        const int ii = instance_index(mo, u64(t, "instance_id"));
+        if (ii < 0) return "Moved again since";
+        Plater::TakeSnapshot snapshot(p, type == "transform" ? "Transform Object" : "move to plate");
+        set_matrix(mo, ii, t.value("before", json()));
+        instances_changed(oi, {ii});
+        if (type == "instance_plate") Controller::slice_state_follows_plate();
+        return {};
+    }
+    if (type == "duplicate") {
+        const int ii = instance_index(mo, u64(t, "instance_id"));
+        if (ii < 0) return "The copy is gone already";
+        Plater::TakeSnapshot snapshot(p, "Decrease Instances");
+        PartPlateList &plates = p->get_partplate_list();
+        if (mo->instances.size() <= 1) {
+            p->remove(size_t(oi));
+            return {};
+        }
+        if (ii == int(mo->instances.size()) - 1) {
+            // Plater::decrease_instances' steps, for this object instead of the selection.
+            plates.notify_instance_removed(oi, ii);
+            mo->delete_last_instance();
+        } else {
+            // A later copy follows it: the plates' (object, instance) pairs shift, so rebuild them.
+            mo->delete_instance(size_t(ii));
+            plates.reload_all_objects();
+        }
+        p->update();
+        wxGetApp().obj_list()->decrease_object_instances(size_t(oi), 1);
+        p->changed_object(oi);
+        wxGetApp().obj_list()->update_plate_values_for_items();
+        return {};
+    }
+    return "Nothing to undo";
+}
+
+// "Reverted in the panel: Wall loops back to 2" and the like, for the user-change journal.
+std::string journal_line(const McpRow &r)
+{
+    static const std::map<std::string, std::string> past{
+        {"Revert", "Reverted"},       {"Switch back", "Switched back"}, {"Change back", "Changed back"},
+        {"Remove", "Removed"},        {"Put back", "Put back"},         {"Rotate back", "Rotated back"},
+        {"Scale back", "Scaled back"}, {"Move back", "Moved back"},      {"Remove copy", "Removed the copy"},
+        {"Delete plate", "Deleted"},   {"Delete preset", "Deleted"},     {"Remove range", "Removed"},
+        {"Undo", "Undid"},
+    };
+    auto              it   = past.find(r.undo_verb);
+    const std::string verb = it != past.end() ? it->second : r.undo_verb;
+    const std::string type = r.target.value("type", std::string());
+    std::string       what;
+    if (r.undo_verb == "Revert") what = r.label + " back to " + r.before;
+    else if (r.undo_verb == "Switch back" || r.undo_verb == "Change back") what = r.label + " to " + r.before;
+    else if (type == "file_moved") what = r.value + " to " + r.before;
+    else if (type == "plate_added" || type == "preset_saved") what = r.value;
+    else if (type == "height_range") what = r.label + " of " + r.where;
+    else if (type == "layer_profile") what = "the layer height profile of " + r.value;
+    else if (type == "instances") what = r.where.empty() ? r.value : r.where;
+    else what = object_name_of(r);
+    return verb + " in the panel: " + what;
+}
+
+void tell(const std::string &text)
+{
+    if (s_listener) {
+        try {
+            s_listener("panel", text);
+        } catch (const std::exception &e) {
+            BOOST_LOG_TRIVIAL(error) << "MCP panel: action listener failed: " << e.what();
+        }
+    }
+}
+
+void publish(json event)
+{
+    try {
+        wxGetApp().remote_api_server().broadcast(event);
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: event not sent: " << e.what();
+    }
+}
+
+// Why a panel action cannot run now ("" when it can).
+std::string busy_reason()
+{
+    Plater *p = plater();
+    if (p == nullptr) return "Not ready";
+    if (McpActions::restoring()) return "A restore is running";
+    if (p->is_loading_project()) return "Not while a project is loading";
+    if (p->is_background_process_slicing()) return "Not while slicing";
+    // Inside an export's or an API task's event pump the project is being written or changed: wait.
+    if (Controller::backup_in_progress() || (Controller::api_ui_task_active() && s_test_depth == 0))
+        return "Busy with the assistant's request; try again in a moment";
+    return {};
+}
+
+// The restore state, dropped once it no longer applies (another project, or the assistant changed something).
+bool restore_state_current(McpRecorder &rec)
+{
+    if (s_marked_key != rec.history_dir()) {
+        s_marked.clear();
+        s_marked_key = rec.history_dir();
+    }
+    if (s_restore.restored_to < 0 && s_restore.snapshot.empty()) return false;
+    if (s_restore.key != rec.history_dir() || rec.history().groups().size() != s_restore.groups_at) {
+        s_restore = RestoreState();
+        return false;
+    }
+    return true;
+}
+
+std::string point_time(const McpHistory &h, int point)
+{
+    const auto &gs = h.groups();
+    if (point == 0) return gs.empty() ? std::string() : gs.front().time;
+    for (const McpGroup &g : gs)
+        if (g.id == point) return g.time;
+    return {};
+}
+
+// A restore point written while the plate was empty: the presets and their unsaved edits.
+std::string open_preset_point(const std::string &path_utf8)
+{
+    json j;
+    try {
+        boost::nowide::ifstream in(into_path(from_u8(path_utf8)).string().c_str(), std::ios::binary);
+        if (!in) return "The restore point can't be read";
+        j = json::parse(in);
+    } catch (const std::exception &) {
+        return "The restore point can't be read";
+    }
+    Plater *p      = plater();
+    auto   *bundle = wxGetApp().preset_bundle;
+    discard_edits();
+    // The plate was empty: no objects, one plate.
+    if (!p->model().objects.empty()) p->delete_all_objects_from_model();
+    while (p->get_partplate_list().get_plate_count() > 1)
+        if (p->delete_plate(p->get_partplate_list().get_plate_count() - 1) != 0) break;
+    auto select = [](Preset::Type type, PresetCollection &c, const std::string &name) {
+        if (name.empty() || c.get_selected_preset_name() == name || c.find_preset(name, false, true) == nullptr) return;
+        if (Tab *tab = wxGetApp().get_tab(type); tab != nullptr)
+            tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true);
+    };
+    select(Preset::TYPE_PRINTER, bundle->printers, j.value("printer", std::string()));
+    select(Preset::TYPE_PRINT, bundle->prints, j.value("print", std::string()));
+    std::vector<std::string> filaments;
+    for (const json &f : j.value("filaments", json::array()))
+        if (f.is_string()) filaments.push_back(f.get<std::string>());
+    if (!filaments.empty()) {
+        if (!p->sidebar().is_multifilament()) {
+            select(Preset::TYPE_FILAMENT, bundle->filaments, filaments.front());
+        } else {
+            // The slots there are now; a different filament count is not changed here.
+            for (size_t i = 0; i < filaments.size() && i < bundle->filament_presets.size(); ++i) {
+                if (bundle->filament_presets[i] == filaments[i]) continue;
+                const Preset *pr = bundle->filaments.find_preset(filaments[i], false, true);
+                if (pr == nullptr || !pr->is_compatible) continue;
+                Controller::select_filament_slot(i, filaments[i]);
+            }
+        }
+    }
+    // The unsaved edits on top. The filament edits belong to the preset the Filament tab showed then: one of the
+    // slot presets; skip them when the tab shows another now.
+    const json edits = j.value("edits", json::object());
+    json       apply = json::object();
+    for (const char *g : {"print", "printer"}) {
+        const json ge = edits.value(g, json::object());
+        for (auto it = ge.begin(); it != ge.end(); ++it) apply[it.key()] = it.value();
+    }
+    if (std::find(filaments.begin(), filaments.end(), bundle->filaments.get_selected_preset_name()) != filaments.end()) {
+        const json fe = edits.value("filament", json::object());
+        for (auto it = fe.begin(); it != fe.end(); ++it) apply[it.key()] = it.value();
+    }
+    if (!apply.empty()) {
+        const std::string err = apply_preset_edits(apply);
+        if (!err.empty()) BOOST_LOG_TRIVIAL(warning) << "MCP panel: restore point edit not applied: " << err;
+    }
+    bundle->export_selections(*wxGetApp().app_config);
+    p->update_project_dirty_from_presets();
+    p->get_partplate_list().invalid_all_slice_result();
+    p->on_config_change(bundle->full_config());
+    return {};
+}
+
+// Opens a restore point (.3mf as a project, .json as presets) and keeps the project's own name and path.
+std::string open_point(const std::string &path_utf8)
+{
+    Plater           *p         = plater();
+    const std::string orig_path = p->get_project_filename(".3mf").ToUTF8().data();
+    const wxString    orig_name = p->get_project_name();
+    if (boost::algorithm::iends_with(path_utf8, ".json")) {
+        const std::string err = open_preset_point(path_utf8);
+        if (!err.empty()) return err;
+    } else {
+        // The API's open steps on the checkpoint: presets from it, unsaved edits dropped, prompts answered, no
+        // sensitive-key check (the user's own earlier state).
+        const json r = Controller::open_project_from(p, path_utf8, /*keep_presets=*/false, /*policy_check=*/false);
+        if (r.contains("error")) {
+            BOOST_LOG_TRIVIAL(error) << "MCP panel: restore point not opened: " << r.dump();
+            return "Couldn't open the restore point";
+        }
+        // The project's own name and path back (an Untitled one keeps its name and no path), and the checkpoint
+        // out of File > Recent.
+        p->set_project_filename(orig_path.empty() ? orig_name : from_u8(orig_path));
+        Controller::forget_recent(path_utf8);
+    }
+    // Opening the checkpoint is not the project being opened: the recorder keeps this project's timeline.
+    McpRecorder::forget_project_opened();
+    p->set_plater_dirty(true);
+    p->update_title_dirty_status();
+    Controller::slice_state_follows_plate();
+    return {};
+}
+
+} // namespace
+
+McpActions::TestCallScope::TestCallScope() { ++s_test_depth; }
+McpActions::TestCallScope::~TestCallScope() { --s_test_depth; }
+
+void McpActions::set_panel_action_listener(PanelActionListener fn) { s_listener = std::move(fn); }
+
+json McpActions::activity()
+{
+    McpRecorder &rec = McpRecorder::get();
+    rec.sync_project();
+    json       j       = rec.history().page_history();
+    const bool current = restore_state_current(rec);
+    j["restored_to"]   = current && s_restore.restored_to >= 0 ? json(s_restore.restored_to) : json(nullptr);
+    bool can_undo = false;
+    if (current && !s_restore.snapshot.empty()) {
+        boost::system::error_code ec;
+        can_undo = fs::exists(into_path(from_u8(rec.checkpoint_path(s_restore.snapshot))), ec);
+    }
+    j["can_undo_restore"] = can_undo;
+    return j;
+}
+
+json McpActions::live_values()
+{
+    McpRecorder &rec = McpRecorder::get();
+    rec.sync_project();
+    json        out = json::object();
+    const auto &gs  = rec.history().groups();
+    const int   newest = gs.empty() ? -1 : gs.back().id;
+    for (const McpRow &r : rec.history().rows()) {
+        if (!r.undone_at.empty()) continue;
+        if (r.undo_verb.empty() && r.group != newest) continue;
+        try {
+            const Live l = live_of(r);
+            if (!l.known) continue;
+            out[std::to_string(r.id)] = {{"value", l.present ? json(l.value) : json(r.value)}, {"present", l.present}};
+        } catch (const std::exception &e) {
+            BOOST_LOG_TRIVIAL(warning) << "MCP panel: no live value for row " << r.id << ": " << e.what();
+        }
+    }
+    return out;
+}
+
+json McpActions::undo(int row_id)
+{
+    const std::string busy = busy_reason();
+    if (!busy.empty()) return result_failed(busy);
+    McpRecorder &rec = McpRecorder::get();
+    rec.sync_project();
+    const McpRow *found = rec.history().row(row_id);
+    if (found == nullptr) return result_failed("Not in this project's timeline");
+    const McpRow r = *found; // the history may change under the undo (a moved file moves its history)
+    if (r.undo_verb.empty()) return result_failed("Nothing to undo");
+    if (!r.undone_at.empty()) return result_failed("Reverted at " + r.undone_at);
+    const auto &gs     = rec.history().groups();
+    const bool  newest = !gs.empty() && gs.back().id == r.group;
+    // Never overwrite a later change: the row's value must still be what is there.
+    try {
+        const Live l = live_of(r);
+        if (l.known && !l.present) return result_failed(object_name_of(r) + " is no longer on the plate");
+        if (l.known && !same_text(l.value, r.value))
+            return result_failed(newest ? "You changed it since" : "Changed again since; restore an earlier point instead");
+    } catch (const std::exception &e) {
+        return result_failed(std::string("Can't check it now: ") + e.what());
+    }
+    bool        cancelled = false;
+    std::string why;
+    try {
+        why = undo_row(r, cancelled);
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(error) << "MCP panel: undo of row " << r.id << " failed: " << e.what();
+        why = "Couldn't undo it";
+    }
+    if (cancelled) return result_cancelled(why);
+    if (!why.empty()) return result_failed(why);
+    rec.history().mark_undone(r.id, McpRecorder::hhmm(rec.now_s()));
+    rec.changed();
+    publish({{"event", "panel.reverted"}, {"group", r.group}, {"row", r.id}});
+    tell(journal_line(r));
+    return result_ok();
+}
+
+json McpActions::restore(int group)
+{
+    const std::string busy = busy_reason();
+    if (!busy.empty()) return result_failed(busy);
+    McpRecorder &rec = McpRecorder::get();
+    rec.sync_project();
+    McpHistory &h    = rec.history();
+    const std::string file = h.checkpoint_of(group);
+    if (file.empty() || h.groups().empty()) return result_failed("No restore point here");
+    const int newest = h.groups().back().id;
+    if (group >= newest) return result_failed("No restore point here");
+    const std::string path = rec.checkpoint_path(file);
+    boost::system::error_code ec;
+    if (!fs::is_regular_file(into_path(from_u8(path)), ec)) return result_failed("The restore point is gone");
+
+    s_restoring.store(true);
+    ScopeGuard done([] { s_restoring.store(false); });
+    // Outside an API task: park any API task that arrives while the project is replaced (F8), as an export does.
+    Controller::set_backup_in_progress(true);
+    ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
+
+    // The state now, for "Undo" on the "Restored to" line. It is also the newest group's end state.
+    const std::string snapshot = rec.write_checkpoint("pre-restore");
+    if (snapshot.empty()) return result_failed("Couldn't save the current state first");
+    if (h.checkpoint_of(newest).empty()) {
+        const std::string ext  = fs::path(snapshot).extension().string();
+        const std::string name = "cp-" + std::to_string(newest) + ext;
+        boost::system::error_code cec;
+        fs::copy_file(into_path(from_u8(rec.checkpoint_path(snapshot))), into_path(from_u8(rec.checkpoint_path(name))),
+                      fs::copy_options::overwrite_existing, cec);
+        if (!cec) rec.set_point_checkpoint(newest, name);
+    }
+
+    RestoreState next;
+    restore_state_current(rec);
+    next.prev_restored_to = s_restore.restored_to;
+    next.marked_before    = s_marked;
+    for (const McpRow &r : h.rows()) next.marks_before[r.id] = r.undone_at;
+
+    const std::string err = open_point(path);
+    if (!err.empty()) return result_failed(err);
+
+    // The groups after the point are undone; ones an earlier restore undid up to here are back.
+    const std::string now = McpRecorder::hhmm(rec.now_s());
+    std::vector<std::pair<int, std::string>> marks;
+    for (const McpRow &r : h.rows()) {
+        if (r.group > group && r.undone_at.empty()) {
+            marks.emplace_back(r.id, now);
+            s_marked.insert(r.id);
+        } else if (r.group <= group && s_marked.count(r.id)) {
+            marks.emplace_back(r.id, std::string());
+            s_marked.erase(r.id);
+        }
+    }
+    for (auto &m : marks) h.mark_undone(m.first, m.second);
+    // The next assistant change starts a group of its own.
+    rec.close_group();
+    next.key         = rec.history_dir();
+    next.restored_to = group;
+    next.groups_at   = h.groups().size();
+    next.snapshot    = snapshot;
+    s_restore        = std::move(next);
+    rec.changed();
+    publish({{"event", "panel.restored"}, {"group", group}});
+    tell("Restored in the panel to " + point_time(h, group));
+    return result_ok();
+}
+
+json McpActions::undo_restore()
+{
+    const std::string busy = busy_reason();
+    if (!busy.empty()) return result_failed(busy);
+    McpRecorder &rec = McpRecorder::get();
+    rec.sync_project();
+    if (!restore_state_current(rec) || s_restore.snapshot.empty()) return result_failed("Nothing to undo");
+    const std::string path = rec.checkpoint_path(s_restore.snapshot);
+    boost::system::error_code ec;
+    if (!fs::is_regular_file(into_path(from_u8(path)), ec)) return result_failed("The snapshot before the restore is gone");
+
+    s_restoring.store(true);
+    ScopeGuard done([] { s_restoring.store(false); });
+    Controller::set_backup_in_progress(true);
+    ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
+
+    const std::string err = open_point(path);
+    if (!err.empty()) return result_failed(err);
+
+    McpHistory &h = rec.history();
+    for (const McpRow &r : h.rows()) {
+        auto it = s_restore.marks_before.find(r.id);
+        const std::string before = it == s_restore.marks_before.end() ? std::string() : it->second;
+        if (r.undone_at != before) h.mark_undone(r.id, before);
+    }
+    s_marked = s_restore.marked_before;
+    RestoreState back;
+    back.key         = rec.history_dir();
+    back.restored_to = s_restore.prev_restored_to;
+    back.groups_at   = h.groups().size();
+    s_restore        = std::move(back); // one level: no Undo of the undo
+    rec.close_group();
+    rec.changed();
+    publish({{"event", "panel.restored"}, {"group", nullptr}, {"undone", true}});
+    tell("Undid the restore in the panel");
+    return result_ok();
+}
+
+json McpActions::apply_as_user(const json &changes)
+{
+    if (!changes.is_object() || changes.empty()) return result_failed("No changes");
+    const std::string err = apply_preset_edits(changes);
+    return err.empty() ? result_ok() : result_failed(err);
+}
+
+}}} // namespace Slic3r::GUI::RemoteAPI

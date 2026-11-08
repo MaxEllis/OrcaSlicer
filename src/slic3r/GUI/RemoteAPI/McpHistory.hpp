@@ -17,7 +17,7 @@ struct McpRow {
     int64_t     ts    = 0;
     std::string time;        // "HH:MM", set by the caller
     std::string kind, label, value;
-    std::string before;      // raw previous value
+    std::string before;      // previous value, in the same display form as `value` (unit, enum label); raw in target
     std::string where;       // any other detail note
     std::string undo_verb;   // empty = not undoable
     std::string undo_tip;
@@ -60,6 +60,9 @@ public:
     void set_checkpoint(int point, std::string file, bool failed);
     // Clears checkpoints beyond the kMaxCheckpoints newest; returns their files for deletion.
     std::vector<std::string> prune_checkpoints();
+
+    // The checkpoint file of a restore point (0 = start point, else a group id); "" when it has none.
+    std::string checkpoint_of(int point) const;
 
     McpRow *row(int id);
     void    mark_undone(int id, std::string hhmm);
