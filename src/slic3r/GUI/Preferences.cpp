@@ -73,6 +73,7 @@
 #include "NetworkPluginDialog.hpp"
 #include "DownloadProgressDialog.hpp"
 #include "slic3r/GUI/RemoteAPI/RemoteAPIConfig.hpp"
+#include <wx/clipbrd.h>
 
 #ifdef __WINDOWS__
 #ifdef _MSW_DARK_MODE
@@ -1587,6 +1588,7 @@ void PreferencesDialog::create()
 
 PreferencesDialog::~PreferencesDialog()
 {
+    m_remote_api_status_timer.Stop();
 }
 
 void PreferencesDialog::select_tab(PreferencesTab tab, const std::string& option)
@@ -2586,6 +2588,51 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         "remote_api_enabled");
     g_sizer->Add(item_enable);
 
+    // Status line (M5): whether the server listens now, and what closing Preferences will do. The server starts or
+    // stops when the dialog closes (see above), so the line says so instead of leaving the tick to look ignored.
+    wxBoxSizer *status_sizer = new wxBoxSizer(wxHORIZONTAL);
+    status_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+    auto status_text = new wxStaticText(m_parent, wxID_ANY, wxEmptyString);
+    status_text->SetFont(::Label::Body_13);
+    status_sizer->Add(status_text, 1, wxALIGN_CENTER_VERTICAL);
+    status_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+    g_sizer->Add(status_sizer, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(4));
+    const bool enabled_at_open = app_config->get_bool("remote_api_enabled");
+    auto       update_status   = [this, status_text, enabled_at_open]() {
+        const bool                           enabled = app_config->get_bool("remote_api_enabled");
+        const bool                           lan     = app_config->get_bool("remote_api_bind_lan");
+        const Slic3r::GUI::RemoteAPI::ServerStatus st = Slic3r::GUI::RemoteAPI::server_status();
+        int port = 13130;
+        try { port = std::stoi(app_config->get("remote_api_port")); } catch (...) {}
+        wxString text;
+        bool     warn = false;
+        if (st.listening) {
+            const wxString where = st.bind_lan ? _L("on your local network") : _L("on this computer");
+            text = wxString::Format(_L("On: listening %s, port %d."), where, st.port);
+            if (!enabled)
+                text += " " + _L("Turns off when you close Preferences.");
+            else if (st.port != port || st.bind_lan != lan)
+                text += " " + _L("Your changes apply when you close Preferences.");
+        } else if (!enabled) {
+            text = _L("Off.");
+        } else if (enabled_at_open && st.start_failed) {
+            text = wxString::Format(_L("Couldn't start: port %d may be in use by another program. Pick another port, "
+                                       "then close Preferences to try again."), st.port);
+            warn = true;
+        } else {
+            text = _L("Starts when you close Preferences.");
+        }
+        if (status_text->GetLabel() != text) {
+            status_text->SetLabel(text);
+            status_text->Wrap(FromDIP(520));
+            m_parent->Layout();
+        }
+        status_text->SetForegroundColour(warn ? wxColour("#D01B1B") : DESIGN_GRAY900_COLOR);
+    };
+    update_status();
+    m_remote_api_status_timer.Bind(wxEVT_TIMER, [update_status](wxTimerEvent &) { update_status(); });
+    m_remote_api_status_timer.Start(500);
+
     auto item_lan = create_item_checkbox(
         _L("Allow LAN access"),
         _L("Off: only this computer (127.0.0.1). On: other devices on your "
@@ -2691,10 +2738,23 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         wxGetApp().start_remote_api();
     });
 
+    // Copy (M5): the field is narrow and truncates the token, so a click copies all of it.
+    auto copy_btn = new Button(m_parent, _L("Copy"));
+    copy_btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
+    copy_btn->SetToolTip(_L("Copy the whole token, to paste into your AI app's OrcaSlicer MCP settings"));
+    copy_btn->Bind(wxEVT_BUTTON, [token_value, copy_btn](wxCommandEvent &) {
+        if (wxTheClipboard->Open()) {
+            wxTheClipboard->SetData(new wxTextDataObject(token_value->GetValue()));
+            wxTheClipboard->Close();
+            copy_btn->SetToolTip(_L("Copied"));
+        }
+    });
+
     token_sizer->Add(token_label, 0, wxALIGN_CENTER_VERTICAL);
     // Proportion 1: stretch to the row, so the field never pushes the Regenerate
     // button past the dialog edge (a fixed 320 DIP overflowed and forced an hscroll).
     token_sizer->Add(token_value, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
+    token_sizer->Add(copy_btn,    0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
     token_sizer->Add(token_btn,   0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
     token_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
     g_sizer->Add(token_sizer, 0, wxEXPAND);

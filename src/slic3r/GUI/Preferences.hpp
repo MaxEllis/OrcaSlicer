@@ -75,6 +75,8 @@ public:
 
     wxString m_backup_interval_time;
     wxTimer m_filament_height_timer;
+    // Remote API page (M5): the status line follows the server and the page's settings while the dialog is open.
+    wxTimer m_remote_api_status_timer;
 
     void      create();
 

@@ -3552,11 +3552,14 @@ void MainFrame::init_menubar_as_editor()
             },
             this);
 
-        // Brings back the OrcaSlicer MCP dock pane after the user closed it (it then opens at start again).
-        append_menu_item(
+        // Brings back the OrcaSlicer MCP dock pane after the user closed it (it then opens at start again). Ticked
+        // while the pane is open, like the other panes and overlays in this menu; a click on the ticked item shows
+        // the pane again (closing it is the pane's own button).
+        append_menu_check_item(
             viewMenu, wxID_ANY, _L("OrcaSlicer MCP panel"), _L("Show the OrcaSlicer MCP panel"),
-            [](wxCommandEvent&) { RemoteAPI::McpPanel::show(); }, "", this,
-            [this]() { return is_prepare_or_preview_tab(); }, this);
+            [](wxCommandEvent&) { RemoteAPI::McpPanel::show(); }, this,
+            [this]() { return is_prepare_or_preview_tab(); },
+            []() { return RemoteAPI::McpPanel::is_open(); }, this);
 
         viewMenu->AppendSeparator();
         wxMenuItem* mouse3d_settings = append_menu_check_item(viewMenu, wxID_ANY, shortcut_label(_L("Show 3Dconnexion Settings"), Shortcut::Mouse3DSettings, true),
