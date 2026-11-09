@@ -6,92 +6,111 @@
 <meta charset="utf-8">
 <title>OrcaSlicer MCP</title>
 <style>
-  :root { --bg: var(--orca-bg, #2b2b2f); --fg: var(--orca-fg, #e8e8e8); --muted: var(--orca-muted, #a3a3a8); --faint: #727278;
-          --border: var(--orca-border, #3c3c42); --accent: var(--orca-accent, #009688); --warn: #e5675c;
+  /* Colours: the host's theme variables where it sends them. The link, faint, warning and focus colours follow the
+     background's lightness (data-theme on the root, set by the view script), so actions reach 4.5:1 in both themes:
+     dark #5ad1c4 on #2b2b2f 7.6:1 (5.7:1 on a hovered row), light #00695c on #f5f5f5 6.1:1 (5.1:1 hovered). */
+  :root { --bg: var(--orca-bg, #2b2b2f); --fg: var(--orca-fg, #e8e8e8); --muted: var(--orca-muted, #a3a3a8);
+          --border: var(--orca-border, #3c3c42); --accent: var(--orca-accent, #009688);
+          --link: #5ad1c4; --faint: #9a9aa0; --warn: #f28b82; --focus: #5ad1c4;
           --hover: rgba(127,127,127,.12); --hover-soft: rgba(127,127,127,.08);
           --tip-bg: #121214; --tip-fg: #e8e8e8; --tip-border: #44444b;
           --t-set: #5fa8e8; --t-preset: #b28be8; --t-model: #e8a95a; --t-plate: #74c29a; --t-slice: #00a991;
           --font: var(--orca-font, "HarmonyOS Sans SC", "Segoe UI", system-ui, -apple-system, sans-serif); }
+  :root[data-theme="light"] { --link: #00695c; --faint: #5f5f64; --warn: #b3261e; --focus: #00695c;
+          --t-set: #1f6fb8; --t-preset: #7a4fc4; --t-model: #a8650f; --t-plate: #2e7d55; --t-slice: #00796b; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--fg); font: 13px/1.4 var(--font); display: flex; flex-direction: column; overflow: hidden; }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: inherit; }
+  /* Keyboard focus: a ring in the theme's focus colour on every control (rows are role=button). */
+  :focus { outline: none; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 3px; }
   #app { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .title { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-bottom: 1px solid var(--border); flex: none; }
   .title .sp { flex: 1; }
-  .list { flex: 1; overflow-y: auto; }
+  .list { flex: 1; overflow-y: auto; overflow-x: hidden; }
   .ibtn { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); cursor: pointer; }
-  .ibtn:hover { background: var(--hover); color: var(--fg); }
+  .ibtn:hover, .ibtn:focus-visible { background: var(--hover); color: var(--fg); }
   .ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .title [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
+  .title [data-tip]:hover::after, .title [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
 
   svg.i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .k-setting { color: var(--t-set); } .k-preset { color: var(--t-preset); } .k-model { color: var(--t-model); }
   .k-plate { color: var(--t-plate); } .k-slice { color: var(--t-slice); } .k-refused { color: var(--warn); } .k-file { color: var(--faint); }
 
   .empty { padding: 18px 14px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
-  .empty a { color: var(--accent); cursor: pointer; }
+  .empty button { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
   .offnote { border-bottom: 1px solid var(--border); }
 
+  /* Links that act: underlined in the link colour. Unavailable ones: faint, no underline, no pointer. */
+  .lnk { color: var(--link); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; border-radius: 2px; }
+  .lnk.off { color: var(--faint); text-decoration: none; cursor: default; }
+  .lnk.no { color: var(--muted); }
+
   .group { border-bottom: 1px solid var(--border); }
-  .ghead { position: relative; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 7px; min-height: 34px; padding: 0 10px; cursor: pointer; }
+  .ghead { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 7px; min-height: 34px; padding: 0 10px; cursor: pointer; }
   .ghead:hover { background: var(--hover-soft); }
+  .ghead .gt { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 7px; align-items: center; min-width: 0; min-height: 34px; text-align: left; }
   .ghead .t { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
   .ghead .nm { min-width: 0; display: block; }
   .ghead .nm[data-tip]:hover::after { left: 0; transform: none; white-space: normal; max-width: 240px; }
   .ghead .name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ghead .res { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
-  .ghead .act { position: absolute; right: 8px; top: 7px; width: 20px; height: 20px; display: none; place-items: center; border-radius: 3px; color: var(--muted); background: var(--bg); }
-  .ghead:hover .act { display: grid; }
-  .ghead:hover .act ~ .res, .ghead:hover .res.hide-on-hover { visibility: hidden; }
-  .ghead .act:hover { background: var(--hover); color: var(--fg); }
-  .ghead .act.off { opacity: .45; cursor: default; }
+  .ghead .res.stale { color: var(--faint); }
+  /* Restore: always shown (dimmed) on an older group, brighter on hover and focus. */
+  .ghead .act { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); opacity: .55; }
+  .ghead:hover .act, .ghead .act:focus-visible { opacity: 1; }
+  .ghead .act:hover, .ghead .act:focus-visible { background: var(--hover); color: var(--fg); }
+  .ghead .act.off { opacity: .3; cursor: default; }
   .ghead .act svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .group.open .ghead .t { color: var(--muted); }
-  .ask { display: none; grid-column: 2 / 4; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; padding: 6px 0; }
-  .ask .line { display: flex; gap: 10px; justify-content: flex-end; }
-  .ask .note { color: var(--muted); font-size: 11.5px; text-align: right; }
-  .ask .bad { color: var(--warn); font-size: 11.5px; text-align: right; }
+  /* The restore question: a line under the group's title (the title stays). */
+  .ask { display: none; grid-column: 1 / -1; flex-direction: column; align-items: flex-start; gap: 2px; font-size: 12px; padding: 0 0 8px 41px; cursor: default; }
+  .ask .line { display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+  .ask .note { color: var(--muted); font-size: 11.5px; }
+  .ask .bad { color: var(--warn); font-size: 11.5px; overflow-wrap: anywhere; }
   .group.asking .ask, .group.busy .ask, .group.showerr .ask { display: flex; }
-  .group.asking .ghead .nm, .group.asking .ghead .res, .group.asking .ghead .act,
-  .group.busy .ghead .nm, .group.busy .ghead .res, .group.busy .ghead .act,
-  .group.showerr .ghead .nm, .group.showerr .ghead .res, .group.showerr .ghead .act { display: none; }
-  .ask a { color: var(--accent); cursor: pointer; } .ask a.no { color: var(--muted); }
+  .group.asking .ghead .act, .group.busy .ghead .act, .group.showerr .ghead .act { display: none; }
   .ask .wait { color: var(--muted); }
 
   .body { display: none; padding: 0 0 8px; }
   .group.open .body { display: block; }
-  .row { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; min-height: 26px; padding: 3px 10px 3px 51px; cursor: pointer; }
+  .row { display: grid; grid-template-columns: 14px minmax(4em, 1fr) fit-content(60%); gap: 8px; align-items: center; min-height: 26px; padding: 3px 10px 3px 51px; cursor: pointer; }
   .row:hover { background: var(--hover-soft); }
   .row .l { color: var(--muted); min-width: 0; display: block; }
   .row .l .lt { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row .l[data-tip]:hover::after { left: 0; transform: none; }
-  .row .v { color: var(--fg); white-space: nowrap; }
+  .row .v { color: var(--fg); text-align: right; overflow-wrap: anywhere; min-width: 0; }
   .row .v .sw { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--border); border-radius: 2px; }
+  .row .v .old { color: var(--faint); text-decoration: line-through; margin-right: 6px; }
   .row .l .chg { display: block; color: var(--faint); font-size: 11px; line-height: 1.2; }
   .row.refused .v { color: var(--warn); }
+  .row.stale .v, .row.stale .l .lt { color: var(--faint); }
   .more { display: none; padding: 0 10px 6px 73px; color: var(--muted); font-size: 12px; justify-content: space-between; gap: 8px; }
   .row.open, .row.open + .more { background: var(--hover-soft); }
   .row.open + .more { display: flex; }
-  .more .d { min-width: 0; }
+  .more .d { min-width: 0; overflow-wrap: anywhere; }
+  .more .d[data-tip]:hover::after { left: 0; transform: none; white-space: normal; max-width: 240px; }
   .more .d.bad { color: var(--warn); }
-  .more a { color: var(--accent); cursor: pointer; white-space: nowrap; }
-  .more a.off { color: var(--faint); cursor: default; }
   .more .faint { color: var(--faint); white-space: nowrap; }
   .group.newest .ghead .name { font-weight: 600; color: var(--fg); }
   .group.older .ghead .name { color: var(--muted); }
   .group.undone .ghead .name, .group.undone .ghead .res { color: var(--faint); font-weight: 400; text-decoration: line-through; text-decoration-color: rgba(127,127,127,.4); }
   .group.undone .ghead { cursor: pointer; }
-  .group.restored .ghead { cursor: default; }
+  .group.restored .ghead { cursor: default; grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .group.restored .ghead:hover { background: none; }
+  .group.restored .faint { color: var(--faint); }
   .ghead .rl { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
   .ghead .rl .name { min-width: 0; }
   .ghead .rl .sep { color: var(--muted); flex: none; }
-  .ghead .rl a { color: var(--accent); cursor: pointer; white-space: nowrap; flex: none; }
-  .group.restored [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
+  .group.restored [data-tip]:hover::after, .group.restored [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
   [data-tip] { position: relative; }
-  [data-tip]:hover::after { content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  [data-tip]:hover::after, button[data-tip]:focus-visible::after, .row:focus-visible .l[data-tip]::after {
+    content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
     white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
-  .tip-left:hover::after { left: auto; right: 0; transform: none; }
+  .tip-left:hover::after, .tip-left:focus-visible::after { left: auto; right: 0; transform: none; }
   .row .ic { display: inline-flex; }
+  /* After the general tag rule: a row's tag wraps inside the pane. */
+  .row .l[data-tip]:hover::after, .row:focus-visible .l[data-tip]::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
 </style>
 </head>
 <body>
@@ -109,7 +128,7 @@
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></symbol>
 </svg>
 <div id="app">
-  <div class="title">Assistant<span class="sp"></span><span class="ibtn tip-left" id="fold"></span><span class="ibtn tip-left" id="gear"></span></div>
+  <div class="title">Assistant<span class="sp"></span><button type="button" class="ibtn tip-left" id="fold"></button><button type="button" class="ibtn tip-left" id="gear"></button></div>
   <div class="list" id="list"></div>
 </div>
 <script id="panel-core">
@@ -168,7 +187,13 @@
     if (!all.length) return '';
     var rows = all.filter(function (r) { return r.kind !== 'slice' && r.kind !== 'refused'; });
     if (!rows.length) {
+      // A connector's note ("Compared 3 options · nothing kept") names a group that holds no change.
+      for (var n = all.length - 1; n >= 0; n--) {
+        if (all[n].title_hint === 'note') return (all[n].label || '') + (has(all[n].value) ? ' \u00b7 ' + all[n].value : '');
+      }
       var refused = all.filter(function (r) { return r.kind === 'refused'; });
+      var slices = all.filter(function (r) { return r.kind === 'slice'; });
+      if (slices.length) return 'Sliced ' + (slices[slices.length - 1].where || '').trim();
       if (refused.length) return (refused[0].label || '') + ' not allowed';
       return 'Sliced ' + (all[all.length - 1].where || '').trim();
     }
@@ -194,17 +219,62 @@
     return h + 'h ' + (mins % 60) + 'm';
   }
 
-  function groupResult(group) {
+  // allRows (optional): every row of the timeline, to tell whether the group's slice is out of date (sliceStale);
+  // staleUpTo (optional): rows up to this id are out of date (a change the page made itself, like a revert).
+  function groupResult(group, allRows, staleUpTo) {
     var rows = group.rows || [];
     var text = '';
     var warn = false;
+    var last = null;
     rows.forEach(function (r) {
       if (r.kind === 'refused' || has(r.error)) warn = true;
       if (r.kind === 'slice' && r.result && typeof r.result.seconds === 'number') {
         text = formatDuration(r.result.seconds);
+        last = r;
       }
     });
-    return { text: text, warn: warn };
+    var out = { text: text, warn: warn };
+    if (allRows) {
+      out.stale = !!last && sliceStale(last, allRows, staleUpTo);
+      // Only the newest result says "out of date" in words; an older group's result is faint (it is history).
+      var newest = latestSlice(allRows);
+      out.current = !!last && !!newest && newest.id === last.id;
+    }
+    return out;
+  }
+
+  // A slice result is out of date once anything changed after it: a later setting, preset, model or plate row (a
+  // refusal, a note or another slice changes nothing), or a change the page made itself (staleUpTo: rows up to that
+  // id were there when the user reverted or restored something).
+  var CHANGE_KINDS = { setting: 1, preset: 1, model: 1, plate: 1 };
+  function sliceStale(row, allRows, staleUpTo) {
+    if (!row || row.kind !== 'slice' || !row.result || has(row.error)) return false;
+    if (typeof staleUpTo === 'number' && row.id <= staleUpTo) return true;
+    var rs = allRows || [];
+    for (var i = 0; i < rs.length; i++) {
+      var r = rs[i];
+      if (later(r, row) && CHANGE_KINDS[r.kind] && !has(r.error)) return true;
+    }
+    return false;
+  }
+  // r came after row: a later time, or the same second and a later id.
+  function later(r, row) {
+    var a = Number(r.ts) || 0, b = Number(row.ts) || 0;
+    return a > b || (a === b && r.id > row.id);
+  }
+  // The newest slice result of the timeline (the one that would describe the plate now), or null.
+  function latestSlice(allRows) {
+    var best = null;
+    (allRows || []).forEach(function (r) {
+      if (r.kind === 'slice' && r.result && !has(r.error) && (!best || later(r, best))) best = r;
+    });
+    return best;
+  }
+
+  // The rows of a group in the order the page lists them: changes and results as they came, refusals last.
+  function orderedRows(group) {
+    var rows = (group && group.rows) || [];
+    return rows.filter(function (r) { return r.kind !== 'refused'; }).concat(rows.filter(function (r) { return r.kind === 'refused'; }));
   }
 
   var NUM_RE = /^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*?)\s*$/;
@@ -253,18 +323,24 @@
     return live && Object.prototype.hasOwnProperty.call(live, row.id) ? live[row.id] : null;
   }
 
-  function liveDisplay(row, live, isNewest) {
+  // The value a row shows. tracked (the host's capabilities.tracked_live): the host sends live entries only for the
+  // rows it tracks (the latest row of each setting, ruling R43), so any row with an entry shows it; without it, only
+  // the newest group's rows do (isNewest).
+  function liveDisplay(row, live, isNewest, tracked) {
     var shown = has(row.value) ? String(row.value) : '';
-    var e = isNewest ? liveEntry(row, live) : null;
+    var e = (tracked || isNewest) ? liveEntry(row, live) : null;
     if (!e) return { value: shown, note: '' };
     if (!e.present) return { value: shown, note: 'removed since' };
     if (!sameValue(e.value, shown)) return { value: String(e.value), note: 'changed by you' };
     return { value: shown, note: '' };
   }
 
-  function undoState(row, live, isNewest) {
+  function undoState(row, live, isNewest, tracked) {
     if (!row.undo) return { available: false, why: '' };
     if (has(row.undone_at)) return { available: false, why: 'Reverted at ' + row.undone_at };
+    // The assistant changed the same setting again later (the host's superseded flag): undoing this row would
+    // overwrite that change.
+    if (row.superseded === true) return { available: false, why: 'Changed again since; restore an earlier point instead' };
     var e = liveEntry(row, live);
     if (e) {
       if (!e.present) {
@@ -274,7 +350,7 @@
       if (!sameValue(e.value, has(row.value) ? String(row.value) : '')) {
         return {
           available: false,
-          why: isNewest ? 'You changed it since' : 'Changed again since; restore an earlier point instead'
+          why: (tracked || isNewest) ? 'You changed it since' : 'Changed again since; restore an earlier point instead'
         };
       }
     }
@@ -286,6 +362,9 @@
     groupRows: groupRows,
     groupTitle: groupTitle,
     groupResult: groupResult,
+    sliceStale: sliceStale,
+    latestSlice: latestSlice,
+    orderedRows: orderedRows,
     liveDisplay: liveDisplay,
     undoState: undoState,
     sameValue: sameValue,
@@ -302,7 +381,7 @@
   var Core = window.McpPanelCore;
   var TIP = { setting: 'Setting', preset: 'Preset', model: 'Model', plate: 'Plate', slice: 'Slice result', refused: 'Refused', file: 'File' };
   var history = { rows: [], groups: [] };
-  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '', settings_label: '', reveal: false };
+  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '', settings_label: '', reveal: false, tracked_live: false };
   var restoredTo = null, canUndoRestore = false, restoreFailed = false;
   var live = {};
   var api = 'on';
@@ -315,6 +394,9 @@
   var asking = null;            // group id with confirm showing
   var restoreBusy = null;       // group id | 'undo'
   var restoreError = {};        // group id | 'undo' -> reason
+  var staleUpTo = null;         // slice rows up to this id are out of date (the user reverted or restored since)
+  var restoreUndoneAt = null;   // newest row id when the user undid a restore: "Restore undone" until a newer row
+  var focusNext = null;         // data-fk of the control to focus after the next render
   var groups = [];
   var READY_RETRY_MS = 500, READY_RETRIES = 20;
   var gotHistory = false, readyTries = 0, readyTimer = null;
@@ -322,7 +404,22 @@
   function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function has(s) { return s !== null && s !== undefined && s !== ''; }
   function send(msg) { try { if (window.orca && window.orca.postMessage) window.orca.postMessage(msg); } catch (e) {} }
-  function icon(k) { return '<svg class="i k-' + k + '"><use href="#i-' + k + '"/></svg>'; }
+  function icon(k) { return '<svg class="i k-' + k + '" aria-hidden="true"><use href="#i-' + k + '"/></svg>'; }
+
+  // The page never prints itself (a web view's Ctrl+P would open a print sheet over the panel).
+  try { window.print = function () {}; } catch (e) {}
+
+  // Link, faint, warning and focus colours follow the background's lightness: the host's --orca-bg can be light.
+  function applyTheme() {
+    try {
+      if (!window.getComputedStyle || !document.body || !document.documentElement) return;
+      var m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(window.getComputedStyle(document.body).backgroundColor || '');
+      if (!m) return;
+      var light = 0.299 * Number(m[1]) + 0.587 * Number(m[2]) + 0.114 * Number(m[3]) > 140;
+      var want = light ? 'light' : 'dark';
+      if (document.documentElement.getAttribute('data-theme') !== want) document.documentElement.setAttribute('data-theme', want);
+    } catch (e) {}
+  }
 
   function isNewest(g) { return groups.length && groups[0].id === g.id; }
   // The groups the list shows: every real group, newest first. The start point (id 0) stays in groups (the
@@ -334,6 +431,11 @@
     var rs = history.rows;
     for (var i = 0; i < rs.length; i++) if (rs[i].id === id) return rs[i];
     return null;
+  }
+  function maxRowId() {
+    var m = 0;
+    history.rows.forEach(function (r) { if (typeof r.id === 'number' && r.id > m) m = r.id; });
+    return m;
   }
   function isUndone(g) {
     if (restoredTo === null || restoredTo === undefined) return false;
@@ -353,6 +455,9 @@
     });
   }
   function savedToDisk(r) { return r.on_disk === true; }
+  // The preset a setting row was written to ("0.20mm Standard @Printer (unsaved)") goes to the hover tag: the line
+  // itself says only "Was X".
+  function whereInTip(r) { return has(r.where) && (r.reveal === true || /\(unsaved\)$/.test(String(r.where))); }
   function detailText(r, disp) {
     var parts = [];
     var b = has(r.before) ? String(r.before) : '';
@@ -361,13 +466,20 @@
       return parts.join(' \u00b7 ');
     }
     if (b) parts.push('Was ' + b);
-    if (has(r.where)) parts.push(r.where);
+    if (has(r.where) && !whereInTip(r)) parts.push(r.where);
     return parts.join(' \u00b7 ');
   }
   function undoTip(r) {
     if (has(r.undo.tip)) return r.undo.tip;
     if (has(r.before)) return r.undo.verb + ': ' + r.label + ' back to ' + r.before;
     return r.undo.verb + ' ' + (has(r.value) ? r.value : r.label);
+  }
+  // What a click on the row does, for its hover tag.
+  function rowTip(r) {
+    if (r.undo && revealable(r)) return 'Show what it was, undo it, and find it in settings';
+    if (r.undo) return 'Show what it was and undo it';
+    if (revealable(r)) return 'Show what it was and find it in settings';
+    return 'Show details';
   }
 
   // Filament colour rows: a small swatch of the colour shown beside it (the value is validated as #hex first).
@@ -378,50 +490,63 @@
   }
 
   function rowHtml(r, g, newest) {
-    var disp = Core.liveDisplay(r, live, newest);
+    var disp = Core.liveDisplay(r, live, newest, caps.tracked_live);
     var detail = detailText(r, disp);
     var kind = r.kind === 'refused' || (r.kind === 'slice' && has(r.error)) ? 'refused' : r.kind;
-    var rc = kind === 'refused' ? ' refused' : '';
-    var open = openRows[r.id] ? ' open' : '';
+    var reverted = has(r.undone_at) || !!revertedHere[r.id];
+    var stale = Core.sliceStale(r, history.rows, staleUpTo);
+    var latest = stale ? Core.latestSlice(history.rows) : null;
+    var staleNote = stale && latest && latest.id === r.id;
+    var rc = (kind === 'refused' ? ' refused' : '') + (stale ? ' stale' : '') + (reverted ? ' reverted' : '');
+    var isOpen = !!openRows[r.id];
+    var open = isOpen ? ' open' : '';
     var tail = '';
     var errLine = undoError[r.id];
     if (r.undo) {
-      var st = Core.undoState(r, live, newest);
-      var reverted = has(r.undone_at) || revertedHere[r.id];
+      var st = Core.undoState(r, live, newest, caps.tracked_live);
       if (reverted) {
         tail = '<span class="faint">Reverted</span>';
         if (has(r.undone_at)) tail = '<span class="faint tip-left" data-tip="Reverted at ' + esc(r.undone_at) + '">Reverted</span>';
       } else if (pendingUndo[r.id]) {
-        tail = '<span class="faint">Reverting…</span>';
+        tail = '<span class="faint">Reverting\u2026</span>';
       } else if (st.available) {
-        tail = '<a class="tip-left" data-undo="' + r.id + '" data-tip="' + esc(undoTip(r)) + '">' + esc(r.undo.verb) + '</a>';
+        tail = '<button type="button" class="lnk tip-left" data-undo="' + r.id + '" data-fk="u:' + r.id + '" data-tip="' + esc(undoTip(r)) + '">' + esc(r.undo.verb) + '</button>';
       } else {
-        tail = '<a class="off tip-left" data-tip="' + esc(st.why) + '">' + esc(r.undo.verb) + '</a>';
+        tail = '<button type="button" class="lnk off tip-left" aria-disabled="true" data-fk="u:' + r.id + '" data-tip="' + esc(st.why) + '" aria-label="' +
+          esc(r.undo.verb + ' (unavailable: ' + st.why + ')') + '">' + esc(r.undo.verb) + '</button>';
       }
     }
-    var d = '<span class="d">' + esc(detail) + '</span>';
-    var more = '<div class="more">' + d + tail + '</div>';
+    var dTip = whereInTip(r) ? ' data-tip="' + esc(r.where) + '"' : '';
+    var more = '<div class="more"><span class="d"' + dTip + '>' + esc(detail) + '</span>' + tail + '</div>';
     if (errLine) more = '<div class="more"><span class="d bad">' + esc(errLine) + '</span>' + tail + '</div>';
     else if (kind === 'refused' && has(r.error) && !detail) more = '<div class="more"><span class="d">' + esc(r.error) + '</span>' + tail + '</div>';
-    return '<div class="row' + rc + open + '" data-row="' + r.id + '"><span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
-      '<span class="l"' + (revealable(r) && !openRows[r.id] ? ' data-tip="Show in settings"' : '') + '><span class="lt">' + esc(r.label) + '</span>' +
-      (disp.note ? '<span class="chg">' + esc(disp.note) + '</span>' : '') + '</span><span class="v">' + swatch(r, disp.value) + esc(disp.value) + '</span></div>' + more;
+    // A reverted row shows what is there now (the earlier value), the undone value struck through before it.
+    var value = esc(disp.value);
+    if (reverted && has(r.before)) value = '<s class="old">' + esc(disp.value) + '</s>' + swatch(r, r.before) + esc(r.before);
+    else if (reverted) value = '<s class="old">' + esc(disp.value) + '</s>';
+    else value = swatch(r, disp.value) + value;
+    var note = disp.note || (staleNote ? 'out of date' : '');
+    var label = r.label + (has(disp.value) ? ' ' + disp.value : '') + (note ? ', ' + note : '') + (reverted ? ', reverted' : '');
+    return '<div class="row' + rc + open + '" data-row="' + r.id + '" data-fk="r:' + r.id + '" role="button" tabindex="0" aria-expanded="' + isOpen + '" aria-label="' + esc(label) + '">' +
+      '<span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
+      '<span class="l"' + (!isOpen ? ' data-tip="' + esc(rowTip(r)) + '"' : '') + '><span class="lt">' + esc(r.label) + '</span>' +
+      (note ? '<span class="chg">' + esc(note) + '</span>' : '') + '</span><span class="v">' + value + '</span></div>' + more;
   }
 
   function groupHtml(g, idx) {
     var newest = idx === 0;
     var undone = isUndone(g);
     var open = !!openGroups[g.id] && !undone;
-    var res = Core.groupResult(g);
+    var res = Core.groupResult(g, history.rows, staleUpTo);
     var cls = 'group' + (open ? ' open' : '') + (undone ? ' undone' : '') + (newest ? ' newest' : ' older');
     var restorable = caps.restore && !newest && !undone && g.restore;
     var ask = '';
     if (restoreBusy === g.id) {
       cls += ' busy';
-      ask = '<span class="ask"><span class="line wait">Restoring…</span></span>';
+      ask = '<div class="ask"><span class="line wait">Restoring\u2026</span></div>';
     } else if (restoreError[g.id]) {
       cls += ' showerr';
-      ask = '<span class="ask"><span class="line"><span class="bad">' + esc(restoreError[g.id]) + '</span><a class="no" data-dismiss="' + g.id + '">OK</a></span></span>';
+      ask = '<div class="ask"><span class="line"><span class="bad">' + esc(restoreError[g.id]) + '</span><button type="button" class="lnk no" data-dismiss="' + g.id + '" data-fk="d:' + g.id + '">OK</button></span></div>';
     } else if (asking === g.id) {
       cls += ' asking';
       var notes = '';
@@ -429,32 +554,45 @@
       var disk = undoneGroups.some(function (x) { return x.rows.some(savedToDisk); });
       if (disk) notes += '<span class="note">Files and presets saved to disk stay.</span>';
       notes += '<span class="note">Your own changes since then are undone too.</span>';
-      ask = '<span class="ask"><span class="line">Restore to ' + esc(g.time) + '? <a data-yes="' + g.id + '">Yes</a><a class="no" data-no="' + g.id + '">No</a></span>' + notes + '</span>';
+      ask = '<div class="ask" role="group" aria-label="' + esc('Restore to ' + g.time + '?') + '"><span class="line">Restore to ' + esc(g.time) + '? ' +
+        '<button type="button" class="lnk" data-yes="' + g.id + '" data-fk="y:' + g.id + '">Yes</button>' +
+        '<button type="button" class="lnk no" data-no="' + g.id + '" data-fk="n:' + g.id + '">No</button></span>' + notes + '</div>';
     }
     var act = '';
     if (restorable && !ask) {
       var ok = g.restore.available;
-      act = '<span class="act tip-left' + (ok ? '' : ' off') + '" ' + (ok ? 'data-ask="' + g.id + '"' : '') + ' data-tip="' + esc(ok ? 'Restore the project to ' + g.time : (g.restore.why || 'No restore point here')) + '"><svg><use href="#i-restore"/></svg></span>';
+      var tip = ok ? 'Restore the project to how it was at ' + g.time + ' (undoes later changes)' : (g.restore.why || 'No restore point here');
+      act = '<button type="button" class="act tip-left' + (ok ? '' : ' off') + '" ' + (ok ? 'data-ask="' + g.id + '"' : 'aria-disabled="true"') +
+        ' data-fk="a:' + g.id + '" data-tip="' + esc(tip) + '" aria-label="' + esc(tip) + '"><svg aria-hidden="true"><use href="#i-restore"/></svg></button>';
     }
-    var resHtml = '<span class="res' + (act ? ' hide-on-hover' : '') + '">' + (res.warn ? icon('refused') : '') + esc(res.text) + '</span>';
+    var resText = res.text + (res.text && res.stale && res.current ? ' \u00b7 out of date' : '');
+    var resHtml = '<span class="res' + (res.stale ? ' stale' : '') + '"' + (res.stale ? ' data-tip="Out of date: something changed after this slice"' : '') + '>' +
+      (res.warn ? icon('refused') : '') + esc(resText) + '</span>';
     var title = Core.groupTitle(g);
-    return '<div class="' + cls + '" data-g="' + g.id + '"><div class="ghead" data-toggle="' + g.id + '"><span class="t">' + esc(g.time) + '</span><span class="nm" data-tip="' + esc(title) + '"><span class="name">' + esc(title) + '</span></span>' +
-      resHtml + act + ask + '</div><div class="body">' + g.rows.map(function (r) { return rowHtml(r, g, newest && !undone); }).join('') + '</div></div>';
+    return '<div class="' + cls + '" data-g="' + g.id + '"><div class="ghead" data-toggle="' + g.id + '">' +
+      '<button type="button" class="gt" data-toggle="' + g.id + '" data-fk="g:' + g.id + '" aria-expanded="' + open + '" aria-label="' + esc(g.time + ' ' + title + (undone ? ', undone by the restore' : '')) + '">' +
+      '<span class="t">' + esc(g.time) + '</span><span class="nm" data-tip="' + esc(title) + '"><span class="name">' + esc(title) + '</span></span></button>' +
+      resHtml + act + ask + '</div><div class="body">' + Core.orderedRows(g).map(function (r) { return rowHtml(r, g, newest && !undone); }).join('') + '</div></div>';
   }
 
   function restoredLineHtml() {
-    if (restoredTo === null || restoredTo === undefined) return '';
+    if (restoredTo === null || restoredTo === undefined) {
+      // After the user undid a restore: a faint line until the next change.
+      if (restoreUndoneAt !== null && restoreUndoneAt === maxRowId())
+        return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="rl"><span class="name faint">Restore undone</span></span></div></div>';
+      return '';
+    }
     var t = '';
     groups.forEach(function (g) { if (g.id === restoredTo) t = g.time; });
     // Column 3 holds only the transient states; the Undo link follows the text in column 2 ("Restored to 10:31 ·
     // Undo"), outside .name so its hover tag is not clipped by the ellipsis.
     var right = '';
-    if (restoreBusy === 'undo') right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line wait">Restoring…</span></span>';
-    else if (restoreError.undo) right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line"><span class="bad">' + esc(restoreError.undo) + '</span></span></span>';
+    if (restoreBusy === 'undo') right = '<span class="ask" style="display:flex;grid-column:auto;padding:0"><span class="line wait">Restoring\u2026</span></span>';
+    else if (restoreError.undo) right = '<span class="ask" style="display:flex;grid-column:auto;padding:0"><span class="line"><span class="bad">' + esc(restoreError.undo) + '</span></span></span>';
     var inline = canUndoRestore && restoreBusy === null && !restoreError.undo;
     var lead = restoreFailed ? 'Couldn\'t restore to ' : 'Restored to ';
     return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="rl"><span class="name">' + esc(lead + t) + '</span>' +
-      (inline ? '<span class="sep">\u00b7</span><a class="tip-left" data-undo-restore="1" data-tip="Go back to before the restore">Undo</a>' : '') +
+      (inline ? '<span class="sep">\u00b7</span><button type="button" class="lnk tip-left" data-undo-restore="1" data-fk="ur" data-tip="Go back to before the restore">Undo</button>' : '') +
       '</span>' + right + '</div></div>';
   }
 
@@ -463,21 +601,44 @@
     var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
     var f = document.getElementById('fold');
     f.setAttribute('data-tip', allOpen ? 'Collapse all' : 'Expand all');
-    f.innerHTML = '<svg><use href="#i-' + (allOpen ? 'collapse' : 'expand') + '"/></svg>';
+    f.setAttribute('aria-label', allOpen ? 'Collapse all' : 'Expand all');
+    f.innerHTML = '<svg aria-hidden="true"><use href="#i-' + (allOpen ? 'collapse' : 'expand') + '"/></svg>';
     f.style.visibility = shownGroups().length ? 'visible' : 'hidden';
   }
   function updateGear() {
     var g = document.getElementById('gear');
-    g.setAttribute('data-tip', caps.open_settings ? Core.settingsLabel(caps) : (caps.settings_hint || 'Settings'));
-    g.innerHTML = '<svg><use href="#i-gear"/></svg>';
+    var tip = caps.open_settings ? Core.settingsLabel(caps) : (caps.settings_hint || 'Settings');
+    g.setAttribute('data-tip', tip);
+    g.setAttribute('aria-label', tip);
+    g.innerHTML = '<svg aria-hidden="true"><use href="#i-gear"/></svg>';
+  }
+
+  // Keyboard focus survives a render (the list is rebuilt): the control with the same data-fk gets it back, or the
+  // one an action asked for (focusNext).
+  function focusedKey() {
+    try {
+      var a = document.activeElement;
+      return a && a.getAttribute ? a.getAttribute('data-fk') : null;
+    } catch (e) { return null; }
+  }
+  function refocus(key) {
+    if (!key) return;
+    try {
+      if (!document.querySelector) return;
+      var el = document.querySelector('[data-fk="' + key + '"]');
+      if (el && el.focus) el.focus();
+    } catch (e) {}
   }
 
   function render() {
+    applyTheme();
+    var keep = focusNext || focusedKey();
+    focusNext = null;
     groups = Core.groupRows(history);
     var html = '';
     if (api === 'off') {
       html += '<div class="empty offnote">' + esc(Core.offText(caps)) + (caps.open_settings
-        ? ' <a data-settings="1">' + esc(Core.settingsLink(caps)) + '</a>'
+        ? ' <button type="button" data-settings="1" data-fk="set">' + esc(Core.settingsLink(caps)) + '</button>'
         : (caps.settings_hint ? '<br>' + esc(caps.settings_hint) : '')) + '</div>';
     }
     var shown = shownGroups();
@@ -493,13 +654,14 @@
     list.scrollTop = top;
     updateFold();
     updateGear();
+    refocus(keep);
   }
 
   function applyHistory(m) {
     history = { rows: m.rows || [], groups: m.groups || [] };
     var c = m.capabilities || {};
     caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '', off_text: c.off_text || '',
-             settings_label: c.settings_label || '', reveal: c.reveal === true };
+             settings_label: c.settings_label || '', reveal: c.reveal === true, tracked_live: c.tracked_live === true };
     restoredTo = has(m.restored_to) || m.restored_to === 0 ? m.restored_to : null;
     restoreFailed = restoredTo !== null && m.restore_failed === true;
     canUndoRestore = !!m.can_undo_restore;
@@ -525,12 +687,14 @@
     if (m.action === 'undo') {
       var id = m.row;
       delete pendingUndo[id];
-      if (m.status === 'ok') { revertedHere[id] = true; delete undoError[id]; }
+      if (m.status === 'ok') { revertedHere[id] = true; delete undoError[id]; staleUpTo = Math.max(staleUpTo || 0, maxRowId()); }
       else if (m.status === 'failed') { undoError[id] = m.reason || 'Could not revert'; openRows[id] = true; }
     } else {
       var key = m.action === 'undo_restore' ? 'undo' : m.group;
       if (restoreBusy === key) restoreBusy = null;
       if (m.status === 'failed') restoreError[key === undefined ? 'undo' : key] = m.reason || 'Could not restore';
+      if (m.status === 'ok') staleUpTo = Math.max(staleUpTo || 0, maxRowId());
+      if (m.status === 'ok' && m.action === 'undo_restore') restoreUndoneAt = maxRowId();
     }
     render();
   }
@@ -564,50 +728,94 @@
     while (el && el !== document) { if (el.getAttribute && el.hasAttribute(attr)) return el; el = el.parentNode; }
     return null;
   }
-  document.addEventListener('click', function (e) {
+  function toggleRow(rid) {
+    openRows[rid] = !openRows[rid];
+    // Opening a setting row also shows that setting in the host's settings sidebar (fire and forget).
+    var rr = openRows[rid] ? rowById(rid) : null;
+    if (rr && revealable(rr)) send({ action: 'reveal', row: rid });
+    focusNext = 'r:' + rid;
+    render();
+  }
+  // One click (or Enter / Space on a control): what it does.
+  function activate(target) {
     var el;
-    if ((el = ancestor(e.target, 'data-undo'))) {
-      e.stopPropagation();
+    if ((el = ancestor(target, 'data-undo'))) {
       var id = Number(el.getAttribute('data-undo'));
       pendingUndo[id] = 'busy'; delete undoError[id];
-      render(); send({ action: 'undo', row: id }); return;
+      focusNext = 'r:' + id;
+      render(); send({ action: 'undo', row: id }); return true;
     }
-    if (ancestor(e.target, 'data-undo-restore')) {
+    if (ancestor(target, 'data-undo-restore')) {
       restoreBusy = 'undo'; delete restoreError.undo;
-      render(); send({ action: 'undo_restore' }); return;
+      render(); send({ action: 'undo_restore' }); return true;
     }
-    if ((el = ancestor(e.target, 'data-yes'))) {
+    if ((el = ancestor(target, 'data-yes'))) {
       var gid = Number(el.getAttribute('data-yes'));
       asking = null; restoreBusy = gid; delete restoreError[gid];
-      render(); send({ action: 'restore', group: gid }); return;
+      focusNext = 'g:' + gid;
+      render(); send({ action: 'restore', group: gid }); return true;
     }
-    if (ancestor(e.target, 'data-no')) { asking = null; render(); return; }
-    if ((el = ancestor(e.target, 'data-dismiss'))) { delete restoreError[Number(el.getAttribute('data-dismiss'))]; render(); return; }
-    if ((el = ancestor(e.target, 'data-ask'))) { asking = Number(el.getAttribute('data-ask')); render(); return; }
-    if (ancestor(e.target, 'data-settings')) { send({ action: 'open_settings' }); return; }
-    if (ancestor(e.target, 'gear') || e.target.id === 'gear' || (e.target.closest && e.target.closest('#gear'))) {
+    if ((el = ancestor(target, 'data-no'))) { var nid = Number(el.getAttribute('data-no')); asking = null; focusNext = 'a:' + nid; render(); return true; }
+    if ((el = ancestor(target, 'data-dismiss'))) { var did = Number(el.getAttribute('data-dismiss')); delete restoreError[did]; focusNext = 'g:' + did; render(); return true; }
+    if ((el = ancestor(target, 'data-ask'))) { asking = Number(el.getAttribute('data-ask')); focusNext = 'n:' + asking; render(); return true; }
+    if (ancestor(target, 'data-settings')) { send({ action: 'open_settings' }); return true; }
+    if (ancestor(target, 'gear') || target.id === 'gear' || (target.closest && target.closest('#gear'))) {
       if (caps.open_settings) send({ action: 'open_settings' });
-      return;
+      return true;
     }
-    if (e.target.closest && e.target.closest('#fold')) {
+    if (target.closest && target.closest('#fold')) {
       var cand = shownGroups().filter(function (g) { return !isUndone(g); });
       var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
       cand.forEach(function (g) { openGroups[g.id] = !allOpen; });
-      render(); return;
+      render(); return true;
     }
-    if (e.target.closest && e.target.closest('.more')) return;
-    if ((el = e.target.closest && e.target.closest('.row'))) {
-      var rid = Number(el.getAttribute('data-row'));
-      openRows[rid] = !openRows[rid];
-      // Opening a setting row also shows that setting in the host's settings sidebar (fire and forget).
-      var rr = openRows[rid] ? rowById(rid) : null;
-      if (rr && revealable(rr)) send({ action: 'reveal', row: rid });
-      render(); return;
-    }
-    if ((el = e.target.closest && e.target.closest('[data-toggle]'))) {
+    if (target.closest && target.closest('.more')) return false;
+    if ((el = target.closest && target.closest('.row'))) { toggleRow(Number(el.getAttribute('data-row'))); return true; }
+    if (target.closest && target.closest('.ask')) return false;
+    if ((el = target.closest && target.closest('[data-toggle]'))) {
       var tid = Number(el.getAttribute('data-toggle'));
-      if (asking === tid || restoreBusy === tid) return;
-      openGroups[tid] = !openGroups[tid]; render(); return;
+      if (asking === tid || restoreBusy === tid) return false;
+      openGroups[tid] = !openGroups[tid];
+      focusNext = 'g:' + tid;
+      render(); return true;
+    }
+    return false;
+  }
+  document.addEventListener('click', function (e) {
+    if (ancestor(e.target, 'data-undo')) e.stopPropagation();
+    activate(e.target);
+  });
+  // Keyboard: Enter / Space on a row (role=button) opens it (buttons do that themselves); Esc answers No to the
+  // restore question, else closes the open row the focus is in; Ctrl+P / Ctrl+S never print or save the page.
+  document.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'p' || k === 'P' || k === 's' || k === 'S')) {
+      if (e.preventDefault) e.preventDefault();
+      return;
+    }
+    var t = e.target || {};
+    if (k === 'Escape' || k === 'Esc') {
+      if (asking !== null) {
+        var gid = asking;
+        asking = null; focusNext = 'a:' + gid; render();
+        if (e.preventDefault) e.preventDefault();
+        return;
+      }
+      var rowEl = t.closest ? t.closest('.row') : null;
+      var rid = rowEl ? Number(rowEl.getAttribute('data-row')) : NaN;
+      if (isNaN(rid) && t.closest && t.closest('.more')) {
+        var u = t.getAttribute && (t.getAttribute('data-undo') || (t.getAttribute('data-fk') || '').replace(/^u:/, ''));
+        rid = Number(u);
+      }
+      if (!isNaN(rid) && openRows[rid]) {
+        openRows[rid] = false; focusNext = 'r:' + rid; render();
+        if (e.preventDefault) e.preventDefault();
+      }
+      return;
+    }
+    if ((k === 'Enter' || k === ' ' || k === 'Spacebar') && t.getAttribute && t.getAttribute('role') === 'button' && t.hasAttribute && t.hasAttribute('data-row')) {
+      if (e.preventDefault) e.preventDefault();
+      toggleRow(Number(t.getAttribute('data-row')));
     }
   });
   // The host may miss the first ready (its message handler can register after the page's script ran): say it again

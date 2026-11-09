@@ -143,14 +143,14 @@ test('restored_line', () => {
   const p = page();
   p.receive(historyOf({ restored_to: 0, can_undo_restore: true }));
   // ' · Undo' right after the text, in the same cell, outside the ellipsised .name
-  assert.match(p.list(), /<span class="rl"><span class="name">Restored to 09:50<\/span><span class="sep">·<\/span><a [^>]*data-undo-restore="1"[^>]*>Undo<\/a><\/span><\/div>/);
+  assert.match(p.list(), /<span class="rl"><span class="name">Restored to 09:50<\/span><span class="sep">·<\/span><button [^>]*data-undo-restore="1"[^>]*>Undo<\/button><\/span><\/div>/);
   assert.match(p.list(), /group undone/);
 });
 
 test('failed_restore_line', () => {
   const p = page();
   p.receive(historyOf({ restored_to: 0, can_undo_restore: true, restore_failed: true }));
-  assert.match(p.list(), /<span class="rl"><span class="name">Couldn&#39;t restore to 09:50<\/span><span class="sep">·<\/span><a [^>]*data-undo-restore="1"[^>]*>Undo<\/a><\/span><\/div>/);
+  assert.match(p.list(), /<span class="rl"><span class="name">Couldn&#39;t restore to 09:50<\/span><span class="sep">·<\/span><button [^>]*data-undo-restore="1"[^>]*>Undo<\/button><\/span><\/div>/);
   assert.doesNotMatch(p.list(), /Restored to/);
   assert.doesNotMatch(p.list(), /group undone/, 'nothing struck: the host marked nothing undone');
 });
@@ -189,7 +189,7 @@ test('settings_label_default', () => {
   p.receive(historyOf({ rows: [], groups: [] }));
   p.receive({ type: 'state', api: 'off' });
   assert.equal(p.gearTip(), 'Remote API settings');
-  assert.match(p.list(), /<a data-settings="1">Open the Remote API settings<\/a>/);
+  assert.match(p.list(), /<button type="button" data-settings="1" data-fk="set">Open the Remote API settings<\/button>/);
 });
 
 test('settings_label_supplied', () => {
@@ -197,7 +197,7 @@ test('settings_label_supplied', () => {
   p.receive(historyOf({ rows: [], groups: [], capabilities: { open_settings: true, off_text: 'Assistant access is off.', settings_label: 'Assistant settings' } }));
   p.receive({ type: 'state', api: 'off' });
   assert.equal(p.gearTip(), 'Assistant settings');
-  assert.match(p.list(), /Assistant access is off\. <a data-settings="1">Open the assistant settings<\/a>/);
+  assert.match(p.list(), /Assistant access is off\. <button type="button" data-settings="1" data-fk="set">Open the assistant settings<\/button>/);
   assert.doesNotMatch(p.list(), /Remote API/);
 });
 
@@ -299,13 +299,14 @@ test('reveal_needs_a_revealable_row', () => {
 test('reveal_hover_tag', () => {
   const p = page();
   p.receive(revealHistory({ reveal: true }, { reveal: true }));
-  assert.match(p.list(), /<span class="l" data-tip="Show in settings"><span class="lt">Wall loops<\/span>/);
+  assert.match(p.list(), /<span class="l" data-tip="Show what it was, undo it, and find it in settings"><span class="lt">Wall loops<\/span>/);
   p.clickRow(1);
-  assert.doesNotMatch(p.list(), /Show in settings/, 'an open row closes on click: no tag');
+  assert.doesNotMatch(p.list(), /find it in settings/, 'an open row closes on click: no tag');
   const q = page();
   q.receive(revealHistory({}, { reveal: true }));
-  assert.doesNotMatch(q.list(), /Show in settings/);
+  assert.doesNotMatch(q.list(), /find it in settings/);
+  assert.match(q.list(), /data-tip="Show what it was and undo it"/, 'no reveal: the tag says what the click still does');
   const r = page();
   r.receive(revealHistory({ reveal: true }, {}));
-  assert.doesNotMatch(r.list(), /Show in settings/);
+  assert.doesNotMatch(r.list(), /find it in settings/);
 });
