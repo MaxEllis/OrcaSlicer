@@ -61,7 +61,7 @@ OrcaSlicer's own Ctrl+Z (⌘Z on a Mac) undoes model edits, not settings, so tak
 
 - **Off until you enable it**, and it listens on this computer only. **Allow LAN access** is a separate box.
 - **Every request needs the token.** Regenerate it to cut off every client at once.
-- **No scripts, G-code or printer connection changes** until you allow them twice: tick **Allow script, G-code and connection edits** in **Preferences → Remote API**, and list those settings in the connector's allowed keys in your AI app (`ORCA_MCP_ALLOW_KEYS`).
+- **No scripts, G-code or printer connection changes** until you tick **Allow script, G-code and connection edits** in **Preferences → Remote API**. Only that box allows them, and no assistant or API call can tick it.
 - **No deleting or replacing project files** until you tick **Allow deleting and replacing project files**.
 - **Passwords and API keys** are left out of everything the API returns.
 
