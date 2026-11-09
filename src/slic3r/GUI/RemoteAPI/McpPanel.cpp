@@ -48,10 +48,6 @@ constexpr size_t  kTestOutboxMax   = 200;
 bool                s_test_record = false; // test_clear() was called: keep what the pane sends
 std::deque<json>    s_test_outbox;
 bool                s_waiting     = false; // an open_when_ready() waits for the plater
-// Preferences asked for from the pane is queued or on screen. A second request meanwhile (a double click, delivered
-// inside the first dialog's modal loop) is dropped: a nested Preferences that rebuilds the GUI under the outer modal
-// crashes (see GUI_App::open_preferences).
-bool                s_prefs_from_pane = false;
 
 std::string text_field(const json &j, const char *key)
 {
@@ -216,12 +212,10 @@ public:
         if (!m_timer.IsRunning()) m_timer.StartOnce(ms);
     }
 
+    // A second request while Preferences is up (a double click, delivered inside its modal loop) reaches
+    // GUI_App::open_preferences nested, which ignores it: one Preferences at a time for every caller.
     void want_settings()
     {
-        if (s_prefs_from_pane) {
-            BOOST_LOG_TRIVIAL(info) << "MCP panel: Preferences already opening, request dropped";
-            return;
-        }
         m_want_settings = true;
         if (!m_timer.IsRunning()) m_timer.StartOnce(1);
     }
@@ -391,18 +385,11 @@ private:
         }
         if (m_want_settings) {
             m_want_settings = false;
-            if (!s_prefs_from_pane) {
-                s_prefs_from_pane = true;
-                // From the app's queue: Preferences may rebuild the GUI (a language change), which destroys this pane.
-                wxGetApp().CallAfter([]() {
-                    struct Done
-                    {
-                        ~Done() { s_prefs_from_pane = false; }
-                    } done;
-                    if (!closing_reason().empty() || wxGetApp().mainframe == nullptr) return;
-                    wxGetApp().open_preferences(PreferencesTab::RemoteAPI);
-                });
-            }
+            // From the app's queue: Preferences may rebuild the GUI (a language change), which destroys this pane.
+            wxGetApp().CallAfter([]() {
+                if (!closing_reason().empty() || wxGetApp().mainframe == nullptr) return;
+                wxGetApp().open_preferences(PreferencesTab::RemoteAPI);
+            });
         }
         if (m_want_history)
             push_history();

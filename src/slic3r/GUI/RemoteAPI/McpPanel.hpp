@@ -10,8 +10,8 @@
 // every undo, restore and undo_restore ({action, row|group, status ok|cancelled|failed, reason}, never silent;
 // failed without running while the GUI is rebuilt or the app closes). A page load with no ready yet also gets state
 // and history (the page's ready can be lost while the bridge registers; the page repeats it too).
-// Page -> host: ready, live, undo {row}, restore {group}, undo_restore, open_settings (Preferences > Remote API; one
-// at a time, a second request while it is queued or open is dropped).
+// Page -> host: ready, live, undo {row}, restore {group}, undo_restore, open_settings (Preferences > Remote API;
+// GUI_App::open_preferences ignores a request while Preferences is already up).
 //
 // It opens at start (and after the GUI is rebuilt) when the Remote API is enabled and the user has not closed it:
 // app_config "remote_api_panel" is "0" after a close from the pane's own button, "1" after View > OrcaSlicer MCP

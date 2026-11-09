@@ -43,7 +43,7 @@ function page() {
     }
     now = end;
   }
-  return { sent, receive: (m) => window.__mcpPanelReceive(m), list: () => els.list.innerHTML, tick };
+  return { sent, receive: (m) => window.__mcpPanelReceive(m), list: () => els.list.innerHTML, gearTip: () => els.gear.attrs['data-tip'], tick };
 }
 
 const readies = (sent) => sent.filter((m) => m.action === 'ready').length;
@@ -134,17 +134,16 @@ test('no_swatch_for_other_rows', () => {
 test('restored_line', () => {
   const p = page();
   p.receive(historyOf({ restored_to: 0, can_undo_restore: true }));
-  assert.match(p.list(), /Restored to 09:50 ·/);
-  assert.match(p.list(), /data-undo-restore/);
+  // ' · Undo' right after the text, in the same cell, outside the ellipsised .name
+  assert.match(p.list(), /<span class="rl"><span class="name">Restored to 09:50<\/span><span class="sep">·<\/span><a [^>]*data-undo-restore="1"[^>]*>Undo<\/a><\/span><\/div>/);
   assert.match(p.list(), /group undone/);
 });
 
 test('failed_restore_line', () => {
   const p = page();
   p.receive(historyOf({ restored_to: 0, can_undo_restore: true, restore_failed: true }));
-  assert.match(p.list(), /Couldn&#39;t restore to 09:50 ·/);
+  assert.match(p.list(), /<span class="rl"><span class="name">Couldn&#39;t restore to 09:50<\/span><span class="sep">·<\/span><a [^>]*data-undo-restore="1"[^>]*>Undo<\/a><\/span><\/div>/);
   assert.doesNotMatch(p.list(), /Restored to/);
-  assert.match(p.list(), /data-undo-restore/);
   assert.doesNotMatch(p.list(), /group undone/, 'nothing struck: the host marked nothing undone');
 });
 
@@ -160,4 +159,36 @@ test('repeated_live_messages', () => {
   p.receive({ type: 'live', values: { 1: { value: '3', present: true } } });
   p.receive({ type: 'live', values: { 1: { value: '4', present: true } } });
   assert.match(p.list(), /changed by you/);
+});
+
+test('restored_line_without_undo_has_no_dot', () => {
+  const p = page();
+  p.receive(historyOf({ restored_to: 0, can_undo_restore: false }));
+  assert.match(p.list(), /<span class="rl"><span class="name">Restored to 09:50<\/span><\/span>/);
+  assert.doesNotMatch(p.list(), /class="sep"/);
+});
+
+test('undo_restore_error_sits_in_column_3', () => {
+  const p = page();
+  p.receive(historyOf({ restored_to: 0, can_undo_restore: true }));
+  p.receive({ type: 'result', action: 'undo_restore', status: 'failed', reason: 'The snapshot before the restore is gone' });
+  assert.match(p.list(), /Restored to 09:50<\/span><\/span><span class="ask"[^>]*><span class="line"><span class="bad">The snapshot before the restore is gone/);
+  assert.doesNotMatch(p.list(), /class="sep"/);
+});
+
+test('settings_label_default', () => {
+  const p = page();
+  p.receive(historyOf({ rows: [], groups: [] }));
+  p.receive({ type: 'state', api: 'off' });
+  assert.equal(p.gearTip(), 'Remote API settings');
+  assert.match(p.list(), /<a data-settings="1">Open the Remote API settings<\/a>/);
+});
+
+test('settings_label_supplied', () => {
+  const p = page();
+  p.receive(historyOf({ rows: [], groups: [], capabilities: { open_settings: true, off_text: 'Assistant access is off.', settings_label: 'Assistant settings' } }));
+  p.receive({ type: 'state', api: 'off' });
+  assert.equal(p.gearTip(), 'Assistant settings');
+  assert.match(p.list(), /Assistant access is off\. <a data-settings="1">Open the assistant settings<\/a>/);
+  assert.doesNotMatch(p.list(), /Remote API/);
 });

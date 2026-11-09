@@ -722,13 +722,14 @@ in a row (a double click): open one settings window, not one inside another.
  "rows": [ /* rows, below */ ], "groups": [ /* groups, below */ ],
  "restored_to": null, "restore_failed": false, "can_undo_restore": false,
  "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused"],
-                  "open_settings": true, "settings_hint": "", "off_text": "The Remote API is off."}}
+                  "open_settings": true, "settings_hint": "", "settings_label": "Remote API settings",
+                  "off_text": "The Remote API is off."}}
 ```
 - `rows`, `groups`, `restored_to`, `restore_failed` and `can_undo_restore` are the shape of `GET /activity`
   above (this fork sends exactly that object plus `type`, `version` and `capabilities`).
 - `restored_to`: `null`, or the group id of the last restore point the user restored to. The page then shows
-  "Restored to HH:MM" at the top (HH:MM is that group's `time`), with " · Undo" when `can_undo_restore` is true,
-  and greys out the groups after that point.
+  "Restored to HH:MM" at the top (HH:MM is that group's `time`), followed by " · Undo" when `can_undo_restore` is
+  true, and greys out the groups after that point.
 - `restore_failed` (optional, default `false`; read only with `restored_to`): the last restore failed after it
   had started replacing the project. The line reads "Couldn't restore to HH:MM" instead, and no group is greyed
   out (nothing was marked undone).
@@ -738,6 +739,10 @@ in a row (a double click): open one settings window, not one inside another.
   - `open_settings` (bool, default `true`): the settings icon and the off line's link send `open_settings`.
     With `false` the icon's hover tag and a line under the off text show `settings_hint` instead.
   - `settings_hint` (string): where the settings are, for `open_settings: false`.
+  - `settings_label` (string, optional): the settings icon's hover tag, default "Remote API settings". The off
+    line's link reads "Open the " and the label, with an ordinary capitalised first word lower-cased ("Assistant
+    settings" gives "Open the assistant settings"); a name keeps its capitals ("Open the Remote API settings",
+    "Open the OrcaSlicer MCP settings").
   - `off_text` (string, optional): the line shown while `state.api` is `"off"`. Default "The Remote API is
     off."; the plugin sends "Assistant access is off.", this fork sends "The Remote API couldn't start. Check its
     port." when it is enabled but not listening, and nothing otherwise.
@@ -746,11 +751,13 @@ in a row (a double click): open one settings window, not one inside another.
 ```json
 {"type": "live", "values": {"12": {"value": "20%", "present": true}, "14": {"value": "bracket.stl", "present": false}}}
 ```
-Keys are row ids as strings. `value` is in the row's own display form (`value` of the row, unit included);
+Each `live` replaces the previous set (it is not merged), so always send every entry. Keys are row ids as strings.
+`value` is in the row's own display form (`value` of the row, unit included);
 `present: false` means the thing the row changed is gone (an object deleted since). Send an entry for every row
 that has an undo and is not undone, and for every row of the newest group whose value can be read now; leave out
 rows you cannot read. The page compares numbers with the same unit text within 1e-6 (relative) and anything else
-exactly, so send the same form the row was recorded in. For geometry (moves, rotations, arranges) the host
+exactly and case-sensitively, so send the same form the row was recorded in (a colour recorded as `#F2754E` must
+come back as `#F2754E`, not `#f2754e`). For geometry (moves, rotations, arranges) the host
 compares and sends the row's own `value` when nothing moved, else another text such as `"moved since"`.
 In the newest group a different live value is shown with "changed by you", a missing one with "removed since";
 in any group an undo is then unavailable ("You changed it since", "Changed again since; restore an earlier point
@@ -758,7 +765,7 @@ instead", "<name> is no longer on the plate").
 
 **`state`**: `{"type": "state", "api": "on" | "off"}`, after `ready` and whenever it changes. `on` means the
 assistant can reach OrcaSlicer now (this fork: the Remote API server is listening, not only enabled in
-Preferences). `off` shows `off_text` above the timeline.
+Preferences). `off` shows `off_text` above the timeline. Until the first `state` the page assumes `on`.
 
 **`result`**: the answer to one action.
 ```json
@@ -773,6 +780,8 @@ without its busy mark.
 
 ### Rows
 
+Every string a host sends is shown as plain text: the page escapes it, so HTML in it is not interpreted.
+
 ```json
 {"id": 12, "group": 3, "ts": 1762680660, "time": "10:31", "kind": "setting",
  "label": "Sparse infill density", "value": "15%", "before": "25%", "where": "0.20mm Standard @Printer (unsaved)",
@@ -782,7 +791,7 @@ without its busy mark.
 - `id` (int): unique within the project's timeline. `group` (int): the group it belongs to.
 - `ts` (seconds) and `time` (`"HH:MM"`, local): the host formats the time; the page never does.
 - `kind`: `setting`, `preset`, `model`, `plate`, `slice`, `file` or `refused`. It picks the icon and its
-  colour; `refused` (and a `slice` row with an `error`) is shown in red.
+  colour; `refused` (and a `slice` row with an `error`) is shown in red. Any other kind is shown with no icon.
 - `label`: OrcaSlicer's own label (a setting's full label: "Nozzle temperature", not "Other layers").
 - `value`: the new value as shown (unit added, enum label). A `setting` row whose value is a colour (`#RGB`,
   `#RRGGBB` or `#RRGGBBAA`, as filament colour rows carry it, label "Filament 2 colour") gets a small colour

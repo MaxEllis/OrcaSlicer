@@ -155,3 +155,11 @@ test('same_value_is_exported', () => {
   assert.equal(C.sameValue('3.0', '3'), true);
   assert.equal(C.sameValue('#FF0000', '#ff0000'), false);
 });
+test('settings_label_and_link', () => {
+  assert.equal(C.settingsLabel(undefined), 'Remote API settings');
+  assert.equal(C.settingsLink({}), 'Open the Remote API settings');
+  assert.equal(C.settingsLink({ settings_label: 'Assistant settings' }), 'Open the assistant settings');
+  assert.equal(C.settingsLink({ settings_label: 'OrcaSlicer MCP settings' }), 'Open the OrcaSlicer MCP settings');
+  assert.equal(C.settingsLink({ settings_label: 'Plugin settings' }), 'Open the plugin settings');
+  assert.equal(C.settingsLabel({ settings_label: 'Plugin settings' }), 'Plugin settings');
+});

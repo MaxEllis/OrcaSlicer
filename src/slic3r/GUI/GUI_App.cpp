@@ -9300,6 +9300,19 @@ void GUI_App::open_preferences() { open_preferences(PreferencesTab::General); }
 
 void GUI_App::open_preferences(PreferencesTab tab, const std::string& highlight_option)
 {
+    // One Preferences at a time. A second request delivered inside the dialog's modal loop (a queued click from a web
+    // pane, a hint link) would open a nested dialog, and a GUI rebuild from the inner one under the outer modal
+    // crashes (see the comment on the dialog's scope below).
+    static bool s_prefs_open = false;
+    if (s_prefs_open) {
+        BOOST_LOG_TRIVIAL(info) << "Preferences already open, request ignored";
+        return;
+    }
+    struct OpenGuard
+    {
+        OpenGuard() { s_prefs_open = true; }
+        ~OpenGuard() { s_prefs_open = false; }
+    } open_guard;
     // Render settings the canvas reads every frame; a change needs one redraw to show.
     static constexpr const char* opengl_render_setting_keys[] = {
         SETTING_OPENGL_FXAA_ENABLED, SETTING_OPENGL_FPS_CAP, SETTING_OPENGL_SHOW_FPS_OVERLAY, SETTING_OPENGL_SHOW_RENDER_TIMINGS,

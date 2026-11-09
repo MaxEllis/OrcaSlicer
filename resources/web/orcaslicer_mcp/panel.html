@@ -78,6 +78,11 @@
   .group.undone .ghead .name, .group.undone .ghead .res { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(127,127,127,.4); }
   .group.undone .ghead { cursor: pointer; }
   .group.restored .ghead { cursor: default; }
+  .ghead .rl { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
+  .ghead .rl .name { min-width: 0; }
+  .ghead .rl .sep { color: var(--muted); flex: none; }
+  .ghead .rl a { color: var(--accent); cursor: pointer; white-space: nowrap; flex: none; }
+  .group.restored [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
   [data-tip] { position: relative; }
   [data-tip]:hover::after { content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
     white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
@@ -111,6 +116,7 @@
   var PROTOCOL_VERSION = 1;
   var START_TITLE = 'Before the assistant started';
   var OFF_TEXT = 'The Remote API is off.'; // when the host sends no capabilities.off_text
+  var SETTINGS_LABEL = 'Remote API settings'; // when the host sends no capabilities.settings_label
 
   function has(s) { return s !== null && s !== undefined && s !== ''; }
 
@@ -227,6 +233,20 @@
     return caps && has(caps.off_text) ? String(caps.off_text) : OFF_TEXT;
   }
 
+  // The settings icon's hover tag.
+  function settingsLabel(caps) {
+    return caps && has(caps.settings_label) ? String(caps.settings_label) : SETTINGS_LABEL;
+  }
+  // The off line's link: "Open the " + the label. An ordinary capitalised first word is lower-cased ("Assistant
+  // settings" -> "Open the assistant settings"); a name keeps its capitals: a first word with other capitals
+  // ("OrcaSlicer MCP settings") or one followed by an acronym ("Remote API settings").
+  function settingsLink(caps) {
+    var l = settingsLabel(caps);
+    var words = l.split(' ');
+    var plain = /^[A-Z][a-z]+$/.test(words[0]) && !/^[A-Z]{2,}$/.test(words[1] || '');
+    return 'Open the ' + (plain ? l.charAt(0).toLowerCase() + l.slice(1) : l);
+  }
+
   function liveEntry(row, live) {
     return live && Object.prototype.hasOwnProperty.call(live, row.id) ? live[row.id] : null;
   }
@@ -268,7 +288,9 @@
     undoState: undoState,
     sameValue: sameValue,
     colourOf: colourOf,
-    offText: offText
+    offText: offText,
+    settingsLabel: settingsLabel,
+    settingsLink: settingsLink
   };
 })(window);
 </script>
@@ -278,7 +300,7 @@
   var Core = window.McpPanelCore;
   var TIP = { setting: 'Setting', preset: 'Preset', model: 'Model', plate: 'Plate', slice: 'Slice result', refused: 'Refused', file: 'File', start: 'Starting point' };
   var history = { rows: [], groups: [] };
-  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '' };
+  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '', settings_label: '' };
   var restoredTo = null, canUndoRestore = false, restoreFailed = false;
   var live = {};
   var api = 'on';
@@ -411,13 +433,16 @@
     if (restoredTo === null || restoredTo === undefined) return '';
     var t = '';
     groups.forEach(function (g) { if (g.id === restoredTo) t = g.time; });
-    var right;
+    // Column 3 holds only the transient states; the Undo link follows the text in column 2 ("Restored to 10:31 ·
+    // Undo"), outside .name so its hover tag is not clipped by the ellipsis.
+    var right = '';
     if (restoreBusy === 'undo') right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line wait">Restoring…</span></span>';
     else if (restoreError.undo) right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line"><span class="bad">' + esc(restoreError.undo) + '</span></span></span>';
-    else if (canUndoRestore) right = '<span class="ask" style="display:flex;grid-column:auto"><a class="tip-left" data-undo-restore="1" data-tip="Go back to before the restore">Undo</a></span>';
-    else right = '';
+    var inline = canUndoRestore && restoreBusy === null && !restoreError.undo;
     var lead = restoreFailed ? 'Couldn\'t restore to ' : 'Restored to ';
-    return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="name">' + esc(lead + t) + (canUndoRestore && !restoreBusy && !restoreError.undo ? ' \u00b7' : '') + '</span>' + right + '</div></div>';
+    return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="rl"><span class="name">' + esc(lead + t) + '</span>' +
+      (inline ? '<span class="sep">\u00b7</span><a class="tip-left" data-undo-restore="1" data-tip="Go back to before the restore">Undo</a>' : '') +
+      '</span>' + right + '</div></div>';
   }
 
   function updateFold() {
@@ -430,7 +455,7 @@
   }
   function updateGear() {
     var g = document.getElementById('gear');
-    g.setAttribute('data-tip', caps.open_settings ? 'Remote API settings' : (caps.settings_hint || 'Settings'));
+    g.setAttribute('data-tip', caps.open_settings ? Core.settingsLabel(caps) : (caps.settings_hint || 'Settings'));
     g.innerHTML = '<svg><use href="#i-gear"/></svg>';
   }
 
@@ -439,7 +464,7 @@
     var html = '';
     if (api === 'off') {
       html += '<div class="empty offnote">' + esc(Core.offText(caps)) + (caps.open_settings
-        ? ' <a data-settings="1">Open the Remote API settings</a>'
+        ? ' <a data-settings="1">' + esc(Core.settingsLink(caps)) + '</a>'
         : (caps.settings_hint ? '<br>' + esc(caps.settings_hint) : '')) + '</div>';
     }
     if (!groups.length) {
@@ -459,7 +484,8 @@
   function applyHistory(m) {
     history = { rows: m.rows || [], groups: m.groups || [] };
     var c = m.capabilities || {};
-    caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '', off_text: c.off_text || '' };
+    caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '', off_text: c.off_text || '',
+             settings_label: c.settings_label || '' };
     restoredTo = has(m.restored_to) || m.restored_to === 0 ? m.restored_to : null;
     restoreFailed = restoredTo !== null && m.restore_failed === true;
     canUndoRestore = !!m.can_undo_restore;
