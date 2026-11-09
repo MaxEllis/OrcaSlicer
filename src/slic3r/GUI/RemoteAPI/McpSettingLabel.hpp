@@ -49,10 +49,10 @@ inline std::vector<std::string> mcp_label_words(const std::string &s)
     std::string              w;
     auto flush = [&]() {
         if (w.empty()) return;
-        bool small = false;
+        bool is_small = false;
         for (const char *k : kSmall)
-            if (w == k) small = true;
-        if (!small) out.push_back(w);
+            if (w == k) is_small = true;
+        if (!is_small) out.push_back(w);
         w.clear();
     };
     for (const char ch : mcp_label_lower(s)) {
