@@ -66,10 +66,12 @@ public:
     // of a vector). after = the value about to be written, before = the value there now (nullptr: every element is
     // judged; elements equal to it are not, so writing a value back never fails). false when out of range, with
     // detail = {"error":"out_of_range","key","value","min","max","min_exclusive"?,"index"?,"detail"} (min / max null
-    // when that side has no limit) and text = "<label> must be between A and B (got C)". GUI thread (it reads the
-    // printer preset).
+    // when that side has no limit) and text = "<label> must be between A and B (got C)". printer: the printer config
+    // whose Layer height limits apply (a batch's staged copy; nullptr = the edited printer preset). GUI thread (it
+    // reads the printer preset).
     static bool config_value_in_range(const std::string &key, const ConfigOption *before, const ConfigOption &after,
-                                      nlohmann::json &detail, std::string &text);
+                                      nlohmann::json &detail, std::string &text,
+                                      const DynamicPrintConfig *printer = nullptr);
 
     SliceState slice_state() const { std::lock_guard<std::mutex> lk(m_mutex); return m_slice; }
 

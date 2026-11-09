@@ -3,6 +3,7 @@
 #include "McpActions.hpp"
 #include "McpJournal.hpp"
 #include "McpRecorder.hpp"
+#include "McpSettingLabel.hpp"
 #include "McpPanel.hpp"
 #include "UiTaskGate.hpp"
 #include "ConfigRange.hpp"
@@ -399,39 +400,46 @@ static std::string mcp_edited_filament_suffix()
 }
 
 // A setting row: value/before as config_value_text, undo "Revert" (raws in target).
-// The panel's label for a setting (m1). McpRecorder::config_label gives OrcaSlicer's full label ("Nozzle
-// temperature", "Top solid layers"); the sidebar's own line label is added when it says more ("Nozzle temperature
-// - Other layers", the sidebar's en dash) or something else ("Top solid layers (Top shell layers)"), and the
-// settings group when other settings share the label ("Outer wall (Acceleration)" next to "Outer wall (Speed)").
-// preset_type: Preset::Type of the preset the key was written to, -1 = any. GUI thread.
+// The panel's label for a setting (m1, polish P3): the text the settings sidebar draws for it (SettingsIndex
+// display_label_en: "Top shell layers"), with its section only when that is needed to tell it apart ("Acceleration:
+// Normal printing", "Other layers speed: Outer wall"); McpSettingLabel.hpp has the rule. preset_type: Preset::Type of
+// the preset the key was written to, -1 = any (then a row text of another type counts as shared too). GUI thread.
 static std::string mcp_setting_label(const std::string &key, int preset_type = -1)
 {
-    std::string            label = McpRecorder::config_label(key);
-    const ConfigOptionDef *def   = print_config_def.get(key);
-    if (def == nullptr) return label;
-    std::string line, group;
+    McpLabelParts p;
+    p.full = McpRecorder::config_label(key);
+    if (print_config_def.get(key) == nullptr) return p.full;
     try {
-        if (wxGetApp().plater() != nullptr)
-            for (const Search::Option &o : wxGetApp().sidebar().settings_index().all_options()) {
+        if (wxGetApp().plater() != nullptr) {
+            const std::vector<Search::Option> &opts = wxGetApp().sidebar().settings_index().all_options();
+            auto base_of = [](const std::string &k) {
+                const size_t h = k.find('#');
+                return h == std::string::npos ? k : k.substr(0, h);
+            };
+            auto text_of = [](const Search::Option &o) {
+                return o.display_label_en.empty() ? boost::nowide::narrow(o.label) : o.display_label_en;
+            };
+            const Search::Option *mine = nullptr;
+            for (const Search::Option &o : opts) {
                 if (preset_type >= 0 && int(o.type) != preset_type) continue;
-                const std::string k = o.opt_key();
-                if (k != key && !(k.size() > key.size() && k.compare(0, key.size(), key) == 0 && k[key.size()] == '#')) continue;
-                line  = o.display_label_en;
-                group = boost::nowide::narrow(o.group);
-                break;
+                if (base_of(o.opt_key()) == key) { mine = &o; break; }
             }
+            if (mine != nullptr) {
+                p.row      = mine->display_label_en;
+                p.group    = boost::nowide::narrow(mine->group);
+                p.category = boost::nowide::narrow(mine->category);
+                const std::string mine_text = mcp_label_lower(p.row.empty() ? text_of(*mine) : p.row);
+                for (const Search::Option &o : opts) {
+                    if (preset_type >= 0 && int(o.type) != preset_type) continue;
+                    if (base_of(o.opt_key()) == key) continue;
+                    if (mcp_label_lower(text_of(o)) == mine_text) { p.shared = true; break; }
+                }
+            }
+        }
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(warning) << "MCP panel: no sidebar label for " << key << ": " << e.what();
     }
-    if (!line.empty() && line != label && label.find(line) == std::string::npos)
-        label = line.compare(0, label.size(), label) == 0 ? line : label + " (" + line + ")";
-    if (def->full_label.empty() && !group.empty() && group != label) {
-        int same = 0;
-        for (const auto &kv : print_config_def.options)
-            if (kv.second.full_label.empty() && kv.second.label == def->label && ++same > 1) break;
-        if (same > 1) label += " (" + group + ")";
-    }
-    return label;
+    return mcp_compose_setting_label(p);
 }
 
 static McpRow mcp_config_row(const std::string &key, const std::string &label, const std::string &before_raw,
@@ -822,19 +830,29 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
 // ConfigOptionDef min / max (and validate()'s stricter minimums: a layer height above 0) with ConfigRange.hpp and
 // refuses the whole
 // request with out_of_range, applying nothing.
-// The lowest layer height the printer allows: Printer Settings > Layer height limits > Min, never below
-// kMinLayerHeight (also when the profile leaves it at 0). GUI thread.
+// The lowest layer height the printer allows: Printer Settings > Layer height limits > Min, the lowest over its
+// extruders (as ConfigManipulation::layer_height_limits takes it), never below kMinLayerHeight (also when the profile
+// leaves it at 0). printer: the printer config to read (a PUT /config batch's staged copy), else the edited preset.
+// GUI thread.
 static constexpr double kMinLayerHeight = 0.01;
-static double printer_min_layer_height()
+static double printer_min_layer_height(const DynamicPrintConfig *printer = nullptr)
 {
-    double m = 0;
+    double m = kMinLayerHeight;
     try {
-        if (auto *b = wxGetApp().preset_bundle) {
-            const DynamicPrintConfig &pc = b->printers.get_edited_preset().config;
-            if (pc.has("min_layer_height")) m = pc.opt_float("min_layer_height", 0);
+        const DynamicPrintConfig *pc = printer;
+        if (pc == nullptr)
+            if (auto *b = wxGetApp().preset_bundle) pc = &b->printers.get_edited_preset().config;
+        const ConfigOption *o = pc != nullptr ? pc->option("min_layer_height") : nullptr;
+        if (o != nullptr && (o->type() == coFloats || o->type() == coFloat)) {
+            double lowest = std::numeric_limits<double>::infinity();
+            if (o->type() == coFloat) lowest = static_cast<const ConfigOptionFloat *>(o)->value;
+            else
+                for (const double v : static_cast<const ConfigOptionVector<double> *>(o)->values)
+                    if (std::isfinite(v)) lowest = std::min(lowest, v);
+            if (std::isfinite(lowest)) m = std::max(lowest, kMinLayerHeight);
         }
     } catch (const std::exception &) {}
-    return std::isfinite(m) ? std::max(m, kMinLayerHeight) : kMinLayerHeight;
+    return m;
 }
 
 static std::string range_unit(const ConfigOptionDef &def, bool percent)
@@ -925,7 +943,7 @@ static void range_elems(const ConfigOption &opt, const ConfigOption *before, std
 }
 
 bool Controller::config_value_in_range(const std::string &key, const ConfigOption *before, const ConfigOption &after,
-                                       nlohmann::json &detail, std::string &text)
+                                       nlohmann::json &detail, std::string &text, const DynamicPrintConfig *printer)
 {
     const ConfigOptionDef *def = print_config_def.get(key);
     if (def == nullptr) return true;
@@ -942,7 +960,7 @@ bool Controller::config_value_in_range(const std::string &key, const ConfigOptio
     // the out-of-memory reslice a layer height of -1 caused (the GUI asks in a dialog; the API cannot).
     bool layer_limit = false;
     if (key == "layer_height" || key == "initial_layer_print_height") {
-        l.min       = std::max(l.min, printer_min_layer_height());
+        l.min       = std::max(l.min, printer_min_layer_height(printer));
         layer_limit = true;
     }
     // validate()'s other rules (PrintConfig.cpp validate), stricter than these options' min.
@@ -1401,6 +1419,9 @@ Response Controller::handle_put_config(const std::string &body)
 
         // What the three presets hold now, for the range check (it judges only what changes).
         const std::array<DynamicPrintConfig, 3> targets_before{{targets[0].cfg, targets[1].cfg, targets[2].cfg}};
+        // Layer heights waiting for the printer limits of the whole batch: target index and key.
+        std::vector<size_t>      layer_checks;
+        std::vector<std::string> layer_check_keys;
         nlohmann::json applied = nlohmann::json::array();
         nlohmann::json errors  = nlohmann::json::object();
         nlohmann::json out_of_range = nullptr; // the first out_of_range refusal, for the reply's top level
@@ -1517,7 +1538,12 @@ Response Controller::handle_put_config(const std::string &body)
                         continue;
                     }
                 }
-                {
+                if (key == "layer_height" || key == "initial_layer_print_height") {
+                    // Judged after the loop, against the batch's own printer limits: one request may lower
+                    // min_layer_height and the layer height together (keys arrive sorted, layer_height first).
+                    layer_checks.push_back(size_t(tgt - targets.data()));
+                    layer_check_keys.push_back(key);
+                } else {
                     // B1: OrcaSlicer's own range, judged on what changes (the staged copy is thrown away on a refusal).
                     const ConfigOption *was = targets_before[size_t(tgt - targets.data())].option(key);
                     nlohmann::json       rd;
@@ -1548,6 +1574,19 @@ Response Controller::handle_put_config(const std::string &body)
                     changes.push_back({ key, oldv, newv });
             } catch (const std::exception &e) {
                 errors[key] = e.what();
+            }
+        }
+
+        // The layer heights against the printer limits as this batch leaves them (P6 / m13).
+        for (size_t i = 0; i < layer_checks.size(); ++i) {
+            const std::string  &key = layer_check_keys[i];
+            const ConfigOption *was = targets_before[layer_checks[i]].option(key);
+            const ConfigOption *now = targets[layer_checks[i]].cfg.option(key);
+            nlohmann::json      rd;
+            std::string         rtext;
+            if (now != nullptr && !config_value_in_range(key, was, *now, rd, rtext, &targets[2].cfg)) {
+                errors[key] = "out_of_range: " + rtext;
+                if (out_of_range.is_null()) out_of_range = rd;
             }
         }
 
@@ -2569,7 +2608,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         }
         // Printer limits, same rules as ObjectList's get_min/max_layer_height.
         const DynamicPrintConfig &pcfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-        double minh = std::max(pcfg.opt_float("min_layer_height", 0), kMinLayerHeight); // never 0 (B1 / I4)
+        double minh = printer_min_layer_height(&pcfg); // the lowest extruder's, never below 0.01 mm (B1 / I4, m12)
         double maxh = pcfg.opt_float("max_layer_height", 0);
         if (maxh < EPSILON) maxh = 0.75 * pcfg.opt_float("nozzle_diameter", 0);
         if (lh < minh || lh > maxh)

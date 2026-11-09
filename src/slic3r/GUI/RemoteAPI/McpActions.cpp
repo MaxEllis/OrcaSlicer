@@ -476,12 +476,17 @@ void refresh_extruder_column(int oi, const ModelObject *mo)
     obj_list->Refresh();
 }
 
+// The collections a preset switch back in undo_row() discarded (print, filament, sla_material, printer), for the
+// row's "reverted" record (McpHistory.hpp mcp_tracking).
+std::vector<std::string> s_undo_dropped;
+
 // Returns "" (done), or the reason it failed; cancelled set when the user cancelled a dialog. note: added to the
 // journal line (the unsaved edits a switch back dropped).
 std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
 {
     cancelled = false;
     note.clear();
+    s_undo_dropped.clear();
     const json       &t    = r.target;
     const std::string type = t.value("type", std::string());
     Plater           *p    = plater();
@@ -561,6 +566,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         if (tab == nullptr) return "The settings tab is not ready";
         // The way PUT /preset avoids the unsaved-changes dialog: drop the unsaved edits first (the row's tip says so).
         const std::vector<std::string> dropped = discard_edits();
+        s_undo_dropped                         = dropped;
         if (!tab->select_preset(before, false, "", /*force_select=*/true, /*force_no_transfer=*/true)) {
             cancelled = true;
             return "Switch cancelled";
@@ -1070,9 +1076,13 @@ json McpActions::undo(int row_id)
     if (r.undo_verb.empty()) return result_failed("Nothing to undo");
     if (!r.undone_at.empty()) return result_failed("Reverted at " + r.undone_at);
     const auto &gs     = rec.history().groups();
-    // R43: the assistant changed the same setting again later: undoing this row would overwrite that change.
-    if (mcp_tracking(rec.history().rows(), gs.empty() ? -1 : gs.back().id).superseded.count(r.id) > 0)
-        return result_failed("Changed again since; restore an earlier point instead");
+    // R43: the assistant changed the same setting again later: undoing this row would overwrite that change. P1: its
+    // own preset switch dropped the edit, so there is nothing of it left to undo.
+    {
+        const McpTracking tr = mcp_tracking(rec.history().rows(), gs.empty() ? -1 : gs.back().id);
+        if (tr.dropped.count(r.id) > 0) return result_failed("Dropped by a preset switch; restore an earlier point instead");
+        if (tr.superseded.count(r.id) > 0) return result_failed("Changed again since; restore an earlier point instead");
+    }
     // Never overwrite a later change: the row's value must still be what is there.
     try {
         const Live l = live_of(r);
@@ -1096,6 +1106,14 @@ json McpActions::undo(int row_id)
     if (cancelled) return result_cancelled(why);
     if (!why.empty()) return result_failed(why);
     rec.history().mark_undone(r.id, McpRecorder::hhmm(rec.now_s()));
+    // P1: a preset switch undone here is a switch back that happened now: it keeps counting for the rows before it
+    // (its own discards stay discarded), and the switch back drops what it names (McpHistory.hpp mcp_tracking).
+    if (r.target.is_object() && r.target.value("type", std::string()) == "preset") {
+        int newest_row = r.id;
+        for (const McpRow &x : rec.history().rows()) newest_row = std::max(newest_row, x.id);
+        if (McpRow *m = rec.history().row(r.id); m != nullptr && m->target.is_object())
+            m->target["reverted"] = {{"after_row", newest_row}, {"discarded", s_undo_dropped}};
+    }
     rec.changed();
     publish({{"event", "panel.reverted"}, {"group", r.group}, {"row", r.id}});
     tell(journal_line(r) + note);

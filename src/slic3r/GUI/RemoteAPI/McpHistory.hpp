@@ -96,7 +96,8 @@ public:
 
     // {"rows":[...],"groups":[...]} for the page's history message. A row's "error" is text there:
     // "" when none, else its where (or value, or "Failed"). "reveal" is mcp_row_revealable(); "superseded" is
-    // mcp_tracking()'s (the assistant changed the same setting again later).
+    // mcp_tracking()'s (the assistant changed the same setting again later); "dropped" is mcp_tracking()'s too (the
+    // assistant's own preset switch dropped the edit).
     nlohmann::json page_history() const;
 
     nlohmann::json to_json() const;
@@ -136,11 +137,16 @@ struct McpTracking
 {
     std::set<int> tracked;    // rows that get a live entry
     std::set<int> superseded; // rows a later (not undone) row of the same subject changed again: no live entry, no undo
+    std::set<int> dropped;    // superseded rows whose edit the assistant's own preset switch dropped (P1)
 };
 // tracked: for each subject its latest row that is not undone; rows without a subject that are not undone and have
-// an undo or sit in newest_group. superseded: rows not undone with a later not-undone row of the same subject, and
-// config rows written to a preset the assistant later switched away from (a later preset row of that type whose
-// "after" is another preset; for a filament slot, whose "before" was the row's preset).
+// an undo or sit in newest_group. superseded: rows not undone with a later not-undone row of the same subject;
+// config rows written to a preset the assistant later switched away from (the newest later preset row of that type
+// whose "after" is another preset; for a filament slot, one whose "before" or "after" was the row's preset); and
+// config rows of a scope a later preset switch discarded (its target "discarded" names the scope; no save of that
+// scope in between), whatever was selected afterwards: those are also in dropped. A preset row undone by the panel's
+// Switch back (target "reverted": {"after_row", "discarded"}) still counts as the switch it was, and its Switch back
+// as a switch back (after row after_row) that discarded what it names; one undone by a restore does not count.
 McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group);
 
 // Windows and macOS file systems ignore case (by default): paths are compared, and history keys made, case-folded.

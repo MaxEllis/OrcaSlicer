@@ -684,7 +684,10 @@ void McpRecorder::record_note(const std::string &kind, const std::string &text, 
         return;
     }
     sync_project();
-    if (!m_open) open_change(false);
+    // P4: a note sums up something the connector did on its own (a comparison whose trial requests recorded
+    // nothing), so it never joins a group left open earlier: it starts one of its own, without a restore point.
+    close_group();
+    open_change(false);
     McpRow r;
     r.kind       = "slice";
     r.label      = text;

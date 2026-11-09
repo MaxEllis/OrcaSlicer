@@ -298,6 +298,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteAPI/McpJournalCapture.cpp
     GUI/RemoteAPI/McpPanel.cpp
     GUI/RemoteAPI/McpPanel.hpp
+    GUI/RemoteAPI/McpSettingLabel.hpp
     GUI/RemoteAPI/McpRecorder.cpp
     GUI/RemoteAPI/McpRecorder.hpp
     GUI/I18N.cpp

@@ -2639,7 +2639,13 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         }
     };
     update_status();
-    m_remote_api_status_timer.Bind(wxEVT_TIMER, [update_status](wxTimerEvent &) { update_status(); });
+    // One handler for every tick: the status line, then whatever else the page adds (the Copy button's reset below).
+    // Not a second Bind: wx calls dynamic handlers newest first and stops at one that does not Skip().
+    auto tick_more = std::make_shared<std::function<void()>>();
+    m_remote_api_status_timer.Bind(wxEVT_TIMER, [update_status, tick_more](wxTimerEvent &) {
+        update_status();
+        if (*tick_more) (*tick_more)();
+    });
     m_remote_api_status_timer.Start(500);
 
     auto item_lan = create_item_checkbox(
@@ -2753,18 +2759,23 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     copy_btn->SetToolTip(_L("Copy the whole token, to paste into your AI app's OrcaSlicer MCP settings"));
     // "Copied" on the button for a moment (a status tick puts "Copy" back about 1.5 s later).
     auto copied_ticks = std::make_shared<int>(0);
-    copy_btn->Bind(wxEVT_BUTTON, [token_value, copy_btn, copied_ticks](wxCommandEvent &) {
+    // The label's width changes ("Copied" is wider): the row is laid out again each time, so the field and the
+    // Regenerate button make room instead of overlapping.
+    copy_btn->Bind(wxEVT_BUTTON, [this, token_value, copy_btn, copied_ticks](wxCommandEvent &) {
         if (wxTheClipboard->Open()) {
             wxTheClipboard->SetData(new wxTextDataObject(token_value->GetValue()));
             wxTheClipboard->Close();
             copy_btn->SetLabel(_L("Copied"));
             *copied_ticks = 3;
+            m_parent->Layout();
         }
     });
-    m_remote_api_status_timer.Bind(wxEVT_TIMER, [copy_btn, copied_ticks](wxTimerEvent &e) {
-        e.Skip(); // the status line's handler runs too
-        if (*copied_ticks > 0 && --*copied_ticks == 0) copy_btn->SetLabel(_L("Copy"));
-    });
+    *tick_more = [this, copy_btn, copied_ticks]() {
+        if (*copied_ticks > 0 && --*copied_ticks == 0) {
+            copy_btn->SetLabel(_L("Copy"));
+            m_parent->Layout();
+        }
+    };
 
     token_sizer->Add(token_label, 0, wxALIGN_CENTER_VERTICAL);
     // Proportion 1: stretch to the row, so the field never pushes the Regenerate

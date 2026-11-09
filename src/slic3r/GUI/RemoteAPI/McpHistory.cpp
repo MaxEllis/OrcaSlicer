@@ -202,43 +202,83 @@ std::string mcp_row_subject(const McpRow &row)
 McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group)
 {
     McpTracking out;
-    std::set<std::string> later; // subjects seen in a later, not undone row (walking from the newest)
-    // The assistant's later preset switches (not undone): {preset type, before, after}. A config row written to a
-    // preset the assistant switched away from is superseded: its preset is no longer the one edited, so its live
-    // value ("4 in 0.28mm Draft") is the assistant's doing, never "changed by you" (I3). A switch the user made has
-    // no row, and keeps reading "changed by you" (M14).
-    struct Switch { std::string type, before, after; };
-    std::vector<Switch> switches;
     auto str = [](const nlohmann::json &t, const char *k) {
         auto it = t.find(k);
         return it != t.end() && it->is_string() ? it->get<std::string>() : std::string();
     };
+    auto names = [](const nlohmann::json &t, const char *k) {
+        std::set<std::string> s;
+        auto it = t.find(k);
+        if (it != t.end() && it->is_array())
+            for (const auto &v : *it)
+                if (v.is_string()) s.insert(v.get<std::string>());
+        return s;
+    };
+    // The assistant's preset switches, in time order. pos = 2 * the row id (the switch itself), or 2 * the newest row
+    // id at the time + 1 (the panel's Switch back of it: target "reverted"). A switch discards the unsaved edits of
+    // every collection that had any (target "discarded": print, filament, sla_material, printer), whatever it
+    // switches, so the config rows written before it in a discarded scope never hold again (P1): their value is not
+    // live, and the switch is the assistant's, never "changed by you". A save of a scope keeps the edits made before
+    // it out of later discards. A switch undone by a restore (no "reverted" record) is not counted: the restore put
+    // back the state from before it.
+    struct Event { long long pos; bool save; std::string type, before, after; std::set<std::string> discarded; };
+    std::vector<Event> events;
+    for (const McpRow &r : rows) {
+        if (!r.target.is_object()) continue;
+        const std::string type = str(r.target, "type");
+        if (type == "preset_saved" && r.undone_at.empty()) {
+            events.push_back({2LL * r.id, true, str(r.target, "preset_type"), {}, {}, {}});
+            continue;
+        }
+        if (type != "preset") continue;
+        const auto rv = r.target.find("reverted");
+        const bool reverted = rv != r.target.end() && rv->is_object();
+        if (!r.undone_at.empty() && !reverted) continue;
+        const std::string pt = str(r.target, "preset_type"), before = str(r.target, "before"), after = str(r.target, "after");
+        events.push_back({2LL * r.id, false, pt, before, after, names(r.target, "discarded")});
+        if (reverted) {
+            const auto ar = rv->find("after_row");
+            const long long at = ar != rv->end() && ar->is_number_integer() ? ar->get<long long>() : r.id;
+            events.push_back({2LL * std::max<long long>(at, r.id) + 1, false, pt, after, before, names(*rv, "discarded")});
+        }
+    }
+    std::stable_sort(events.begin(), events.end(), [](const Event &a, const Event &b) { return a.pos < b.pos; });
+
+    std::set<std::string> later; // subjects seen in a later, not undone row (walking from the newest)
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
         const McpRow &r = *it;
         if (!r.undone_at.empty()) continue;
-        if (r.target.is_object() && str(r.target, "type") == "preset")
-            switches.push_back({str(r.target, "preset_type"), str(r.target, "before"), str(r.target, "after")});
         const std::string subj = mcp_row_subject(r);
         if (subj.empty()) {
             if (!r.undo_verb.empty() || r.group == newest_group) out.tracked.insert(r.id);
             continue;
         }
-        bool switched_away = false;
+        bool switched_away = false, dropped = false;
         if (r.target.is_object() && str(r.target, "type") == "config") {
             const std::string scope = str(r.target, "scope"), preset = str(r.target, "preset");
-            // The newest later switch that concerns this preset decides (newest first): print and printer have one
-            // preset, so their newest switch; a filament slot switch only concerns the preset it replaced or chose.
-            for (const Switch &w : switches) {
-                if (w.type != scope || preset.empty()) continue;
-                if (scope == "filament" && w.before != preset && w.after != preset) continue;
-                switched_away = w.after != preset;
-                break;
+            bool          saved  = false;
+            const Event  *decide = nullptr;
+            for (const Event &e : events) {
+                if (e.pos <= 2LL * r.id) continue;
+                if (e.save) {
+                    if (e.type == scope) saved = true;
+                    continue;
+                }
+                if (!saved && e.discarded.count(scope) > 0) dropped = true;
+                // The newest later switch that concerns this preset decides where its edits are: print and printer
+                // have one preset; a filament slot switch only concerns the preset it replaced or chose.
+                if (e.type != scope || preset.empty()) continue;
+                if (scope == "filament" && e.before != preset && e.after != preset) continue;
+                decide = &e;
             }
+            switched_away = decide != nullptr && decide->after != preset;
         }
-        // Walking from the newest, `switches` holds only switches later than this row (pushed above when reached),
-        // except the row itself, which is a preset row and has no config subject.
-        if (later.insert(subj).second && !switched_away) out.tracked.insert(r.id);
-        else                                             out.superseded.insert(r.id);
+        if (later.insert(subj).second && !switched_away && !dropped) {
+            out.tracked.insert(r.id);
+        } else {
+            out.superseded.insert(r.id);
+            if (dropped) out.dropped.insert(r.id);
+        }
     }
     return out;
 }
@@ -259,7 +299,8 @@ json McpHistory::page_history() const
                         {"title_hint", r.title_hint.empty() ? json(nullptr) : json(r.title_hint)},
                         {"result", r.result.is_null() ? json(nullptr) : r.result}, {"error", page_error(r)},
                         {"on_disk", r.on_disk}, {"reveal", mcp_row_revealable(r)},
-                        {"superseded", tracking.superseded.count(r.id) > 0}});
+                        {"superseded", tracking.superseded.count(r.id) > 0},
+                        {"dropped", tracking.dropped.count(r.id) > 0}});
     }
     json groups = json::array();
     if (m_has_start && !m_groups.empty()) {
