@@ -516,8 +516,8 @@ public:
         dc.SetTextForeground(m_fg_color);
 
         dc.SetFont(m_font_version);
-        // orca-mcp: the splash logo carries a third wordmark line ("mcp"), so the
-        // version sits lower than upstream's 0.72 to clear it.
+        // orca-mcp: the OrcaSlicer MCP splash art runs lower than upstream's logo, so
+        // the version sits at 0.79 (upstream 0.72) to clear it.
         rc.y      = c_sz.GetHeight() * 0.79;
         rc.height = dc.GetTextExtent(m_text_version).GetHeight();
         dc.DrawLabel(m_text_version, rc, wxALIGN_CENTER);
