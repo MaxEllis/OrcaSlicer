@@ -103,7 +103,9 @@ std::vector<std::string> McpHistory::cap_rows()
     for (int pass = 0; pass < 2 && over(); ++pass) {
         for (size_t i = 0; i + 1 < m_groups.size() && over();) {
             McpGroup &g = m_groups[i];
-            if (pass == 0 && !g.checkpoint.empty()) { ++i; continue; }
+            // Only the old end is point-less: stop at the first group that has a point, so newer point-less
+            // groups are not dropped from the middle of the timeline.
+            if (pass == 0 && !g.checkpoint.empty()) break;
             if (i == 0 && m_has_start && m_start.time.empty()) {
                 // "Before the assistant started" keeps the time it had (the first group's).
                 m_start.ts   = g.ts;

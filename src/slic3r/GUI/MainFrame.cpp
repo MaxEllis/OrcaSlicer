@@ -52,7 +52,8 @@
 #include "slic3r/GUI/UnsavedChangesDialog.hpp"
 #include "slic3r/GUI/Widgets/SideButton.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp" // F8: backup/API mutual exclusion
-#include "RemoteAPI/McpPanel.hpp"            // View > OrcaSlicer MCP panel
+#include "RemoteAPI/McpPanel.hpp"
+#include "RemoteAPI/McpRecorder.hpp"            // View > OrcaSlicer MCP panel
 
 #include <wx/panel.h>
 #include <wx/settings.h>
@@ -721,6 +722,9 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             event.Veto();
             return;
         }
+
+        // A history save still pending from the last API request is written now.
+        RemoteAPI::McpRecorder::get().flush();
 
     #if 0 // BBS
         //if (m_plater != nullptr) {

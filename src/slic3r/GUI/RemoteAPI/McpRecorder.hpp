@@ -116,6 +116,9 @@ public:
     void flush();
 
     McpHistory &history() { return m_history; }
+    // Counts every time the history is replaced (a project load, a Save As): state kept outside the recorder for
+    // one history (the restore line, the greyed rows) is stale once it changes.
+    unsigned history_epoch() const { return m_history_epoch; }
     // The loaded project's history dir (UTF-8), empty before the first sync.
     std::string history_dir() const;
     // Full path (UTF-8) of a checkpoint file name stored in the history (cp-<point>.3mf / .json).
@@ -202,6 +205,7 @@ private:
     void sweep_stale_dirs(const std::string &keep);
 
     McpHistory            m_history;
+    unsigned              m_history_epoch = 0;
     std::string           m_key;            // loaded project key, "" before the first sync
     bool                  m_loaded = false;
     bool                  m_open   = false;  // a group is open for further rows

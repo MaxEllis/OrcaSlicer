@@ -605,7 +605,7 @@ go, those without a restore point first.
 A restore opens its file without the API's script / G-code check (it is the user's own earlier state), so the API
 cannot reach that folder: `POST /project/open`, `/project/save`, `/project/move` (either path), `DELETE
 /project/file` and `POST /model` answer `403 {"error": "protected_path"}` for any path inside
-`<data dir>/mcp_history/`, however it is spelled (`..`, symlinks, letter case on Windows and macOS). Every restore
+`<data dir>/mcp_history/`, however it is spelled (`..`, symlinks, 8.3 names and letter case of existing folders). Every restore
 point also carries the size and SHA-256 of its file, taken when it was written; a restore (or the Undo of one)
 whose file no longer matches is refused ("The restore point was changed on disk, so it is not used") and opens
 nothing.

@@ -50,6 +50,7 @@ int s_test_depth = 0; // TestCallScope nesting
 struct RestoreState
 {
     std::string                key;              // McpRecorder::history_dir() of the project it belongs to
+    unsigned                   epoch = 0;        // McpRecorder::history_epoch() when it was made
     int                        restored_to = -1; // -1: none
     int                        newest_at   = -1; // id of the newest history group right after it; a new group ends it
     std::string                snapshot;         // pre-restore checkpoint file name ("" = no Undo)
@@ -63,6 +64,7 @@ RestoreState  s_restore;
 // Rows a restore marked undone, so a later restore to a later point can unmark them. Per project.
 std::set<int> s_marked;
 std::string   s_marked_key;
+unsigned      s_marked_epoch = 0;
 
 const char *const kMovedSince   = "moved since";
 const char *const kChangedSince = "changed since";
@@ -813,7 +815,7 @@ std::string busy_reason()
     if (p->is_loading_project()) return "Not while a project is loading";
     if (p->is_background_process_slicing()) return "Not while slicing";
     // An arrange or orient job finishes (and records its row) from the job queue, maybe inside a restore's load.
-    if (!p->get_ui_job_worker().is_idle()) return "Not while objects are being arranged";
+    if (!p->get_ui_job_worker().is_idle()) return "Not while OrcaSlicer is busy with a job";
     // Inside an export's or an API task's event pump the project is being written or changed: wait. Also while an
     // API request is between its change and its journal baseline: the journal would take the API's change for the
     // user's.
@@ -826,13 +828,14 @@ std::string busy_reason()
 // The restore state, dropped once it no longer applies (another project, or the assistant changed something).
 bool restore_state_current(McpRecorder &rec)
 {
-    if (s_marked_key != rec.history_dir()) {
+    if (s_marked_key != rec.history_dir() || s_marked_epoch != rec.history_epoch()) {
         s_marked.clear();
         s_marked_key = rec.history_dir();
+        s_marked_epoch = rec.history_epoch();
     }
     if (s_restore.restored_to < 0 && s_restore.snapshot.empty()) return false;
     const auto &gs = rec.history().groups();
-    if (s_restore.key != rec.history_dir() || (gs.empty() ? -1 : gs.back().id) != s_restore.newest_at) {
+    if (s_restore.key != rec.history_dir() || s_restore.epoch != rec.history_epoch() || (gs.empty() ? -1 : gs.back().id) != s_restore.newest_at) {
         s_restore = RestoreState();
         return false;
     }
@@ -1132,6 +1135,7 @@ json McpActions::restore(int group)
     // Undoable from here on, also when the open below fails half way (the project may already be replaced).
     for (const McpRow &r : h.rows()) next.marks_before[r.id] = r.undone_at;
     next.key         = rec.history_dir();
+    next.epoch       = rec.history_epoch();
     next.restored_to = group;
     next.snapshot    = snapshot;
     next.snapshot_fp = snapshot_fp;
@@ -1206,6 +1210,7 @@ json McpActions::undo_restore()
     s_marked = s_restore.marked_before;
     RestoreState back;
     back.key         = rec.history_dir();
+    back.epoch       = rec.history_epoch();
     back.restored_to = s_restore.prev_restored_to;
     back.newest_at   = h.groups().empty() ? -1 : h.groups().back().id;
     s_restore        = std::move(back); // one level: no Undo of the undo

@@ -360,6 +360,7 @@ void McpRecorder::load(const std::string &key, bool fresh)
     m_open   = false;
     m_deferred_point = -1;
     m_history = McpHistory();
+    ++m_history_epoch;
     m_created_plates.clear();
     const fs::path dir = history_root() / key;
     boost::system::error_code ec;
@@ -462,6 +463,7 @@ void McpRecorder::sync_project()
         m_open    = false;
         m_deferred_point = -1;
         m_history = McpHistory();
+        ++m_history_epoch;
         m_created_plates.clear();
     }
     notify();
