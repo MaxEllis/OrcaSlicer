@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
 #include <cstdlib>
 #include <cassert>
 #include <algorithm>
@@ -2598,7 +2599,10 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     status_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
     g_sizer->Add(status_sizer, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(4));
     const bool enabled_at_open = app_config->get_bool("remote_api_enabled");
-    auto       update_status   = [this, status_text, enabled_at_open]() {
+    // The colour is set only when it changes, through the dark-mode mapping: UpdateDlgDarkUI maps the page's label
+    // colours once at create(), and a per-tick SetForegroundColour would undo that (dark text on the dark page).
+    auto warn_shown = std::make_shared<int>(-1);
+    auto       update_status   = [this, status_text, enabled_at_open, warn_shown]() {
         const bool                           enabled = app_config->get_bool("remote_api_enabled");
         const bool                           lan     = app_config->get_bool("remote_api_bind_lan");
         const Slic3r::GUI::RemoteAPI::ServerStatus st = Slic3r::GUI::RemoteAPI::server_status();
@@ -2627,7 +2631,12 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
             status_text->Wrap(FromDIP(520));
             m_parent->Layout();
         }
-        status_text->SetForegroundColour(warn ? wxColour("#D01B1B") : DESIGN_GRAY900_COLOR);
+        if (*warn_shown != int(warn)) {
+            *warn_shown = int(warn);
+            const wxColour c = warn ? wxColour("#D01B1B") : DESIGN_GRAY900_COLOR;
+            status_text->SetForegroundColour(wxGetApp().dark_mode() ? StateColor::darkModeColorFor(c) : c);
+            status_text->Refresh();
+        }
     };
     update_status();
     m_remote_api_status_timer.Bind(wxEVT_TIMER, [update_status](wxTimerEvent &) { update_status(); });
@@ -2742,12 +2751,19 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     auto copy_btn = new Button(m_parent, _L("Copy"));
     copy_btn->SetStyle(ButtonStyle::Regular, ButtonType::Parameter);
     copy_btn->SetToolTip(_L("Copy the whole token, to paste into your AI app's OrcaSlicer MCP settings"));
-    copy_btn->Bind(wxEVT_BUTTON, [token_value, copy_btn](wxCommandEvent &) {
+    // "Copied" on the button for a moment (a status tick puts "Copy" back about 1.5 s later).
+    auto copied_ticks = std::make_shared<int>(0);
+    copy_btn->Bind(wxEVT_BUTTON, [token_value, copy_btn, copied_ticks](wxCommandEvent &) {
         if (wxTheClipboard->Open()) {
             wxTheClipboard->SetData(new wxTextDataObject(token_value->GetValue()));
             wxTheClipboard->Close();
-            copy_btn->SetToolTip(_L("Copied"));
+            copy_btn->SetLabel(_L("Copied"));
+            *copied_ticks = 3;
         }
+    });
+    m_remote_api_status_timer.Bind(wxEVT_TIMER, [copy_btn, copied_ticks](wxTimerEvent &e) {
+        e.Skip(); // the status line's handler runs too
+        if (*copied_ticks > 0 && --*copied_ticks == 0) copy_btn->SetLabel(_L("Copy"));
     });
 
     token_sizer->Add(token_label, 0, wxALIGN_CENTER_VERTICAL);
