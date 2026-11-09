@@ -34,7 +34,10 @@ its port. Changes to the port or LAN setting while it runs say they apply when P
 - **WebSocket:** pass `?token=<token>` in the URL (browsers can't set WS headers).
 - **Trial requests:** a request with the header `X-Orca-Mcp-Trial: 1` is a trial run (orcaslicer-mcp's
   `compare_slices` sends it on its trial writes, slices and the final restore). It works as any request, but the
-  MCP panel records nothing for it: no rows, no refusals, no restore points. The user-change journal treats it as
+  MCP panel records nothing for it: no rows, no refusals (also not a slice that will not start), no restore points.
+  The header counts only on `PUT /config`, `PUT /objects/{id}/config`, `POST /slice` and `POST /slice/cancel`;
+  every other route records as usual with it. A client that sends it must put the settings back itself, and should
+  report (and note) a restore that fails, since the panel then shows nothing of what was left. The user-change journal treats it as
   an API change, so its changes are never reported as the user's. Add one row for the whole trial afterwards with
   `POST /activity/note`.
 
@@ -140,12 +143,18 @@ Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 **Ranges.** Every numeric value is checked against its setting's own range before anything is applied, with the
 rule OrcaSlicer's settings fields use (`ConfigOptionDef` min and max, `is_value_valid`: with a minimum of 0 any
 negative value is out, a value within 0.0001 of a bound is in). Percentages are checked as numbers ("250%" against
-0 to 100 for `sparse_infill_density`), and a list setting element by element. Where OrcaSlicer's slicing check is
-stricter than the option's minimum, that rule applies too: `layer_height` and `initial_layer_print_height` must be
-above 0 (`"min_exclusive": true` in the reply), `filament_diameter` at least 1, `nozzle_diameter` at least 0.005. A
+0 to 100 for `sparse_infill_density`), and a list setting element by element. A layer height (`layer_height`,
+`initial_layer_print_height`, also as an object's own setting) must be at least the printer's lowest
+(Printer Settings > Layer height limits > Min), and never below 0.01 mm when that is 0 or unset: a layer height of
+0.0001 mm passes OrcaSlicer's own checks but needs hundreds of thousands of layers, and the reslice runs out of
+memory (the sidebar asks in a dialog, which the API cannot show). The reply's `detail` names those limits. Where
+OrcaSlicer's slicing check is stricter than the option's minimum, that rule applies too: `bridge_flow`,
+`internal_bridge_flow`, `filament_flow_ratio`, `extruder_clearance_radius`, `extruder_clearance_height_to_rod`,
+`extruder_clearance_height_to_lid` and `nozzle_height` must be above 0 (`"min_exclusive": true` in the reply),
+`filament_diameter` at least 1, `nozzle_diameter` at least 0.005. A
 "mm or %" setting given in mm is not held to the field's "did you mean a percentage?" limit (`seam_slope_start_height:
-2` is fine). Only what changes is checked, so writing a value back never fails, even one outside its range (shipped
-profiles hold `ironing_angle -1`). One value out of range refuses the whole request:
+2` is fine). Only what changes is checked, so writing a value back never fails, even one outside its range (a value
+a profile already carries). One value out of range refuses the whole request:
 ```json
 { "applied": [], "error": "out_of_range", "key": "sparse_infill_density", "value": "250%", "min": 0, "max": 100,
   "detail": "Sparse infill density must be between 0% and 100% (got 250%)",
@@ -154,8 +163,8 @@ profiles hold `ironing_angle -1`). One value out of range refuses the whole requ
 `min` or `max` is `null` when that side has no limit (`layer_height` has a minimum of 0 and no maximum); `index`
 names the element of a list setting. With several keys out of range, the top level names the first and `errors`
 has each. `PUT /objects/{id}/config` answers the same way (`422`), and the MCP panel's undo and restore never write
-a value out of range. `PUT /objects/{id}/height_range` keeps its stricter printer limits
-(`422 layer_height_out_of_range` with `key`, `value`, `min`, `max`).
+a value out of range. `PUT /objects/{id}/height_range` keeps its printer limits (`422 layer_height_out_of_range` with `key`, `value`,
+`min`, `max`), with the same 0.01 mm floor, so a range's layer height of 0 is refused too.
 
 #### Per-filament keys
 
@@ -268,7 +277,8 @@ curl -X POST -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/slice
 that result still matches the plate: after a later change (a setting, an object, the user's own edit) it is
 `false`, with `"stale": true` and the message "out of date: something changed since this slice; slice again for
 current numbers"; `stats` are then the old slice's. The route asks OrcaSlicer's GUI thread for this but never waits
-long: without an answer within 300 ms (a dialog open, say) the two fields are left out.
+long: without an answer within 300 ms (a dialog open, say), and while a project loads or the panel restores one,
+the two fields are left out.
 
 ### WS /events
 
@@ -677,7 +687,9 @@ curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 - `kind` `"refused"`: a refused row (`label` = `text`, `value` default "Not allowed", `where` = `detail`), as for a
   request OrcaSlicer refused.
 
-`text` is required (at most 160 bytes), `value` at most 80, `detail` at most 400; line breaks become spaces.
+`text` is required (at most 160 bytes), `value` at most 80, `detail` at most 400; line breaks and tabs become
+spaces, and control and format characters (C0/C1 controls, bidi overrides and isolates, zero-width characters, the
+BOM) are dropped.
 `400 bad_kind`, `400 missing_text`, `400 body_must_be_object`, `400 invalid_json`. The note changes nothing in the
 project, and it is recorded even when the request carries the trial header.
 
@@ -866,7 +878,9 @@ Each `live` replaces the previous set (it is not merged), so always send every e
   element and preset; an object's setting: object and key; a copy's place: object and copy; a height range; a
   preset slot; a CANVAS slot). A row with no such subject (a slice, a refusal, an added object) is tracked as before:
   when it has an undo or sits in the newest group. Earlier rows of a subject are `superseded` in `history` and get
-  no entry. This fork's rule is `mcp_tracking` in `src/slic3r/GUI/RemoteAPI/McpHistory.cpp`.
+  no entry, and so are setting rows written to a preset the assistant later switched away from (its own preset row:
+  the newest switch of that type decides; a filament slot switch only for the preset it replaced). A switch the
+  user made has no row, so those rows stay tracked and read "changed by you". This fork's rule is `mcp_tracking` in `src/slic3r/GUI/RemoteAPI/McpHistory.cpp`.
 - Without it: every row that has an undo and is not undone, and every row of the newest group.
 Leave out rows you cannot read. The page compares numbers with the same unit text within 1e-6 (relative) and anything else
 exactly and case-sensitively, so send the same form the row was recorded in (a colour recorded as `#F2754E` must
@@ -876,8 +890,8 @@ A different live value is shown with "changed by you" and the user's value, a mi
 (with `tracked_live`: on any row with an entry; without it: in the newest group). An undo is then unavailable:
 "You changed it since" (with `tracked_live` in any group; without it in the newest group, "Changed again since;
 restore an earlier point instead" in older ones), "<name> is no longer on the plate". A `superseded` row's undo
-is always unavailable with "Changed again since; restore an earlier point instead", and it never says "changed by
-you".
+is always unavailable with "Changed again since; restore an earlier point instead" ("Changed again since" when
+`capabilities.restore` is `false`), and it never says "changed by you".
 
 **`state`**: `{"type": "state", "api": "on" | "off"}`, after `ready` and whenever it changes. `on` means the
 assistant can reach OrcaSlicer now (this fork: the Remote API server is listening, not only enabled in
@@ -944,8 +958,10 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
 - **Colours.** The page reads the body's background and sets `data-theme` (`dark` or `light`) on the root: links
   and actions are #5ad1c4 on dark (7.6:1 on #2b2b2f) and #00695c on light (6.1:1 on #f5f5f5), both 4.5:1 or more
   on a hovered row too. An action is underlined in that colour; an unavailable one is faint and not underlined.
-- **Reverted rows** show what is there now: the undone value struck through, then the earlier value, and
-  "Reverted" at the right.
+- **Reverted rows** show what is there now in the value column, the undone value struck through under the label
+  ("~~160 mm/s~~ reverted"), and "Reverted" at the right. A value longer than 18 characters goes on its own line
+  under the label. Focus is put back after a redraw only while the page has the keyboard focus. A disabled control
+  (a restore icon without a point) does nothing.
 - **Out-of-date slices.** A slice result with a later setting, preset, model or plate row after it (or a revert or
   restore the user made since) is faint with "out of date", in its row and in its group's title line.
 - **Restore** is a dimmed icon on every older group (brighter on hover and focus), with the hover tag "Restore the
