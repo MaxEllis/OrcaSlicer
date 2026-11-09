@@ -19,13 +19,13 @@
 
 **2. It changes what matters, and says why**
 
-<p align="center"><img src="doc/images/readme/step2.png" alt="Your AI app: the assistant says it made three changes: on its side, because standing up the layers run across the arm that takes the load; 7 walls instead of 4, which makes the arms solid; 215 °C instead of 200 so the layers fuse. A line runs from each reason to OrcaSlicer's MCP panel: Rotated 90° about X (Rotate back), Wall loops 7, was 4 (Revert), Nozzle temperature 215 °C, was 200 (Revert)."></p>
+<p align="center"><img src="doc/images/readme/step2.png" alt="Your AI app: the assistant says it made three changes: on its side, because standing up the layers run across the arm that takes the load; 7 walls instead of 4, which makes the arms solid; 215 °C instead of 200 so the layers fuse. A line runs from each reason to the OrcaSlicer MCP panel: Rotated 90° about X (Rotate back), Wall loops 7, was 4 (Revert), Nozzle temperature 215 °C, was 200 (Revert)."></p>
 
 **3. See the trade-off before you print**
 
 <p align="center"><img src="doc/images/readme/step3.png" alt="Your AI app: the assistant compares OrcaSlicer's two slices, 2h 57m and 33.7 g as designed against 2h 44m and 46.8 g stronger, and notes that lying flat saves 22 minutes, more than the extra walls cost. An arrow leads to OrcaSlicer's preview of the bracket sliced on its side."></p>
 
-This is the **OrcaSlicer MCP build**: [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) 2.5.0 with two additions. A local API lets an AI assistant, which you talk to in your usual AI app, change settings, load and slice models, and read back the result, through the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. A panel beside the 3D view lists every change it makes, with a way to undo each one. Everything else is OrcaSlicer, rebuilt from the upstream release, and it uses your existing printers and presets.
+This is the **OrcaSlicer MCP build**: [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) 2.5.0 with two additions. A local API lets an AI assistant, which you talk to in your usual AI app, change settings, load and slice models, and read back the result, through the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. The OrcaSlicer MCP panel beside the 3D view lists every change it makes, with a way to undo each one. Everything else is OrcaSlicer, rebuilt from the upstream release, and it uses your existing printers and presets.
 
 Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslicer-mcp#orcaslicer-mcp-build-or-plugin) covers settings and presets.
 
@@ -43,17 +43,17 @@ Then open **Preferences → Remote API**, tick **Enable Remote API**, copy the t
 
 <img src="doc/images/readme/preferences.png" width="520" alt="Preferences, Remote API page with Enable Remote API ticked, the port and an example token">
 
-## The panel
+## The OrcaSlicer MCP panel
 
 <img align="right" src="doc/images/readme/panel-undo.gif" width="300" alt="Clicking a change in the panel, then Revert: the setting goes back in the sidebar">
 
 - **Every change, grouped** by round of work, with the slice result.
 - **Undo any one change.** Each shows its old value and an undo named for what it does: Revert, Switch back, Rotate back, Remove, Put back.
 - **Restore to here** on an older group puts the whole project back to that point. A restore can be undone too.
-- **Your own edits count.** If you change a value by hand, the panel marks it "changed by you", and the assistant is told with its next reply.
+- **Your own edits count.** If you change a setting the assistant changed, its row says "changed by you". The assistant is told about every setting you change by hand, with its next reply.
 - **Kept with the project,** so the timeline is still there after a restart.
 
-While the panel is open, OrcaSlicer's change notifications stay hidden; refusals still show. The gear opens **Preferences → Remote API**. Close the panel with its ✕ and bring it back from **View → OrcaSlicer MCP panel**.
+OrcaSlicer's own Ctrl+Z (⌘Z on a Mac) undoes model edits, not settings, so take a setting back from the panel. While the panel is open, OrcaSlicer's change notifications stay hidden; refusals still show. The gear opens **Preferences → Remote API**. Close the panel with its ✕ and bring it back from **View → OrcaSlicer MCP panel**.
 
 <br clear="right">
 
@@ -61,7 +61,8 @@ While the panel is open, OrcaSlicer's change notifications stay hidden; refusals
 
 - **Off until you enable it**, and it listens on this computer only. **Allow LAN access** is a separate box.
 - **Every request needs the token.** Regenerate it to cut off every client at once.
-- **No scripts, G-code or printer connection changes** until you tick **Allow script, G-code and connection edits**, and **no deleting or replacing project files** until you tick **Allow deleting and replacing project files**.
+- **No scripts, G-code or printer connection changes** until you allow them twice: tick **Allow script, G-code and connection edits** in **Preferences → Remote API**, and list those settings in the connector's allowed keys in your AI app (`ORCA_MCP_ALLOW_KEYS`).
+- **No deleting or replacing project files** until you tick **Allow deleting and replacing project files**.
 - **Passwords and API keys** are left out of everything the API returns.
 
 ## Updates
