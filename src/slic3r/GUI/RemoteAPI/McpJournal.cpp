@@ -424,10 +424,18 @@ void McpJournal::begin_request(McpBaseline now, const std::string &hhmm)
             now.plates  = m_baseline.plates;
         } else {
             // The job was dropped without finishing (OrcaSlicer clears its queue on a delete, a new or opened
-            // project): whatever it moved is the API's.
-            m_baseline.objects = now.objects;
-            m_baseline.plates  = now.plates;
-            m_api_job_pending  = false;
+            // project): the positions it may have set, and the plates it may have added, are the API's. Objects and
+            // copies added or removed meanwhile (the user's delete that dropped the job) are still compared.
+            for (McpObjectSnap &o : m_baseline.objects) {
+                auto it = std::find_if(now.objects.begin(), now.objects.end(),
+                                       [&o](const McpObjectSnap &n) { return n.id == o.id; });
+                if (it == now.objects.end()) continue;
+                for (size_t i = 0; i < o.instance_ids.size() && i < o.transforms.size(); ++i)
+                    for (size_t k = 0; k < it->instance_ids.size() && k < it->transforms.size(); ++k)
+                        if (it->instance_ids[k] == o.instance_ids[i]) o.transforms[i] = it->transforms[k];
+            }
+            m_baseline.plates = now.plates;
+            m_api_job_pending = false;
         }
     }
     if (m_has_baseline)

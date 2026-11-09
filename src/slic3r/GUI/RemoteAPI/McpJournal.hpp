@@ -120,8 +120,8 @@ public:
     void rebaseline_objects(std::vector<McpObjectSnap> objects, int plates);
     // An API arrange / orient job is queued. The job keeps the returned token: while it lives, begin_request does
     // not compare objects and plates (the job moves them after its request). When the job is dropped unfinished
-    // the token dies with it, and the next begin_request takes the objects as the API's. A project change ends
-    // the guard too.
+    // the token dies with it, and the next begin_request takes the object positions and the plate count as the
+    // API's (objects and copies added or removed are still reported). A project change ends the guard too.
     std::shared_ptr<int> api_job_started();
 
     // An entry of its own (the panel's undos and restores: kind "panel", group "Panel").

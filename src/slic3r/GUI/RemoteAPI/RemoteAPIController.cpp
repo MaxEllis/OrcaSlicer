@@ -3,6 +3,7 @@
 #include "McpActions.hpp"
 #include "McpJournal.hpp"
 #include "McpRecorder.hpp"
+#include "UiTaskGate.hpp"
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -499,10 +500,18 @@ void Controller::on_config_changed(int preset_type)
 // queue while it serializes the project, so a queued CallAfter API mutation
 // could execute INSIDE export_3mf and mutate the model/presets being written -
 // observed as heap-corruption crashes under config-write and preset-save
-// bursts. Two-way exclusion: API tasks arriving during an export are parked on
-// s_deferred_ui_tasks and flushed when the export ends; the exporter skips a
-// cycle (re-arming itself) if an API task is on the stack (nested-pump case).
+// bursts. Two-way exclusion: API tasks arriving during an export are parked
+// and run when the export ends; the exporter skips a cycle (re-arming itself)
+// if an API task is on the stack (nested-pump case). The gate (UiTaskGate.hpp)
+// keeps the tasks strictly in arrival order, parked or not: the io thread does
+// not wait for the journal's tasks, so a parked task must never be overtaken.
 namespace {
+
+UiTaskGate &ui_gate()
+{
+    static UiTaskGate gate([](UiTaskGate::Task t) { wxGetApp().CallAfter(std::move(t)); });
+    return gate;
+}
 
 struct UiTask : std::enable_shared_from_this<UiTask>
 {
@@ -513,39 +522,18 @@ struct UiTask : std::enable_shared_from_this<UiTask>
     void schedule()
     {
         auto self = shared_from_this();
-        wxGetApp().CallAfter([self] { self->run(); });
+        wxGetApp().CallAfter([self] {
+            if (self->cancelled->load()) return; // caller already returned 504; do nothing
+            ui_gate().arrive([self] { self->run(); });
+        });
     }
-    void run(); // defined after the gate statics below
+    void run();
 };
 
-int  s_api_ui_task_depth  = 0;
-// Depth, not a flag: the auto-backup and an MCP panel checkpoint both bracket an export with
-// set_backup_in_progress(true/false); with a flag the inner `false` would clear the outer gate.
-int  s_backup_depth       = 0;
-std::deque<std::shared_ptr<UiTask>> s_deferred_ui_tasks;
-
-void flush_deferred_ui_tasks()
-{
-    if (s_deferred_ui_tasks.empty()) return;
-    auto parked = std::move(s_deferred_ui_tasks);
-    s_deferred_ui_tasks.clear();
-    for (auto &t : parked)
-        t->schedule(); // re-queued, not run inline: let the caller unwind first
-}
-
+// Runs through the gate: no export bracketed, no other API task on the stack, every earlier task done.
 void UiTask::run()
 {
-    if (cancelled->load()) return; // caller already returned 504; do nothing
-    // Parked until the export ends, or until the API task already on the stack
-    // returns. The io thread waits for each task, so a second one only arrives
-    // after the first timed out; it then runs inside the first one's event pump
-    // (load_project and export_3mf show progress dialogs) and would change the
-    // model or presets halfway through that work.
-    if (s_backup_depth > 0 || s_api_ui_task_depth > 0) {
-        s_deferred_ui_tasks.push_back(shared_from_this());
-        return;
-    }
-    ++s_api_ui_task_depth;
+    if (cancelled->load()) return; // timed out while parked
     // Push the next periodic backup out of the mutation window so it doesn't
     // fire between the calls of an API burst.
     Slic3r::backup_defer(3);
@@ -554,26 +542,15 @@ void UiTask::run()
     } catch (...) {
         promise->set_exception(std::current_exception());
     }
-    --s_api_ui_task_depth;
-    if (s_api_ui_task_depth == 0 && s_backup_depth == 0)
-        flush_deferred_ui_tasks();
 }
 
 } // namespace
 
-bool Controller::api_ui_task_active() { return s_api_ui_task_depth > 0; }
+bool Controller::api_ui_task_active() { return ui_gate().task_active(); }
 
-void Controller::set_backup_in_progress(bool v)
-{
-    if (v)
-        ++s_backup_depth;
-    else if (s_backup_depth > 0)
-        --s_backup_depth;
-    if (s_backup_depth == 0 && s_api_ui_task_depth == 0)
-        flush_deferred_ui_tasks();
-}
+void Controller::set_backup_in_progress(bool v) { ui_gate().backup(v); }
 
-bool Controller::backup_in_progress() { return s_backup_depth > 0; }
+bool Controller::backup_in_progress() { return ui_gate().backup_active(); }
 
 nlohmann::json Controller::run_on_ui(std::function<nlohmann::json()> fn, int timeout_s)
 {
@@ -4842,7 +4819,21 @@ static void post_journal_task(void (*fn)())
     }
 }
 
-void Controller::journal_begin() { post_journal_task(&mcp_journal_begin); }
+// One begin covers every request that arrives before it ran: while the GUI thread is busy, requests do not pile up a
+// full capture each (their handlers and end steps still queue behind it, in order).
+static std::atomic<bool> s_journal_begin_pending{false};
+
+static void journal_begin_task()
+{
+    s_journal_begin_pending.store(false); // a request after this point posts its own begin
+    mcp_journal_begin();
+}
+
+void Controller::journal_begin()
+{
+    if (s_journal_begin_pending.exchange(true)) return;
+    post_journal_task(&journal_begin_task);
+}
 void Controller::journal_end() { post_journal_task(&mcp_journal_end); }
 
 // GET /api/v1/user_changes?since=<seq>: the journal entries newer than seq (see McpJournal::since).
