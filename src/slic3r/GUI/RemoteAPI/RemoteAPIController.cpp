@@ -818,7 +818,8 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
 // PrintConfig's validate() refuses to slice one; the API applied them as given, and a layer height of -1 crashed
 // OrcaSlicer's reslice (out of memory) before validate() could say no. Every write path (PUT /config, object
 // settings, the panel's undo and restore edits) now checks each changed element against the option's
-// ConfigOptionDef min / max (and the "mm or %" fields' literal limit) with ConfigRange.hpp and refuses the whole
+// ConfigOptionDef min / max (and validate()'s stricter minimums: a layer height above 0) with ConfigRange.hpp and
+// refuses the whole
 // request with out_of_range, applying nothing.
 static std::string range_unit(const ConfigOptionDef &def, bool percent)
 {
@@ -920,9 +921,10 @@ bool Controller::config_value_in_range(const std::string &key, const ConfigOptio
     l.min           = def->min;
     l.max           = def->max;
     l.nullable      = def->nullable;
-    l.literal_limit = (after.type() == coFloatOrPercent || after.type() == coFloatsOrPercents) &&
-                      def->sidetext.rfind("mm ") != std::string::npos;
-    l.max_literal   = def->max_literal;
+    // validate()'s own positivity rules (PrintConfig.cpp), stricter than these options' min.
+    if (key == "layer_height" || key == "initial_layer_print_height") { l.min = std::max(l.min, 0.); l.min_exclusive = true; }
+    else if (key == "filament_diameter") l.min = std::max(l.min, 1.);
+    else if (key == "nozzle_diameter")   l.min = std::max(l.min, 0.005);
     const McpRangeHit hit = mcp_first_out_of_range(l, elems);
     if (!hit.found) return true;
     const bool        pct_bounds = after.type() == coPercent || after.type() == coPercents || hit.percent;
@@ -934,11 +936,13 @@ bool Controller::config_value_in_range(const std::string &key, const ConfigOptio
               {"value", std::isfinite(hit.value) ? McpRecorder::num_text(hit.value) + (hit.percent ? "%" : "") : std::string("nan")},
               {"min", lo ? nlohmann::json(double(hit.min)) : nlohmann::json(nullptr)},
               {"max", hi ? nlohmann::json(double(hit.max)) : nlohmann::json(nullptr)}};
+    if (hit.min_exclusive) detail["min_exclusive"] = true;
     if (elems.size() > 1) detail["index"] = hit.index;
     const std::string label = McpRecorder::config_label(key);
     const std::string mn = McpRecorder::num_text(hit.min) + unit, mx = McpRecorder::num_text(hit.max) + unit;
     std::string allowed;
-    if (lo && hi) allowed = "between " + mn + " and " + mx;
+    if (lo && hit.min_exclusive) allowed = "above " + mn + (hi ? " and at most " + mx : std::string());
+    else if (lo && hi) allowed = "between " + mn + " and " + mx;
     else if (lo)  allowed = "at least " + mn;
     else          allowed = "at most " + mx;
     text = label + " must be " + allowed + " (got " + got + ")";

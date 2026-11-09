@@ -140,9 +140,12 @@ Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
 **Ranges.** Every numeric value is checked against its setting's own range before anything is applied, with the
 rule OrcaSlicer's settings fields use (`ConfigOptionDef` min and max, `is_value_valid`: with a minimum of 0 any
 negative value is out, a value within 0.0001 of a bound is in). Percentages are checked as numbers ("250%" against
-0 to 100 for `sparse_infill_density`), a "mm or %" setting given in mm also against its literal limit (an outer wall
-line width of 40 mm), and a list setting element by element. Only what changes is checked, so writing a value back
-never fails. One value out of range refuses the whole request:
+0 to 100 for `sparse_infill_density`), and a list setting element by element. Where OrcaSlicer's slicing check is
+stricter than the option's minimum, that rule applies too: `layer_height` and `initial_layer_print_height` must be
+above 0 (`"min_exclusive": true` in the reply), `filament_diameter` at least 1, `nozzle_diameter` at least 0.005. A
+"mm or %" setting given in mm is not held to the field's "did you mean a percentage?" limit (`seam_slope_start_height:
+2` is fine). Only what changes is checked, so writing a value back never fails, even one outside its range (shipped
+profiles hold `ironing_angle -1`). One value out of range refuses the whole request:
 ```json
 { "applied": [], "error": "out_of_range", "key": "sparse_infill_density", "value": "250%", "min": 0, "max": 100,
   "detail": "Sparse infill density must be between 0% and 100% (got 250%)",

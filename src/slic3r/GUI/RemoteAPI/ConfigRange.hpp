@@ -7,9 +7,11 @@
 //   - a nil value (NaN, or the nullable ints' nil) is valid only for a nullable option;
 //   - with min == 0 any negative value is out of range (checked before the tolerance below);
 //   - a value within 10^-4 of min or max is in range; else min <= value <= max.
-// Plus the sidebar's literal limit for "mm or %" fields (Field.cpp, coFloatOrPercent): a value given in mm (not a
-// percentage) above max_literal is out of range too (an outer wall line width of 40 mm, say).
-// Only elements that change are judged: writing a value back that is already there never fails, as in the GUI.
+// Plus validate()'s stricter minimums where it has them (min_exclusive: a layer height must be above 0, not 0).
+// A "mm or %" value in mm above the option's max_literal is NOT refused: the sidebar only asks whether a percentage
+// was meant (Field.cpp), and shipped profiles hold such values.
+// Only elements that change are judged: writing a value back that is already there never fails, as in the GUI
+// (shipped profiles hold values like ironing_angle -1 below their option's minimum).
 #include <cfloat>
 #include <cmath>
 #include <cstddef>
@@ -22,8 +24,7 @@ struct McpRangeLimits
     double min           = -FLT_MAX;
     double max           = FLT_MAX;
     bool   nullable      = false;
-    bool   literal_limit = false; // the option's unit text has "mm " (a "mm or %" field): max_literal applies in mm
-    double max_literal   = 1;
+    bool   min_exclusive = false; // the value must be above min, not equal to it (validate(): layer_height > 0)
 };
 
 struct McpRangeElem
@@ -42,12 +43,14 @@ struct McpRangeHit
     bool   percent = false;
     double min     = -FLT_MAX; // the bounds that refused it (FLT_MAX / -FLT_MAX: none on that side)
     double max     = FLT_MAX;
+    bool   min_exclusive = false;
 };
 
 // ConfigOptionDef::is_value_valid with max_precision 4.
 inline bool mcp_value_in_range(const McpRangeLimits &l, double v)
 {
     if (std::isnan(v)) return l.nullable;
+    if (l.min_exclusive && v <= l.min) return false;
     if (l.min == 0. && v < 0) return false;
     const double ep = 1e-4;
     if (std::fabs(v - l.min) < ep || std::fabs(v - l.max) < ep) return true;
@@ -66,10 +69,7 @@ inline McpRangeHit mcp_first_out_of_range(const McpRangeLimits &l, const std::ve
         } else if (!std::isfinite(e.value)) {
             // inf or NaN given as a value: never a valid setting (NaN of a nullable option is its nil, set above)
         } else if (mcp_value_in_range(l, e.value)) {
-            if (!(l.literal_limit && !e.percent && e.value > l.max_literal)) continue;
-            hit.found = true; hit.index = i; hit.value = e.value; hit.percent = false;
-            hit.min = l.min; hit.max = l.max_literal;
-            return hit;
+            continue;
         }
         hit.found   = true;
         hit.index   = i;
@@ -77,6 +77,7 @@ inline McpRangeHit mcp_first_out_of_range(const McpRangeLimits &l, const std::ve
         hit.percent = e.percent;
         hit.min     = l.min;
         hit.max     = l.max;
+        hit.min_exclusive = l.min_exclusive;
         return hit;
     }
     return hit;
