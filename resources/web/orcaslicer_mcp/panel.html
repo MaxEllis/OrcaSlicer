@@ -359,6 +359,11 @@
     var e = (tracked || isNewest) ? liveEntry(row, live) : null;
     if (!e) return { value: shown, note: '' };
     if (!e.present) return { value: shown, note: 'removed since' };
+    // The user put the setting back to what it was before the assistant changed it (for example with OrcaSlicer's
+    // own reset arrow beside the setting): that undoes the assistant's change rather than making a new one.
+    if (!sameValue(e.value, shown) && has(row.before) && sameValue(e.value, String(row.before))) {
+      return { value: String(e.value), note: 'set back by you' };
+    }
     if (!sameValue(e.value, shown)) return { value: String(e.value), note: 'changed by you' };
     return { value: shown, note: '' };
   }
@@ -381,6 +386,9 @@
       if (!e.present) {
         var name = row.where || row.value || row.label || 'It';
         return { available: false, why: name + ' is no longer on the plate' };
+      }
+      if (!sameValue(e.value, has(row.value) ? String(row.value) : '') && has(row.before) && sameValue(e.value, String(row.before))) {
+        return { available: false, why: 'Already back to ' + String(row.before) };
       }
       if (!sameValue(e.value, has(row.value) ? String(row.value) : '')) {
         return {
@@ -633,6 +641,7 @@
       parts.push('Assistant set ' + r.value + ' \u00b7 was ' + b);
       return parts.join(' \u00b7 ');
     }
+    if (disp.note === 'set back by you') return 'Assistant set ' + r.value + ' \u00b7 you set it back';
     if (b) parts.push('Was ' + b);
     if (has(r.where) && !whereInTip(r)) parts.push(r.where);
     return parts.join(' \u00b7 ');

@@ -164,3 +164,14 @@ test('settings_label_and_link', () => {
   assert.equal(C.settingsLink({ settings_label: 'Plugin settings' }), 'Open the plugin settings');
   assert.equal(C.settingsLabel({ settings_label: 'Plugin settings' }), 'Plugin settings');
 });
+
+// The user put the setting back to its value before the assistant's change (OrcaSlicer's reset arrow beside it):
+// that reads as undoing the assistant's change, not as a new change of the user's.
+test('set_back_by_user_reads_as_set_back', () => {
+  const r = row({ id: 950, value: '3', before: '2' });
+  assert.deepEqual(C.liveDisplay(r, { 950: { value: '2', present: true } }, true), { value: '2', note: 'set back by you' });
+  assert.equal(C.undoState(r, { 950: { value: '2', present: true } }, true).why, 'Already back to 2');
+  assert.equal(C.undoState(r, { 950: { value: '2', present: true } }, true).available, false);
+  // a different value is still the user's own change
+  assert.deepEqual(C.liveDisplay(r, { 950: { value: '5', present: true } }, true), { value: '5', note: 'changed by you' });
+});
