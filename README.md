@@ -17,7 +17,7 @@
 
 This is the **OrcaSlicer MCP build**: [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) 2.5.0 with two additions. A local API lets an AI assistant, which you talk to in your usual AI app, change settings, load and slice models, and read back the result, through the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. A panel beside the 3D view lists every change it makes, with a way to undo each one. Everything else is OrcaSlicer, rebuilt from the upstream release, and it uses your existing printers and presets.
 
-Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslicer-mcp#two-ways-to-run-it) covers settings and presets.
+Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslicer-mcp#two-ways-into-orcaslicer) covers settings and presets.
 
 ## Install
 
@@ -26,6 +26,8 @@ Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslice
 | Windows 10/11 | `win64-installer.exe` (Arm: `winarm64-installer.exe`), or the portable `.zip` |
 | macOS 10.15 and later | `macos-universal.dmg`. It is signed but not notarized: the first launch needs **System Settings → Privacy & Security → Open Anyway**. |
 | Linux | `linux-x64.AppImage` or `linux-aarch64.AppImage`, or the `.flatpak` files |
+
+The installer and the Mac app take the place of OrcaSlicer: same name, same place, same profile folder, so your printers and presets carry over. To keep stock OrcaSlicer as well, use the portable Windows zip or the Linux AppImage.
 
 Then open **Preferences → Remote API**, tick **Enable Remote API**, copy the token, and follow the [setup steps](https://github.com/MaxEllis/orcaslicer-mcp#get-started) to connect your assistant app.
 
@@ -57,6 +59,6 @@ The build checks this repository for new releases and offers them in OrcaSlicer'
 
 ## Problems and credits
 
-Report problems on the [orcaslicer-mcp issue tracker](https://github.com/MaxEllis/orcaslicer-mcp/issues). Anything that also happens in stock OrcaSlicer belongs with [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer/issues). The API is documented in the [Remote API reference](docs/remote-api/README.md).
+Report problems on the [orcaslicer-mcp issue tracker](https://github.com/MaxEllis/orcaslicer-mcp/issues), which covers this build, the plugin and the connector, so nothing gets lost between them. Anything that also happens in stock OrcaSlicer belongs with [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer/issues). The API is documented in the [Remote API reference](docs/remote-api/README.md).
 
 OrcaSlicer is made by the [OrcaSlicer team and contributors](https://github.com/OrcaSlicer/OrcaSlicer/graphs/contributors) and builds on Bambu Studio, PrusaSlicer and Slic3r. This fork is AGPL-3.0, like OrcaSlicer ([LICENSE.txt](LICENSE.txt)). If it saves you time, you can [buy me a coffee](https://buymeacoffee.com/maxellis).
