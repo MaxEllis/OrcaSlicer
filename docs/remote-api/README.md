@@ -145,7 +145,9 @@ rule OrcaSlicer's settings fields use (`ConfigOptionDef` min and max, `is_value_
 negative value is out, a value within 0.0001 of a bound is in). Percentages are checked as numbers ("250%" against
 0 to 100 for `sparse_infill_density`), and a list setting element by element. A layer height (`layer_height`,
 `initial_layer_print_height`, also as an object's own setting) must be at least the printer's lowest
-(Printer Settings > Layer height limits > Min), and never below 0.01 mm when that is 0 or unset: a layer height of
+(Printer Settings > Layer height limits > Min, the lowest of its extruders), and never below 0.01 mm when that is 0
+or unset; one request that lowers `min_layer_height` and the layer height together is judged against its own new
+limit: a layer height of
 0.0001 mm passes OrcaSlicer's own checks but needs hundreds of thousands of layers, and the reslice runs out of
 memory (the sidebar asks in a dialog, which the API cannot show). The reply's `detail` names those limits. Where
 OrcaSlicer's slicing check is stricter than the option's minimum, that rule applies too: `bridge_flow`,
@@ -636,7 +638,10 @@ row in the panel (or the time of a restore that undid its group), else `""`. `er
 refusal or failure. `on_disk` marks changes written to disk (saved or moved projects, saved or deleted presets),
 which a restore does not undo. `superseded` is `true` on a row the assistant changed again later (a later row, not
 undone, changed the same setting, object copy, height range or preset slot): its undo is unavailable ("Changed again
-since; restore an earlier point instead"). `reveal` is `true` on a setting row of the print, filament or printer preset: the
+since; restore an earlier point instead"). `dropped` is `true` on a setting row whose unsaved edit the assistant's own
+preset switch dropped (`PUT /preset` discards every preset with unsaved edits, `discarded_changes`), whatever was
+selected afterwards; such a row is also `superseded`, shows no live value, and its undo is unavailable ("Dropped by
+a preset switch; restore an earlier point instead"). `reveal` is `true` on a setting row of the print, filament or printer preset: the
 panel can show that setting in the settings sidebar (not per-object settings, project keys such as filament
 colours, or other kinds). Group `0` is the point before the assistant's first change (the panel does not list it
 as a group of its own; it stays here, and a "Restored to" line for it names its time); a group's `restore`
@@ -682,8 +687,8 @@ curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 {"recorded": true}
 ```
 - `kind` `"slice"`: a slice-kind row (`label` = `text`, `value`, `where` = `detail`, `title_hint: "note"`, no undo).
-  It names its group when the group holds no change ("Compared 3 options · nothing kept"), and ends the group the
-  way a slice result does. No restore point is taken.
+  It always starts a group of its own (never one left open by an earlier change), names it ("Compared 3 options ·
+  nothing kept") and ends it the way a slice result does. No restore point is taken.
 - `kind` `"refused"`: a refused row (`label` = `text`, `value` default "Not allowed", `where` = `detail`), as for a
   request OrcaSlicer refused.
 
@@ -936,6 +941,10 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
   · nothing kept").
 - `superseded` (bool, optional, default `false`): a later row (not undone) changed the same thing; the page offers
   no undo ("Changed again since; restore an earlier point instead") and shows no live state for it.
+- `dropped` (bool, optional, default `false`): the assistant's own preset switch dropped this row's edit. The page
+  shows the value it set, faint, with "dropped by a preset switch" under the label, never a live value or "changed
+  by you", and no undo ("Dropped by a preset switch; restore an earlier point instead", or without the restore part
+  when `capabilities.restore` is false). Optional for any host.
 - `result`: `null`, or `{"seconds": n, "grams": n}` on a slice row; the group shows the time of its last slice.
 - `error`: `""` or the text of a refusal or failure (any non-empty text marks the group with a warning).
 - `on_disk` (bool): the change wrote to disk (a saved or moved project, a saved or deleted preset); the restore
@@ -952,12 +961,20 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
   group, each row (role button: Enter or Space opens its detail line), the undo link inside an open row, the restore
   question's Yes and No, and the "Restored to" line's Undo. Esc answers No to the restore question (the focus goes
   back to the restore icon) and closes the open row the focus is in. Focus stays on the same control when the list
-  is redrawn. Ctrl+P and Ctrl+S (Cmd on macOS) do nothing in the page, and `window.print` is a no-op: a web view
+  is redrawn. After Yes the focus goes to the group's title while it restores, then to the "Restored to" line's
+  Undo when that arrives with the next `history` (or to the error's OK), also when the host held the focus in
+  between. The control the keyboard focused shows its hover tag in one placed element: above the control, or below
+  it when there is no room, inside the pane and never over the control (mouse hover tags are unchanged). Ctrl+P and Ctrl+S (Cmd on macOS) do nothing in the page, and `window.print` is a no-op: a web view
   would otherwise open a print or save sheet over the panel. A host that wants its own shortcuts there has to catch
   them before the web view.
-- **Colours.** The page reads the body's background and sets `data-theme` (`dark` or `light`) on the root: links
-  and actions are #5ad1c4 on dark (7.6:1 on #2b2b2f) and #00695c on light (6.1:1 on #f5f5f5), both 4.5:1 or more
-  on a hovered row too. An action is underlined in that colour; an unavailable one is faint and not underlined.
+- **Colours.** The page reads the body's background, sets `data-theme` (`dark` or `light`) on the root and then
+  measures its own colours against that background and the row tints over it (hover and open rows: mid grey at 8 %
+  and 12 %). The link, faint and warning colours start from #5ad1c4 / #9a9aa0 / #f28b82 on dark and #00695c /
+  #5f5f64 / #b3261e on light and move in lightness until text reaches 4.5:1 there; icons and the focus ring reach
+  3:1. On OrcaSlicer's own themes the links stay #5ad1c4 (7.65:1 on #2b2b2b, 6.62:1 on a hovered row) and #00695c
+  (6.61:1 on white, 5.78:1 hovered). An action is underlined in that colour; an unavailable one is faint and not
+  underlined. The page undoes the element defaults a host injects for plugin pages (every `button` on the accent
+  colour with a border and padding): its buttons draw on the row, not on the accent.
 - **Reverted rows** show what is there now in the value column, the undone value struck through under the label
   ("~~160 mm/s~~ reverted"), and "Reverted" at the right. A value longer than 18 characters goes on its own line
   under the label. Focus is put back after a redraw only while the page has the keyboard focus. A disabled control
@@ -967,7 +984,10 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
 - **Restore** is a dimmed icon on every older group (brighter on hover and focus), with the hover tag "Restore the
   project to how it was at HH:MM (undoes later changes)". The question "Restore to HH:MM? Yes No" shows under the
   group's title. After the user undoes a restore, a faint "Restore undone" line stays until the next change.
-- **Rows.** Refusals come after the changes of their group and never name it. A setting row's detail line reads
+- **Rows.** A setting row's label (this fork's history) is the text the settings sidebar draws for that setting
+  ("Top shell layers"), with its section only when that is needed to tell it apart ("Acceleration: Normal printing",
+  "Other layers speed: Outer wall"), never "X (Y)". Labels wrap to a second line instead of being cut on one. Refusals come after the changes of their group
+  and never name it. A setting row's detail line reads
   "Was X"; the preset it was written to ("0.20mm Standard @Printer (unsaved)") is in that line's hover tag. The
   row's hover tag says what a click does ("Show what it was, undo it, and find it in settings" with `reveal`,
   "Show what it was and undo it" without). Long values and reasons wrap; the panel never scrolls sideways.
