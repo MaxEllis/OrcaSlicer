@@ -8,6 +8,7 @@
 #include "libslic3r/Utils.hpp" // resources_dir
 #include "slic3r/GUI/DockPanel.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
+#include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/Plater.hpp"
 #include "slic3r/GUI/Preferences.hpp" // PreferencesTab::RemoteAPI
 
@@ -128,6 +129,42 @@ std::string read_page()
     return ss.str();
 }
 
+const char *const kClosedText = "OrcaSlicer MCP panel closed. Get it back from View > OrcaSlicer MCP panel.";
+const char *const kClosedUndo = "Undo";
+
+NotificationManager *notifications()
+{
+    Plater *p = wxGetApp().plater();
+    return p != nullptr ? p->get_notification_manager() : nullptr;
+}
+
+// The pane is open again (View > OrcaSlicer MCP panel, or the banner's Undo): the banner has nothing left to say.
+void close_closed_banner()
+{
+    if (NotificationManager *nm = notifications()) nm->close_notification_of_type(NotificationType::McpPanelClosed);
+}
+
+// The user closed the pane (its close button, or the page's close): a banner at the bottom right says where to get it
+// back, with an Undo link that opens it again. Only a user's close reaches this (the app's close and a GUI rebuild
+// remove the pane without on_close); not while those run anyway, and not while the Remote API is off. Its own type
+// (NotificationType::McpPanelClosed): the change toasts never coalesce with it, and their rule of staying quiet while
+// the pane is open does not apply. One at a time: an earlier copy is closed first.
+void show_closed_banner()
+{
+    if (!closing_reason().empty() || !api_enabled()) return;
+    NotificationManager *nm = notifications();
+    if (nm == nullptr) return;
+    nm->close_notification_of_type(NotificationType::McpPanelClosed);
+    nm->push_notification(NotificationType::McpPanelClosed, NotificationManager::NotificationLevel::RegularNotificationLevel, kClosedText,
+                          kClosedUndo, [](wxEvtHandler *) {
+                              // The link is clicked inside the 3D view's render: the pane opens from the app's queue.
+                              wxGetApp().CallAfter([]() {
+                                  if (closing_reason().empty()) McpPanel::show();
+                              });
+                              return true; // the banner closes
+                          });
+}
+
 json capabilities()
 {
     json c = {{"restore", true},
@@ -186,8 +223,11 @@ public:
     McpPane(wxWindow *parent, const std::string &html)
         : DockPanel(
               parent, html, [this](const json &data) { on_page(data); },
-              // The pane's own close button (or a page close): not reopened at the next start.
-              []() { set_wanted(false); },
+              // The pane's own close button (or a page close): not reopened at the next start; the banner says where it is.
+              []() {
+                  set_wanted(false);
+                  show_closed_banner();
+              },
               // ~McpPane has already let go of everything this pane registered.
               nullptr)
         , m_timer(this)
@@ -256,7 +296,15 @@ public:
             return;
         }
         m_want_live = false;
-        push({{"type", "live"}, {"values", values}});
+        json m = {{"type", "live"}, {"values", values}};
+        // Whether the newest slice result still holds: it changes with the user's own edits too, which add no row.
+        try {
+            const json valid = McpActions::slice_valid();
+            if (!valid.is_null()) m["slice_valid"] = valid;
+        } catch (const std::exception &e) {
+            BOOST_LOG_TRIVIAL(warning) << "MCP panel: no slice state: " << e.what();
+        }
+        push(m);
     }
 
     void on_page(const json &data)
@@ -453,6 +501,7 @@ McpPane *create(Plater *plater)
     });
     plater->add_dock_pane(pane, kPaneName, wxString::FromUTF8("OrcaSlicer MCP"), "right", wxSize(300, 480),
                           [pane]() { pane->fire_close(); });
+    close_closed_banner();
     return pane;
 }
 
@@ -490,6 +539,11 @@ void McpPanel::config_changed()
 }
 
 void McpPanel::model_changed()
+{
+    if (s_pane != nullptr && wxThread::IsMain()) s_pane->schedule(false, true, kChangeMs);
+}
+
+void McpPanel::slice_changed()
 {
     if (s_pane != nullptr && wxThread::IsMain()) s_pane->schedule(false, true, kChangeMs);
 }

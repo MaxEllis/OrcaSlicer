@@ -107,7 +107,7 @@
   .row.open, .row.open + .more { background: var(--hover-soft); }
   .row.open + .more { display: flex; }
   .more .d { min-width: 0; overflow-wrap: anywhere; }
-  .more .d[data-tip]:hover::after { left: 0; transform: none; white-space: normal; max-width: 240px; }
+  .more .d[data-tip]:hover::after { left: 0; transform: none; white-space: pre-line; max-width: 240px; }
   .more .d.bad { color: var(--warn); }
   .more .faint { color: var(--faint); white-space: nowrap; }
   .group.newest .ghead .name { font-weight: 600; color: var(--fg); }
@@ -128,13 +128,15 @@
   /* A tag for the control the keyboard focused (P5): one element the view script places above the control, or below
      it, inside the pane and never over the control (McpPanelCore.placeTip). */
   .ftip { position: fixed; z-index: 6; left: 0; top: 0; max-width: 240px; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg);
-          border: 1px solid var(--tip-border); font-size: 11.5px; line-height: 1.35; pointer-events: none; overflow-wrap: anywhere; }
+          border: 1px solid var(--tip-border); font-size: 11.5px; line-height: 1.35; pointer-events: none; overflow-wrap: anywhere; white-space: pre-line; }
   .ftip[hidden] { display: none; }
   .tip-left:hover::after { left: auto; right: 0; transform: none; }
   .row .ic { display: inline-flex; }
   /* After the general tag rule: a row's tag and the restore icon's long tag wrap inside the pane. */
   .row .l[data-tip]:hover::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
   .ghead .act[data-tip]:hover::after { white-space: normal; width: max-content; max-width: 220px; }
+  /* A multi-line value's tag (value_tip: a few lines of a G-code template) keeps its line breaks, inside the pane. */
+  .row .v[data-tip]:hover::after { left: auto; right: 0; transform: none; white-space: pre-line; width: max-content; max-width: 240px; text-align: left; }
 </style>
 </head>
 <body>
@@ -245,8 +247,9 @@
   }
 
   // allRows (optional): every row of the timeline, to tell whether the group's slice is out of date (sliceStale);
-  // staleUpTo (optional): rows up to this id are out of date (a change the page made itself, like a revert).
-  function groupResult(group, allRows, staleUpTo) {
+  // staleUpTo (optional): rows up to this id are out of date (a change the page made itself, like a revert);
+  // sliceValid (optional): the host's slice_valid (see sliceStale).
+  function groupResult(group, allRows, staleUpTo, sliceValid) {
     var rows = group.rows || [];
     var text = '';
     var warn = false;
@@ -260,7 +263,7 @@
     });
     var out = { text: text, warn: warn };
     if (allRows) {
-      out.stale = !!last && sliceStale(last, allRows, staleUpTo);
+      out.stale = !!last && sliceStale(last, allRows, staleUpTo, sliceValid);
       // Only the newest result says "out of date" in words; an older group's result is faint (it is history).
       var newest = latestSlice(allRows);
       out.current = !!last && !!newest && newest.id === last.id;
@@ -270,12 +273,18 @@
 
   // A slice result is out of date once anything changed after it: a later setting, preset, model or plate row (a
   // refusal, a note or another slice changes nothing), or a change the page made itself (staleUpTo: rows up to that
-  // id were there when the user reverted or restored something).
+  // id were there when the user reverted or restored something), or, for the newest result only, the host saying it
+  // no longer holds (sliceValid === false: the host's slice_valid, which also follows the user's own edits, which add
+  // no row). Without sliceValid (a host that does not send it) the rows alone decide.
   var CHANGE_KINDS = { setting: 1, preset: 1, model: 1, plate: 1 };
-  function sliceStale(row, allRows, staleUpTo) {
+  function sliceStale(row, allRows, staleUpTo, sliceValid) {
     if (!row || row.kind !== 'slice' || !row.result || has(row.error)) return false;
     if (typeof staleUpTo === 'number' && row.id <= staleUpTo) return true;
     var rs = allRows || [];
+    if (sliceValid === false) {
+      var newest = latestSlice(rs);
+      if (newest && newest.id === row.id) return true;
+    }
     for (var i = 0; i < rs.length; i++) {
       var r = rs[i];
       if (later(r, row) && CHANGE_KINDS[r.kind] && !has(r.error)) return true;
@@ -562,6 +571,8 @@
   var restoreBusy = null;       // group id | 'undo'
   var restoreError = {};        // group id | 'undo' -> reason
   var staleUpTo = null;         // slice rows up to this id are out of date (the user reverted or restored since)
+  var sliceValid = null;        // the host's slice_valid: false = the newest slice result no longer holds; null = not sent
+  var handOpened = {};          // group id -> true: the user opened it (a click or Expand all); it stays open
   var restoreUndoneAt = null;   // newest row id when the user undid a restore: "Restore undone" until a newer row
   var focusNext = null;         // data-fk of the control to focus: kept until a render finds it (or 5 renders pass)
   var focusTries = 0;
@@ -673,7 +684,7 @@
     var disp = reverted ? { value: has(r.value) ? String(r.value) : '', note: '' } : Core.liveDisplay(r, live, newest, caps.tracked_live);
     var detail = detailText(r, disp);
     var kind = r.kind === 'refused' || (r.kind === 'slice' && has(r.error)) ? 'refused' : r.kind;
-    var stale = Core.sliceStale(r, history.rows, staleUpTo);
+    var stale = Core.sliceStale(r, history.rows, staleUpTo, sliceValid);
     var latest = stale ? Core.latestSlice(history.rows) : null;
     var staleNote = stale && latest && latest.id === r.id;
     var rc = (kind === 'refused' ? ' refused' : '') + (stale ? ' stale' : '') + (reverted ? ' reverted' : '') + (r.dropped === true && !reverted ? ' dropped' : '');
@@ -695,7 +706,8 @@
           esc(r.undo.verb + ' (unavailable: ' + st.why + ')') + '">' + esc(r.undo.verb) + '</button>';
       }
     }
-    var dTip = whereInTip(r) ? ' data-tip="' + esc(r.where) + '"' : '';
+    // A multi-line value (a G-code template) carries a few of its lines for the hover tags (value_tip, before_tip).
+    var dTip = whereInTip(r) ? ' data-tip="' + esc(r.where) + '"' : (has(r.before_tip) && has(r.before) ? ' data-tip="' + esc(r.before_tip) + '"' : '');
     var more = '<div class="more"><span class="d"' + dTip + '>' + esc(detail) + '</span>' + tail + '</div>';
     if (errLine) more = '<div class="more"><span class="d bad">' + esc(errLine) + '</span>' + tail + '</div>';
     else if (kind === 'refused' && has(r.error) && !detail) more = '<div class="more"><span class="d">' + esc(r.error) + '</span>' + tail + '</div>';
@@ -704,11 +716,17 @@
     var value = esc(disp.value);
     var shownText = disp.value;
     var noteHtml = '';
+    var vTip = '';
     if (reverted) {
       noteHtml = '<span class="chg"><s class="old">' + esc(disp.value) + '</s> reverted</span>';
       value = has(r.before) ? swatch(r, r.before) + esc(r.before) : '';
       shownText = has(r.before) ? r.before : '';
-    } else value = swatch(r, disp.value) + value;
+      vTip = has(r.before) && has(r.before_tip) ? r.before_tip : '';
+    } else {
+      value = swatch(r, disp.value) + value;
+      if (has(r.value_tip) && disp.value === String(has(r.value) ? r.value : '')) vTip = r.value_tip;
+      else if (has(r.before_tip) && has(r.before) && disp.value === String(r.before)) vTip = r.before_tip;
+    }
     var note = reverted ? '' : (disp.note || (staleNote ? 'out of date' : ''));
     if (note) noteHtml = '<span class="chg">' + esc(note) + '</span>';
     if (String(shownText || '').length > 18) rc += ' long';
@@ -716,14 +734,14 @@
     return '<div class="row' + rc + open + '" data-row="' + r.id + '" data-fk="r:' + r.id + '" role="button" tabindex="0" aria-expanded="' + isOpen + '" aria-label="' + esc(label) + '">' +
       '<span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
       '<span class="l"' + (!isOpen ? ' data-tip="' + esc(rowTip(r)) + '"' : '') + '><span class="lt">' + esc(r.label) + '</span>' +
-      noteHtml + '</span><span class="v">' + value + '</span></div>' + more;
+      noteHtml + '</span><span class="v"' + (vTip ? ' data-tip="' + esc(vTip) + '"' : '') + '>' + value + '</span></div>' + more;
   }
 
   function groupHtml(g, idx) {
     var newest = idx === 0;
     var undone = isUndone(g);
     var open = !!openGroups[g.id] && !undone;
-    var res = Core.groupResult(g, history.rows, staleUpTo);
+    var res = Core.groupResult(g, history.rows, staleUpTo, sliceValid);
     var cls = 'group' + (open ? ' open' : '') + (undone ? ' undone' : '') + (newest ? ' newest' : ' older');
     var restorable = caps.restore && !newest && !undone && g.restore;
     var ask = '';
@@ -899,12 +917,18 @@
     restoredTo = has(m.restored_to) || m.restored_to === 0 ? m.restored_to : null;
     restoreFailed = restoredTo !== null && m.restore_failed === true;
     canUndoRestore = !!m.can_undo_restore;
+    sliceValid = typeof m.slice_valid === 'boolean' ? m.slice_valid : null;
     gotHistory = true;
     if (readyTimer !== null) { window.clearTimeout(readyTimer); readyTimer = null; }
     var gs = Core.groupRows(history);
     var newest = gs.length ? gs[0].id : null;
     gs.forEach(function (g, i) { if (!(g.id in openGroups)) openGroups[g.id] = (i === 0); });
-    if (newest !== null && newest !== newestSeen && newestSeen !== null) openGroups[newest] = true;
+    if (newest !== null && newest !== newestSeen && newestSeen !== null) {
+      openGroups[newest] = true;
+      // The latest group is open and older ones closed: the group that was newest closes now, unless the user opened
+      // it by hand (handOpened). Groups the user opened stay open.
+      if (!handOpened[newestSeen] && gs.some(function (g) { return g.id === newestSeen; })) openGroups[newestSeen] = false;
+    }
     newestSeen = newest;
     // rows that the host now reports as reverted no longer need the local mark
     history.rows.forEach(function (r) { if (has(r.undone_at)) { delete revertedHere[r.id]; delete pendingUndo[r.id]; } });
@@ -953,7 +977,9 @@
     if (m.type === 'history') applyHistory(m);
     else if (m.type === 'live') {
       var nv = m.values || {};
-      if (!liveSame(live, nv)) { live = nv; render(); }
+      // slice_valid in a live message is optional: without it the last one stays.
+      var sv = typeof m.slice_valid === 'boolean' ? m.slice_valid : sliceValid;
+      if (!liveSame(live, nv) || sv !== sliceValid) { live = nv; sliceValid = sv; render(); }
     }
     else if (m.type === 'state') { api = m.api === 'off' ? 'off' : 'on'; render(); }
     else if (m.type === 'result') applyResult(m);
@@ -1005,7 +1031,10 @@
     if (target.closest && target.closest('#fold')) {
       var cand = shownGroups().filter(function (g) { return !isUndone(g); });
       var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
-      cand.forEach(function (g) { openGroups[g.id] = !allOpen; });
+      cand.forEach(function (g) {
+        openGroups[g.id] = !allOpen;
+        if (allOpen) delete handOpened[g.id]; else handOpened[g.id] = true;
+      });
       render(); return true;
     }
     if (target.closest && target.closest('.more')) return false;
@@ -1015,6 +1044,7 @@
       var tid = Number(el.getAttribute('data-toggle'));
       if (asking === tid || restoreBusy === tid) return false;
       openGroups[tid] = !openGroups[tid];
+      if (openGroups[tid]) handOpened[tid] = true; else delete handOpened[tid];
       focusNext = 'g:' + tid;
       render(); return true;
     }

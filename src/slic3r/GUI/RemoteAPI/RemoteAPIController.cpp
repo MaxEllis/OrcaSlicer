@@ -447,6 +447,23 @@ static McpRow mcp_config_row(const std::string &key, const std::string &label, c
 {
     McpRow r = mcp_row("setting", label, McpRecorder::config_value_text(key, after_raw),
                        McpRecorder::config_value_text(key, before_raw), where);
+    // Multi-line text (a G-code template, the post-processing scripts): its first line and line count, or the first
+    // line that differs when both sides start alike, and a few lines for the hover tag. Undo keeps the raws below.
+    std::string after_text, before_text;
+    const bool  has_after  = Controller::config_text(key, after_raw, after_text);
+    const bool  has_before = Controller::config_text(key, before_raw, before_text);
+    const std::string shown_after  = has_after ? mcp_multiline_display(after_text, has_before ? &before_text : nullptr) : std::string();
+    const std::string shown_before = has_before ? mcp_multiline_display(before_text, has_after ? &after_text : nullptr) : std::string();
+    if (!shown_after.empty()) {
+        r.value     = shown_after;
+        r.value_tip = mcp_multiline_tip(after_text, has_before ? &before_text : nullptr);
+    }
+    if (!shown_before.empty()) {
+        r.before     = shown_before;
+        r.before_tip = mcp_multiline_tip(before_text, has_after ? &after_text : nullptr);
+    }
+    // The live value of such a row is judged on the raws (McpActions live_of): its display form depends on both sides.
+    if (!shown_after.empty() || !shown_before.empty()) target["multiline"] = true;
     target["before_raw"] = before_raw;
     target["after_raw"]  = after_raw;
     r.target             = std::move(target);
@@ -1031,6 +1048,21 @@ static bool is_sensitive_config_key(const std::string &key)
 }
 
 bool Controller::sensitive_config_key(const std::string &key) { return is_sensitive_config_key(key); }
+
+bool Controller::config_text(const std::string &key, const std::string &raw, std::string &text)
+{
+    const ConfigOptionDef *d = print_config_def.get(key);
+    if (d == nullptr) return false;
+    if (d->type == coString) return unescape_string_cstyle(raw, text);
+    if (d->type == coStrings && d->multiline) {
+        std::vector<std::string> entries;
+        if (!unescape_strings_cstyle(raw, entries)) return false;
+        text.clear();
+        for (size_t i = 0; i < entries.size(); ++i) text += (i > 0 ? "\n" : "") + entries[i];
+        return true;
+    }
+    return false;
+}
 
 // GUI thread only (AppConfig).
 static bool sensitive_writes_allowed()

@@ -6,7 +6,9 @@
 #include <exception>
 #include <filesystem>
 #include <set>
+#include <string>
 #include <system_error>
+#include <vector>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -283,6 +285,93 @@ McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group)
     return out;
 }
 
+// ---- Multi-line text values -----------------------------------------------------------------------------------------
+
+namespace {
+
+const char *const kLineEllipsis = "\xE2\x80\xA6"; // U+2026
+constexpr size_t  kLineChars    = 40;             // a row's line
+constexpr size_t  kTipLineChars = 60;             // a line in the hover tag
+constexpr size_t  kTipLines     = 5;
+
+std::vector<std::string> split_lines(const std::string &text)
+{
+    std::vector<std::string> out;
+    size_t start = 0;
+    while (start < text.size()) {
+        const size_t nl   = text.find('\n', start);
+        std::string  line = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        out.push_back(std::move(line));
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return out;
+}
+
+bool ends_with(const std::string &s, const std::string &tail)
+{
+    return s.size() >= tail.size() && s.compare(s.size() - tail.size(), tail.size(), tail) == 0;
+}
+
+// A line as shown: trailing blanks dropped, "(empty line)" when blank, at most max_chars characters (UTF-8 code
+// points) with an ellipsis when cut.
+std::string shown_line(std::string s, size_t max_chars)
+{
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    if (s.find_first_not_of(" \t") == std::string::npos) return "(empty line)";
+    size_t chars = 0, i = 0;
+    for (; i < s.size(); ++i) {
+        if ((static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) continue; // a continuation byte
+        if (chars == max_chars) break;
+        ++chars;
+    }
+    return i < s.size() ? s.substr(0, i) + kLineEllipsis : s;
+}
+
+// The first line (0-based) that differs when both texts start with the same line 1; 0 otherwise (also when nothing
+// differs).
+size_t first_change(const std::vector<std::string> &a, const std::string *other)
+{
+    if (other == nullptr) return 0;
+    const std::vector<std::string> b = split_lines(*other);
+    if (a.empty() || b.empty() || a[0] != b[0]) return 0;
+    const size_t n = std::max(a.size(), b.size());
+    for (size_t i = 1; i < n; ++i)
+        if (i >= a.size() || i >= b.size() || a[i] != b[i]) return i;
+    return 0;
+}
+
+} // namespace
+
+size_t mcp_line_count(const std::string &text) { return split_lines(text).size(); }
+
+std::string mcp_multiline_display(const std::string &text, const std::string *other)
+{
+    const std::vector<std::string> lines = split_lines(text);
+    if (lines.size() < 2) return {};
+    const std::string count = " (" + std::to_string(lines.size()) + " lines)";
+    const size_t      k     = first_change(lines, other);
+    if (k > 0 && k < lines.size()) return "line " + std::to_string(k + 1) + ": " + shown_line(lines[k], kLineChars) + count;
+    const std::string head = shown_line(lines[0], kLineChars);
+    return head + (ends_with(head, kLineEllipsis) ? std::string() : std::string(" ") + kLineEllipsis) + count;
+}
+
+std::string mcp_multiline_tip(const std::string &text, const std::string *other)
+{
+    const std::vector<std::string> lines = split_lines(text);
+    if (lines.size() < 2) return {};
+    size_t from = first_change(lines, other);
+    if (from >= lines.size()) from = 0;
+    const size_t to  = std::min(lines.size(), from + kTipLines);
+    std::string  out = to - from == 1 ? "Line " + std::to_string(from + 1)
+                                      : "Lines " + std::to_string(from + 1) + " to " + std::to_string(to);
+    out += " of " + std::to_string(lines.size()) + ":";
+    for (size_t i = from; i < to; ++i) out += "\n" + shown_line(lines[i], kTipLineChars);
+    if (to < lines.size()) out += std::string("\n") + kLineEllipsis;
+    return out;
+}
+
 json McpHistory::page_history() const
 {
     const McpTracking tracking = mcp_tracking(m_rows, m_groups.empty() ? -1 : m_groups.back().id);
@@ -301,6 +390,8 @@ json McpHistory::page_history() const
                         {"on_disk", r.on_disk}, {"reveal", mcp_row_revealable(r)},
                         {"superseded", tracking.superseded.count(r.id) > 0},
                         {"dropped", tracking.dropped.count(r.id) > 0}});
+        if (!r.value_tip.empty()) rows.back()["value_tip"] = r.value_tip;
+        if (!r.before_tip.empty()) rows.back()["before_tip"] = r.before_tip;
     }
     json groups = json::array();
     if (m_has_start && !m_groups.empty()) {
@@ -322,7 +413,8 @@ json McpHistory::to_json() const
                         {"label", r.label}, {"value", r.value}, {"before", r.before}, {"where", r.where},
                         {"undo_verb", r.undo_verb}, {"undo_tip", r.undo_tip}, {"undone_at", r.undone_at},
                         {"title_hint", r.title_hint}, {"target", r.target}, {"result", r.result},
-                        {"error", r.error}, {"on_disk", r.on_disk}});
+                        {"error", r.error}, {"on_disk", r.on_disk}, {"value_tip", r.value_tip},
+                        {"before_tip", r.before_tip}});
     auto gj = [](const McpGroup &g) {
         return json{{"id", g.id}, {"ts", g.ts}, {"time", g.time}, {"checkpoint", g.checkpoint},
                     {"checkpoint_failed", g.checkpoint_failed}, {"size", g.fingerprint.size},
@@ -365,6 +457,8 @@ McpHistory McpHistory::from_json(const json &j, const std::function<bool(const s
             o.value = r.value("value", std::string());
             o.before = r.value("before", std::string());
             o.where = r.value("where", std::string());
+            o.value_tip = r.value("value_tip", std::string());
+            o.before_tip = r.value("before_tip", std::string());
             o.undo_verb = r.value("undo_verb", std::string());
             o.undo_tip = r.value("undo_tip", std::string());
             o.undone_at = r.value("undone_at", std::string());

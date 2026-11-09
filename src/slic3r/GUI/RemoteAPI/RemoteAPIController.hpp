@@ -44,6 +44,10 @@ public:
     static void notify_project_new();
     // The script, G-code and connection keys the policy guards (the journal never shows their values). Any thread.
     static bool sensitive_config_key(const std::string &key);
+    // The text of a text setting from its serialized raw form, with real line breaks: a string setting (a G-code
+    // template), or a multi-line list setting (post_process: one entry per line). False for any other setting or a raw
+    // that does not parse. The MCP panel's multi-line rows (McpHistory.hpp mcp_multiline_display). Any thread.
+    static bool config_text(const std::string &key, const std::string &raw, std::string &text);
 
     // F8 mutual-exclusion gates between API UI mutations and the periodic
     // auto-backup 3MF exporter (which pumps the event queue mid-export, so the

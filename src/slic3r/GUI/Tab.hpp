@@ -290,11 +290,16 @@ protected:
 		void init(std::pair<OG_CustomCtrl*, bool*>);
 		void blink();
 		void invalidate();
+		// The running blink lasts `steps` timer steps in all (kDefaultSteps by default); no-op when none runs.
+		void lengthen(int steps);
+
+		static constexpr int kDefaultSteps = 11;
 
 	private:
 		OG_CustomCtrl*	m_custom_ctrl	{nullptr};
 		bool*			m_show_blink_ptr{nullptr};
 		int				m_blink_counter	{0};
+		int				m_blink_steps	{kDefaultSteps};
 	    wxTimer         m_timer;
 	}
     m_highlighter;
@@ -500,6 +505,9 @@ public:
 
     void            update_wiping_button_visibility();
 	virtual void	activate_option(const std::string& opt_key, const wxString& category);
+	// The OrcaSlicer MCP panel's reveal: the label blink activate_option just started (the search's highlight) lasts
+	// `steps` steps of 300 ms instead of Highlighter::kDefaultSteps. No-op when no blink runs.
+	void			lengthen_highlight(int steps) { m_highlighter.lengthen(steps); }
     void			apply_searcher();
 	void			cache_config_diff(const std::vector<std::string>& selected_options, const DynamicPrintConfig* config = nullptr);
 	void			apply_config_from_cache();

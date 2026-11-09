@@ -24,8 +24,13 @@ public:
     // McpHistory::page_history() of the open project + "restored_to" (null | the group id the project was last
     // restored to, until the next assistant change or refusal) + "restore_failed" (true when that restore failed once it had
     // started: the page says "Couldn't restore to") + "can_undo_restore" (the pre-restore snapshot is there and
-    // nothing was recorded since). Records nothing (it follows the open project, like every recorder call).
+    // nothing was recorded since) + "slice_valid" (slice_valid(), only when not null). Records nothing (it follows the
+    // open project, like every recorder call).
     static nlohmann::json activity();
+    // Whether the timeline's newest slice result still describes its plate: that plate's is_slice_result_valid(), as
+    // GET /slice/status's "valid" for the current plate (false after any change since, the user's own hand edits
+    // included). null when the timeline has no slice result or its plate is gone. GUI thread.
+    static nlohmann::json slice_valid();
 
     // {"<row id>": {"value": <text in the row's display form>, "present": bool}} for every tracked row whose value
     // can be read now (R43, McpHistory.hpp mcp_tracking: the latest row of each setting, whichever group; rows with

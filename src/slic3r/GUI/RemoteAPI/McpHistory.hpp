@@ -19,6 +19,8 @@ struct McpRow {
     std::string time;        // "HH:MM", set by the caller
     std::string kind, label, value;
     std::string before;      // previous value, in the same display form as `value` (unit, enum label); raw in target
+    std::string value_tip;   // hover text for a multi-line value (mcp_multiline_tip), "" when none
+    std::string before_tip;  // the same for `before`
     std::string where;       // any other detail note
     std::string undo_verb;   // empty = not undoable
     std::string undo_tip;
@@ -94,7 +96,8 @@ public:
     const std::vector<McpRow>   &rows() const   { return m_rows; }
     const std::vector<McpGroup> &groups() const { return m_groups; } // real groups only (not the start point)
 
-    // {"rows":[...],"groups":[...]} for the page's history message. A row's "error" is text there:
+    // {"rows":[...],"groups":[...]} for the page's history message. "value_tip" / "before_tip" only when not empty.
+    // A row's "error" is text there:
     // "" when none, else its where (or value, or "Failed"). "reveal" is mcp_row_revealable(); "superseded" is
     // mcp_tracking()'s (the assistant changed the same setting again later); "dropped" is mcp_tracking()'s too (the
     // assistant's own preset switch dropped the edit).
@@ -113,6 +116,22 @@ private:
     int64_t               m_last_ts   = 0;
     int                   m_next_row  = 1;
 };
+
+// ---- Multi-line text values (a G-code template, the post-processing scripts) -----------------------------------------
+// text has '\n' line breaks ("\r\n" counts as one; a final line break only ends the last line). A shown line drops its
+// trailing blanks, reads "(empty line)" when blank and is cut at 40 characters (60 in a tip) with "…".
+// The number of lines (0 for "").
+size_t mcp_line_count(const std::string &text);
+// The row's display form, "" when text has fewer than two lines (the caller keeps its single-line form):
+//   "<line 1> … (<N> lines)"                     (a cut line 1 keeps its own "…": "<line 1 cut>… (<N> lines)")
+//   "line <k>: <line k> (<N> lines)"           when other (the value on the other side of the change: the before for
+//                                              the value, the value for the before) starts with the same line 1 and
+//                                              line k is the first that differs, and text has a line k
+// so a change and its change back read differently even when both start alike.
+std::string mcp_multiline_display(const std::string &text, const std::string *other = nullptr);
+// The hover tag: "Lines <a> to <b> of <N>:" (or "Line <a> of <N>:") and those lines, at most 5, from line k as above
+// (else line 1), one per line, then "…" on a line of its own when more follow. "" when text has fewer than two lines.
+std::string mcp_multiline_tip(const std::string &text, const std::string *other = nullptr);
 
 // A row the panel can show in the settings sidebar (the page's "reveal"): a setting row whose target names a key of
 // the print, filament or printer preset (target type "config", scope print|filament|printer). Per-object settings,

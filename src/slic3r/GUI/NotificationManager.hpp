@@ -200,6 +200,9 @@ enum class NotificationType
 	// Remote API change toasts (RemoteAPIController); own type so coalescing
 	// close/re-push never touches other features' notifications.
 	RemoteAPIChange,
+	// The OrcaSlicer MCP pane was closed by the user: where to get it back, with an Undo link (McpPanel). Its own
+	// type: the change toasts' coalescing and the "no change toasts while the pane is open" rule never touch it.
+	McpPanelClosed,
     NotificationTypeCount
 
 };

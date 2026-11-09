@@ -190,6 +190,13 @@ void Tab::Highlighter::invalidate()
     }
 
     m_blink_counter = 0;
+    m_blink_steps   = kDefaultSteps;
+}
+
+void Tab::Highlighter::lengthen(int steps)
+{
+    if (m_custom_ctrl && m_show_blink_ptr && steps > m_blink_counter)
+        m_blink_steps = steps;
 }
 
 void Tab::Highlighter::blink()
@@ -201,7 +208,7 @@ void Tab::Highlighter::blink()
     else
         return;
 
-    if ((++m_blink_counter) == 11)
+    if ((++m_blink_counter) >= m_blink_steps)
         invalidate();
 }
 

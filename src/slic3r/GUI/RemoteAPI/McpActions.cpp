@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <exception>
 #include <map>
 #include <memory>
@@ -75,6 +76,7 @@ const char *const kRemovedSince = "removed since";
 const char *const kArrow        = "\xE2\x86\x92"; // U+2192, as the move-to-plate rows write it
 const char *const kUntracked    = "Can't track this object after the project was reloaded";
 const char *const kPointChanged = "The restore point was changed on disk, so it is not used";
+constexpr int     kRevealBlinkSteps = 22; // Tab's highlight: 11 steps of 300 ms for a search hit
 
 struct Live
 {
@@ -253,6 +255,27 @@ std::string project_element_raw(const DynamicPrintConfig &proj, const std::strin
     return proj.opt_serialize(key);
 }
 
+// A setting row's live value from the setting's raw now. A multi-line row (target "multiline": a G-code template) is
+// judged on the raws, as its display form depends on both sides of the change: the row's own value or before when the
+// raw is one of them, else the raw's form against the assistant's value ("changed since" when that reads like either).
+std::string config_live_text(const McpRow &r, const std::string &key, const std::string &raw)
+{
+    const json &t = r.target;
+    if (!t.is_object() || !t.value("multiline", false)) return McpRecorder::config_value_text(key, raw);
+    const std::string after_raw = t.value("after_raw", std::string());
+    if (raw == after_raw) return r.value;
+    if (raw == t.value("before_raw", std::string())) return r.before;
+    std::string now, after;
+    std::string shown;
+    if (Controller::config_text(key, raw, now)) {
+        const bool has_after = Controller::config_text(key, after_raw, after);
+        shown = mcp_multiline_display(now, has_after ? &after : nullptr);
+    }
+    if (shown.empty()) shown = McpRecorder::config_value_text(key, raw);
+    if (same_text(shown, r.value) || same_text(shown, r.before)) shown = kChangedSince;
+    return shown;
+}
+
 Live live_of(const McpRow &r)
 {
     const json       &t    = r.target;
@@ -269,12 +292,12 @@ Live live_of(const McpRow &r)
             bool              ok  = true;
             const std::string raw = project_element_raw(bundle->project_config, key, t.value("index", json()), ok);
             if (!ok) return live_value(kRemovedSince);
-            return live_value(McpRecorder::config_value_text(key, raw));
+            return live_value(config_live_text(r, key, raw));
         }
         PresetCollection *c = collection(scope);
         if (c == nullptr) return {};
         const ConfigOption *opt  = c->get_edited_preset().config.option(key);
-        std::string         text = opt != nullptr ? McpRecorder::config_value_text(key, opt->serialize()) : std::string("not set");
+        std::string         text = opt != nullptr ? config_live_text(r, key, opt->serialize()) : std::string("not set");
         // Another preset is being edited now: the assistant's value is not the one shown any more.
         const std::string sel = c->get_selected_preset_name();
         if (t.contains("preset") && t["preset"].is_string() && t["preset"].get<std::string>() != sel) text += " in " + sel;
@@ -355,7 +378,7 @@ Live live_of(const McpRow &r)
             const DynamicPrintConfig merged = bundle->full_config();
             raw = merged.has(key) ? merged.opt_serialize(key) : std::string();
         }
-        return live_value(McpRecorder::config_value_text(key, raw));
+        return live_value(config_live_text(r, key, raw));
     }
     if (type == "layer_profile") {
         const std::vector<double> now   = mo->layer_height_profile.get();
@@ -1037,7 +1060,30 @@ json McpActions::activity()
         can_undo = fs::exists(into_path(from_u8(rec.checkpoint_path(s_restore.snapshot))), ec);
     }
     j["can_undo_restore"] = can_undo;
+    const json valid = slice_valid();
+    if (!valid.is_null()) j["slice_valid"] = valid;
     return j;
+}
+
+json McpActions::slice_valid()
+{
+    Plater *p = plater();
+    if (p == nullptr) return nullptr;
+    // The newest slice result, as the page's latestSlice picks it: a slice row with a result and no error, the latest
+    // time first, then the highest id.
+    const McpRow *newest = nullptr;
+    for (const McpRow &r : McpRecorder::get().history().rows())
+        if (r.kind == "slice" && !r.error && r.result.is_object() &&
+            (newest == nullptr || r.ts > newest->ts || (r.ts == newest->ts && r.id > newest->id)))
+            newest = &r;
+    if (newest == nullptr) return nullptr;
+    // Its plate: McpRecorder::slice_finished writes "plate <n>".
+    int plate_no = 0;
+    if (std::sscanf(newest->where.c_str(), "plate %d", &plate_no) != 1) return nullptr;
+    PartPlateList &plates = p->get_partplate_list();
+    if (plate_no < 1 || plate_no > plates.get_plate_count()) return nullptr;
+    const PartPlate *plate = plates.get_plate(plate_no - 1);
+    return plate != nullptr ? json(plate->is_slice_result_valid()) : json(nullptr);
 }
 
 json McpActions::live_values()
@@ -1301,10 +1347,15 @@ json McpActions::reveal(int row_id)
         const std::string k = o.opt_key();
         if (k == key || (k.size() > key.size() && k.compare(0, key.size(), key) == 0 && k[key.size()] == '#')) { hit = &o; break; }
     }
+    const std::string shown_key = hit != nullptr ? hit->opt_key() : key;
     if (hit != nullptr)
-        sidebar.jump_to_option(hit->opt_key(), type, hit->category);
+        sidebar.jump_to_option(shown_key, type, hit->category);
     else
-        sidebar.jump_to_option(key, type, L"");
+        sidebar.jump_to_option(shown_key, type, L"");
+    // OrcaSlicer's own highlight (the search's): the label blinks in its teal for 11 steps of 300 ms. A reveal from the
+    // panel is easy to miss (the user's eyes are on the panel, and in dark mode the teal is dim): twice as long, with
+    // the same blink. Nothing when the jump started none (the setting is hidden in this mode).
+    if (Tab *tab = get_tab_for_option(shown_key, type)) tab->lengthen_highlight(kRevealBlinkSteps);
     return result_ok();
 }
 

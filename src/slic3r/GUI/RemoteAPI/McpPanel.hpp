@@ -6,7 +6,8 @@
 // Host -> page: "state" ({api: on|off}, on = the API server is listening) when the page is ready and after
 // Preferences closes; "history" (McpActions::activity() + type, version 1, capabilities, with off_text when the API
 // is enabled but not listening) when the page is ready, after Preferences closes and after every recorder change;
-// "live" (McpActions::live_values()) when the page asks and after config / model / project changes; "result" for
+// "live" (McpActions::live_values(), with "slice_valid" when known) when the page asks and after config / model /
+// project changes and a plate's slice result becoming valid or out of date; "result" for
 // every undo, restore and undo_restore ({action, row|group, status ok|cancelled|failed, reason}, never silent;
 // failed without running while the GUI is rebuilt or the app closes). A page load with no ready yet also gets state
 // and history (the page's ready can be lost while the bridge registers; the page repeats it too).
@@ -19,7 +20,8 @@
 //
 // It opens at start (and after the GUI is rebuilt) when the Remote API is enabled and the user has not closed it:
 // app_config "remote_api_panel" is "0" after a close from the pane's own button, "1" after View > OrcaSlicer MCP
-// panel. GUI thread only; every hook is a no-op while no pane is open. Light header: no wx, no asio.
+// panel. That close also shows a banner at the bottom right (NotificationType::McpPanelClosed, regular level) saying
+// where to get the pane back, with an Undo link that opens it again; opening the pane closes the banner. GUI thread only; every hook is a no-op while no pane is open. Light header: no wx, no asio.
 #include <nlohmann/json.hpp>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
@@ -38,6 +40,9 @@ public:
     static void config_changed();
     // The model or the plates changed (Plater::priv::update / object_list_changed): live values refreshed.
     static void model_changed();
+    // A plate's slice result became valid or out of date (PartPlate::update_slice_result_valid_state): the live values
+    // are refreshed, with "slice_valid" (McpActions::slice_valid).
+    static void slice_changed();
     // A project was opened, started or saved under another name: the timeline follows it (history pushed).
     static void project_changed();
     // Preferences closed (GUI_App::open_preferences): the API state is pushed, or the pane opens if it is wanted.

@@ -604,7 +604,9 @@ first. Needs the file changes box. Errors: `404 file_not_found`,
 
 The OrcaSlicer MCP panel (a dock pane) lists every change the API made, grouped into bursts, with an undo per
 row and a restore point per group. Undos and restores there are the user's own actions: they are not refused by
-the two Preferences boxes. The API side of it:
+the two Preferences boxes. When the user closes the pane with its close button, a banner at the bottom right says
+"OrcaSlicer MCP panel closed. Get it back from View > OrcaSlicer MCP panel." with an Undo link that opens it again
+(not when OrcaSlicer closes or rebuilds its window, nor while the Remote API is off). The API side of it:
 
 ### GET /activity
 
@@ -629,7 +631,8 @@ curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/activity
   ],
   "restored_to": null,
   "restore_failed": false,
-  "can_undo_restore": false
+  "can_undo_restore": false,
+  "slice_valid": true
 }
 ```
 The same shape the panel shows. `kind` is `setting`, `preset`, `model`, `plate`, `slice`, `file` or `refused`.
@@ -649,7 +652,12 @@ is `{"available": true}` when its end state can be restored, `available: false` 
 it has no restore point yet (the page offers no restore on the newest group, whatever it says).
 `restored_to` is the group the user last restored to (until the next API change or refusal),
 `restore_failed` is `true` when that restore failed after it had started replacing the project (the panel then
-says "Couldn't restore to"), and `can_undo_restore` whether the panel still offers to undo that restore. Reading
+says "Couldn't restore to"), and `can_undo_restore` whether the panel still offers to undo that restore.
+`slice_valid` (left out when the timeline has no slice result, or its plate is gone) says whether the newest slice
+result still describes its plate (`false` after any change since, the user's own edits in OrcaSlicer included). A
+multi-line setting (a G-code template, the post-processing scripts) shows as `<line 1> … (<N> lines)`, or as `line
+<k>: <line k> (<N> lines)` when both sides start alike, with `value_tip` / `before_tip` holding a few of its lines
+(see "MCP panel page and protocol", Rows). Reading
 it records nothing (it does follow the open project first, like every recorder call: a project saved under a new
 name since gets its timeline moved or started there).
 
@@ -836,7 +844,7 @@ another.
 ```json
 {"type": "history", "version": 1,
  "rows": [ /* rows, below */ ], "groups": [ /* groups, below */ ],
- "restored_to": null, "restore_failed": false, "can_undo_restore": false,
+ "restored_to": null, "restore_failed": false, "can_undo_restore": false, "slice_valid": true,
  "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused"],
                   "open_settings": true, "settings_hint": "", "settings_label": "Remote API settings",
                   "off_text": "The Remote API is off.", "reveal": true, "tracked_live": true}}
@@ -849,6 +857,12 @@ another.
 - `restore_failed` (optional, default `false`; read only with `restored_to`): the last restore failed after it
   had started replacing the project. The line reads "Couldn't restore to HH:MM" instead, and no group is greyed
   out (nothing was marked undone).
+- `slice_valid` (bool, optional): whether the timeline's newest slice result (the slice row with a `result` and no
+  `error`, latest `ts`, then highest `id`) still describes its plate. `false` marks that result "out of date" also
+  when no row came after it: the user's own edits in OrcaSlicer add no row. Leave it out when you cannot tell (no
+  slice result, its plate gone); the page then judges by the rows alone, as before. A `history` without it clears
+  the last one. This fork sends its plate's `is_slice_result_valid()` (the same test as `GET /slice/status`'s
+  `valid`, for that plate), also in `GET /activity`.
 - `capabilities`:
   - `restore` (bool): show restore icons and the confirm. `false` for a host without checkpoints.
   - `kinds` (list): the row kinds this host records. Informational; the page does not read it.
@@ -873,10 +887,16 @@ another.
 
 **`live`**: the current values of the rows, after the page asks and when settings, objects or the project change.
 ```json
-{"type": "live", "values": {"12": {"value": "20%", "present": true}, "14": {"value": "bracket.stl", "present": false}}}
+{"type": "live", "values": {"12": {"value": "20%", "present": true}, "14": {"value": "bracket.stl", "present": false}},
+ "slice_valid": false}
 ```
+`slice_valid` (optional) is the same as in `history`; send it here too, so a hand edit that only refreshes the live
+values also marks the slice result. A `live` without it keeps the last one. This fork sends a `live` when a
+setting, the model or the plates change, and when a plate's slice result becomes valid or out of date.
 Each `live` replaces the previous set (it is not merged), so always send every entry. Keys are row ids as strings.
-`value` is in the row's own display form (`value` of the row, unit included);
+`value` is in the row's own display form (`value` of the row, unit included; for a multi-line row, see Rows: this
+fork judges it on the raw values and sends the row's own `value` or `before` when the setting holds one of them, else
+the form against the assistant's value, or `"changed since"` when that reads like either);
 `present: false` means the thing the row changed is gone (an object deleted since). Which rows get an entry:
 - With `capabilities.tracked_live` (this fork): the tracked rows only. A row is tracked when it is the latest row
   (not undone) of its setting: rows that changed the same thing share a subject (a preset setting: scope, key,
@@ -933,6 +953,20 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
   swatch beside it.
 - `before`: the previous value in the same form as `value`, or `""`. The page writes "Was <before>"; send no
   prefix. `where`: any other detail (the preset, the plate, why it was refused), shown after it.
+- **Multi-line values** (a G-code template such as Start G-code, the post-processing scripts with one script per
+  line): never the raw text with its escaped line breaks. A side with two lines or more is shown as
+  `<line 1> … (<N> lines)`, for example `G28 ; home all … (14 lines)`. When both sides start with the same line,
+  each side shows the first line that differs instead: `line <k>: <line k> (<N> lines)`, for example
+  `line 3: M104 S210 (14 lines)` against `line 3: M104 S200 (14 lines)`, so a change and its change back read
+  differently. A side without a line k (the other one is longer) keeps the first form. Rules: a `"\r\n"` counts as
+  one break and a final line break only ends the last line; a shown line drops its trailing spaces and tabs, reads
+  `(empty line)` when blank, and is cut at 40 characters with `…` (then `<cut line 1>… (<N> lines)`, one `…`); a
+  side with fewer than two lines keeps the single-line form. `…` is U+2026. This fork builds it in
+  `mcp_multiline_display` (`McpHistory.cpp`); undo works on the raw values (in the row's target).
+- `value_tip`, `before_tip` (string, optional): the hover tag of a multi-line `value` / `before`: `Lines <a> to <b>
+  of <N>:` (or `Line <a> of <N>:`) and then those lines, one per line (`"\n"`), at most 5, from line k as above or
+  else line 1, each cut at 60 characters, then a line `…` when more follow. The page shows the tag of the side the
+  row shows (its value, or the before once it is reverted or set back), and `before_tip` on the "Was" line.
 - `undo`: `null`, or `{"verb": "Revert", "tip"?: "<hover text>"}`. Without `tip` the hover tag is
   "<verb>: <label> back to <before>" (or "<verb> <value>" with no `before`).
 - `undone_at`: `""`, or the `"HH:MM"` the user undid it (also set on the rows a restore undid).
@@ -980,7 +1014,8 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
   under the label. Focus is put back after a redraw only while the page has the keyboard focus. A disabled control
   (a restore icon without a point) does nothing.
 - **Out-of-date slices.** A slice result with a later setting, preset, model or plate row after it (or a revert or
-  restore the user made since) is faint with "out of date", in its row and in its group's title line.
+  restore the user made since), and the newest one when the host's `slice_valid` is `false`, is faint with "out of
+  date", in its row and in its group's title line.
 - **Restore** is a dimmed icon on every older group (brighter on hover and focus), with the hover tag "Restore the
   project to how it was at HH:MM (undoes later changes)". The question "Restore to HH:MM? Yes No" shows under the
   group's title. After the user undoes a restore, a faint "Restore undone" line stays until the next change.
@@ -1000,7 +1035,9 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
 One per burst of changes; `0` is the point before the assistant's first change (always last). Send it with the
 others: the page does not list it, but a "Restored to" line for it takes its `time`. The page orders the groups
 newest first by `ts`, then `id`, opens the newest and shows its title in bold, the older titles muted (the
-"Restored to" line above them is not a group). `restore` is `null` for the newest group (and for any group a host
+"Restored to" line above them is not a group). When a newer group arrives, the one that was newest closes, unless
+the user opened it by hand (a click on its title, or Expand all); groups the user opened stay open until the user
+closes them (a click, or Collapse all). `restore` is `null` for the newest group (and for any group a host
 cannot restore to), `{"available": true}` for a restore point, or `{"available": false, "why": "<hover text>"}`. A
 row whose group is not listed still gets a group, from its own `ts` and `time`.
 

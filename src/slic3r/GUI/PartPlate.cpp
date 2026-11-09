@@ -118,6 +118,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "slic3r/GUI/GLCanvas3D.hpp"
 #include "slic3r/GUI/GLModel.hpp"
+#include "slic3r/GUI/RemoteAPI/McpPanel.hpp"
 #include <nlohmann/json.hpp>
 
 class wxFont;
@@ -5455,6 +5456,9 @@ void PartPlate::update_slice_result_valid_state(bool valid)
     // else repaints the naughty-plate icon otherwise.
     if (changed && m_plater)
         m_plater->mark_plate_toolbar_image_dirty();
+    // The OrcaSlicer MCP pane marks its newest slice result out of date (or current again) from this.
+    if (changed)
+        RemoteAPI::McpPanel::slice_changed();
 }
 
 //update current slice context into backgroud slicing process
