@@ -577,6 +577,7 @@ curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/activity
     {"id": 1, "ts": 1762680660, "time": "10:31", "restore": null}
   ],
   "restored_to": null,
+  "restore_failed": false,
   "can_undo_restore": false
 }
 ```
@@ -586,8 +587,10 @@ row in the panel (or the time of a restore that undid its group), else `""`. `er
 refusal or failure. `on_disk` marks changes written to disk (saved or moved projects, saved or deleted presets),
 which a restore does not undo. Group `0` is the point before the assistant's first change; a group's `restore`
 is `null` for the newest group, `{"available": true}` when its end state can be restored, or `available: false`
-with the reason. `restored_to` is the group the user last restored to (until the next API change), and
-`can_undo_restore` whether the panel still offers to undo that restore. Reading it changes nothing.
+with the reason. `restored_to` is the group the user last restored to (until the next API change),
+`restore_failed` is `true` when that restore failed after it had started replacing the project (the panel then
+says "Couldn't restore to"), and `can_undo_restore` whether the panel still offers to undo that restore. Reading
+it changes nothing.
 
 While the user restores the project in the panel, every API request gets
 `409 {"error": "busy", "detail": "the user is restoring"}`; retry after a moment.
@@ -659,6 +662,152 @@ the restore as the panel does, outside any request, answers `202 {"status":"star
 `/checkpoint_delay {"seconds"}` slows every restore-point save; `/as_user {"changes": {key: value}}` edits the
 print, filament or printer settings as the user would by hand (no row, no policy check; `/user_changes` reports it). `/corrupt_point {"group", "from"?}`
 spoils a restore point (overwrites its file with `from`, or with bytes that are no 3MF) to test a failed restore.
+`/pane {"clear"?: true, "post"?: message | [messages]}` drives the dock pane: `clear` starts recording what the
+pane sends to its page, `post` hands the pane page messages as if the page had sent them; the answer is
+`{"open": bool, "messages": [...], "posted"?: bool}`.
+
+## MCP panel page and protocol
+
+The panel is one HTML page, `resources/web/orcaslicer_mcp/panel.html`, shared by every host that shows it: this
+fork's dock pane (C++, `src/slic3r/GUI/RemoteAPI/McpPanel.cpp`) and the OrcaSlicer MCP plugin for stock
+OrcaSlicer 2.5 (Python). The page owns what the user sees: grouping, titles, which undo to offer and why one is
+unavailable, the live-value comparison, expand and collapse, hover tags and the restore confirm. A host only
+records rows, answers live values, runs undos and restores, and passes messages.
+
+### Hosting the page
+
+- **Vendor it unchanged.** Copy `panel.html` byte for byte and keep a test that fails when your copy differs from
+  the fork's file. It loads nothing from outside (no network, no other files), so it works from any base URL.
+- **Page to host:** the page calls `window.orca.postMessage(message)` with a plain object. OrcaSlicer 2.5's web
+  panels (the `DockPanel` and plugin dock panels) provide `window.orca`; another host defines it before the page's
+  scripts run. When `window.orca` is missing the page sends nothing.
+- **Host to page:** either call `window.__mcpPanelReceive(message)`, or deliver through `window.orca.onMessage`:
+  the page registers the same function there when `window.orca.onMessage` exists (on a 2.5 web panel that is
+  what `DockPanel::push_message` reaches). Each message is one plain object with a `type`.
+- **Theme:** the page reads `--orca-bg`, `--orca-fg`, `--orca-muted`, `--orca-border`, `--orca-accent` and
+  `--orca-font` from its document and falls back to a dark theme without them. 2.5's web panels set them.
+- **Width:** laid out for a pane about 300 px wide.
+
+### Protocol version
+
+`window.McpPanelCore.PROTOCOL_VERSION` in the page (now `1`) and the `version` a host puts in every `history`
+message. Bump it in the page on any breaking change: a message or field renamed or removed, a field whose meaning
+or form changes, or a new field a host must send. A new optional field with a default (as `off_text` and
+`restore_failed` are) is not breaking. A host compares the page's `PROTOCOL_VERSION` with the version it
+implements (in its drift test, for instance) before it ships a newer copy. The page does not read `version`
+today.
+
+### Page to host
+
+| Message | When | The host answers |
+|---|---|---|
+| `{"action": "ready"}` | When the page has loaded, then again every 500 ms until the first `history` arrives (at most 20 more times) | `state`, then `history`. A repeat is normal (the first may have been lost while the bridge was starting), so answer each one, and coalesce answers that are already pending |
+| `{"action": "live"}` | At load and after every `history` it receives | `live` |
+| `{"action": "undo", "row": <id>}` | The user clicked a row's undo link | exactly one `result` |
+| `{"action": "restore", "group": <id>}` | The user confirmed "Restore to HH:MM?" (`0` is "Before the assistant started") | exactly one `result` |
+| `{"action": "undo_restore"}` | The user clicked Undo on the "Restored to" line | exactly one `result` |
+| `{"action": "open_settings"}` | The settings icon, or the link in the off line (both only when `capabilities.open_settings` is not `false`) | nothing; open the host's settings (Preferences > Remote API here, the plugin's own settings page in the plugin) |
+
+Ids arrive as JavaScript numbers. Every `undo`, `restore` and `undo_restore` must get a `result`, also when it is
+refused or fails: until then the page shows "Reverting…" or "Restoring…". A host that is busy, closing or
+rebuilding its window answers `failed` with the reason instead of running the action. Run the action outside the
+web view's own message callback (a restore opens a project and pumps events). A host may get `open_settings` twice
+in a row (a double click): open one settings window, not one inside another.
+
+### Host to page
+
+**`history`**: the whole timeline, after the page's `ready` and after every change to it.
+```json
+{"type": "history", "version": 1,
+ "rows": [ /* rows, below */ ], "groups": [ /* groups, below */ ],
+ "restored_to": null, "restore_failed": false, "can_undo_restore": false,
+ "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused"],
+                  "open_settings": true, "settings_hint": "", "off_text": "The Remote API is off."}}
+```
+- `rows`, `groups`, `restored_to`, `restore_failed` and `can_undo_restore` are the shape of `GET /activity`
+  above (this fork sends exactly that object plus `type`, `version` and `capabilities`).
+- `restored_to`: `null`, or the group id of the last restore point the user restored to. The page then shows
+  "Restored to HH:MM" at the top (HH:MM is that group's `time`), with " · Undo" when `can_undo_restore` is true,
+  and greys out the groups after that point.
+- `restore_failed` (optional, default `false`; read only with `restored_to`): the last restore failed after it
+  had started replacing the project. The line reads "Couldn't restore to HH:MM" instead, and no group is greyed
+  out (nothing was marked undone).
+- `capabilities`:
+  - `restore` (bool): show restore icons and the confirm. `false` for a host without checkpoints.
+  - `kinds` (list): the row kinds this host records. Informational; the page does not read it.
+  - `open_settings` (bool, default `true`): the settings icon and the off line's link send `open_settings`.
+    With `false` the icon's hover tag and a line under the off text show `settings_hint` instead.
+  - `settings_hint` (string): where the settings are, for `open_settings: false`.
+  - `off_text` (string, optional): the line shown while `state.api` is `"off"`. Default "The Remote API is
+    off."; the plugin sends "Assistant access is off.", this fork sends "The Remote API couldn't start. Check its
+    port." when it is enabled but not listening, and nothing otherwise.
+
+**`live`**: the current values of the rows, after the page asks and when settings, objects or the project change.
+```json
+{"type": "live", "values": {"12": {"value": "20%", "present": true}, "14": {"value": "bracket.stl", "present": false}}}
+```
+Keys are row ids as strings. `value` is in the row's own display form (`value` of the row, unit included);
+`present: false` means the thing the row changed is gone (an object deleted since). Send an entry for every row
+that has an undo and is not undone, and for every row of the newest group whose value can be read now; leave out
+rows you cannot read. The page compares numbers with the same unit text within 1e-6 (relative) and anything else
+exactly, so send the same form the row was recorded in. For geometry (moves, rotations, arranges) the host
+compares and sends the row's own `value` when nothing moved, else another text such as `"moved since"`.
+In the newest group a different live value is shown with "changed by you", a missing one with "removed since";
+in any group an undo is then unavailable ("You changed it since", "Changed again since; restore an earlier point
+instead", "<name> is no longer on the plate").
+
+**`state`**: `{"type": "state", "api": "on" | "off"}`, after `ready` and whenever it changes. `on` means the
+assistant can reach OrcaSlicer now (this fork: the Remote API server is listening, not only enabled in
+Preferences). `off` shows `off_text` above the timeline.
+
+**`result`**: the answer to one action.
+```json
+{"type": "result", "action": "undo", "row": 12, "status": "failed", "reason": "You changed it since"}
+```
+`action` is the page's action; `row` (for `undo`) or `group` (for `restore`) echoes the id it sent, and
+`undo_restore` carries neither. `status` is `ok`, `cancelled` (the user said no to a prompt on the way) or
+`failed`; `reason` (short text, sentence case) comes with every status but `ok`. A failed undo shows the reason
+on its row, a failed restore on its group (or on the "Restored to" line for `undo_restore`). Send the new
+`history` before the `result` when the action changed the timeline, so the page never shows the old one
+without its busy mark.
+
+### Rows
+
+```json
+{"id": 12, "group": 3, "ts": 1762680660, "time": "10:31", "kind": "setting",
+ "label": "Sparse infill density", "value": "15%", "before": "25%", "where": "0.20mm Standard @Printer (unsaved)",
+ "undo": {"verb": "Revert", "tip": "Set Sparse infill density back to 25%"}, "undone_at": "",
+ "title_hint": null, "result": null, "error": "", "on_disk": false}
+```
+- `id` (int): unique within the project's timeline. `group` (int): the group it belongs to.
+- `ts` (seconds) and `time` (`"HH:MM"`, local): the host formats the time; the page never does.
+- `kind`: `setting`, `preset`, `model`, `plate`, `slice`, `file` or `refused`. It picks the icon and its
+  colour; `refused` (and a `slice` row with an `error`) is shown in red.
+- `label`: OrcaSlicer's own label (a setting's full label: "Nozzle temperature", not "Other layers").
+- `value`: the new value as shown (unit added, enum label). A `setting` row whose value is a colour (`#RGB`,
+  `#RRGGBB` or `#RRGGBBAA`, as filament colour rows carry it, label "Filament 2 colour") gets a small colour
+  swatch beside it.
+- `before`: the previous value in the same form as `value`, or `""`. The page writes "Was <before>"; send no
+  prefix. `where`: any other detail (the preset, the plate, why it was refused), shown after it.
+- `undo`: `null`, or `{"verb": "Revert", "tip"?: "<hover text>"}`. Without `tip` the hover tag is
+  "<verb>: <label> back to <before>" (or "<verb> <value>" with no `before`).
+- `undone_at`: `""`, or the `"HH:MM"` the user undid it (also set on the rows a restore undid).
+- `title_hint`: `null`, `"added"` or `"opened"`: such a row names its group ("Added bracket.stl and 2 more").
+- `result`: `null`, or `{"seconds": n, "grams": n}` on a slice row; the group shows the time of its last slice.
+- `error`: `""` or the text of a refusal or failure (any non-empty text marks the group with a warning).
+- `on_disk` (bool): the change wrote to disk (a saved or moved project, a saved or deleted preset); the restore
+  confirm then adds "Files and presets saved to disk stay."
+
+### Groups
+
+```json
+{"id": 3, "ts": 1762680660, "time": "10:31", "restore": {"available": true, "why": ""}}
+```
+One per burst of changes; `0` is the point before the assistant's first change ("Before the assistant started",
+always last). The page orders them newest first by `ts`, then `id`, and opens the newest. `restore` is `null` for
+the newest group (and for any group a host cannot restore to), `{"available": true}` for a restore point, or
+`{"available": false, "why": "<hover text>"}`. A row whose group is not listed still gets a group, from its own
+`ts` and `time`.
 
 ## Notes & limits
 
