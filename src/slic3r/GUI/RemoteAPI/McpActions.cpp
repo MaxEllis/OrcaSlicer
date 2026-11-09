@@ -1225,8 +1225,10 @@ json McpActions::undo_restore()
 
 json McpActions::reveal(int row_id)
 {
-    const std::string busy = busy_reason();
-    if (!busy.empty()) return result_failed(busy);
+    // Only showing a setting: it waits out a restore or a project load (the tabs are being rebuilt), but not a
+    // slice or a job, so a click during background slicing still finds the setting.
+    if (restoring()) return result_failed("A restore is running");
+    if (Plater *pl = plater(); pl == nullptr || pl->is_loading_project()) return result_failed("Not while a project is loading");
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
     const McpRow *r = rec.history().row(row_id);
