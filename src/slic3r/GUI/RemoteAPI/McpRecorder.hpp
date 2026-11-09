@@ -96,8 +96,11 @@ public:
     // for the newest point, unless that point already has one). Call changed() afterwards.
     void close_group();
     // Gives a restore point a checkpoint file written by write_checkpoint (a panel restore keeps its pre-restore
-    // snapshot as the newest point's end state), then prunes beyond the 20 newest.
-    void set_point_checkpoint(int point, const std::string &file);
+    // snapshot as the newest point's end state), then prunes beyond the 20 newest unless prune is false (a restore
+    // must not lose the point it is about to open: it prunes once the open is over).
+    void set_point_checkpoint(int point, const std::string &file, bool prune = true);
+    // Clears checkpoints beyond the 20 newest and removes their files.
+    void prune_checkpoints();
 
     // Called after any change of the history (the pane refreshes).
     void set_listener(std::function<void()> fn) { m_listener = std::move(fn); }
@@ -159,7 +162,6 @@ private:
 
     void open_change(bool checkpoint); // before_change; checkpoint=false when slice_finished opens a group
     void take_checkpoint(int point);
-    void prune(); // checkpoints beyond the 20 newest, files removed
     bool write_preset_checkpoint(const std::string &path_utf8);
     void load(const std::string &key, bool fresh);
     void save();

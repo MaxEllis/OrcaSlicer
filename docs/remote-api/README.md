@@ -601,7 +601,8 @@ and answer what the panel gets, `{"status": "ok" | "cancelled" | "failed", "reas
 the restore as the panel does, outside any request, answers `202 {"status":"started"}`, and
 `/result {}` returns its result later); `/clock {"advance_s"}` moves the panel's clock forward;
 `/checkpoint_delay {"seconds"}` slows every restore-point save; `/as_user {"changes": {key: value}}` edits the
-print, filament or printer settings as the user would by hand (no row, no policy check).
+print, filament or printer settings as the user would by hand (no row, no policy check). `/corrupt_point {"group", "from"?}`
+spoils a restore point (overwrites its file with `from`, or with bytes that are no 3MF) to test a failed restore.
 
 ## Notes & limits
 

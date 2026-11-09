@@ -1957,7 +1957,9 @@ Response Controller::handle_select_preset(const std::string &body)
             McpRow row = mcp_row("preset", group_label, name, before, where);
             row.target = {{"type", "preset"}, {"preset_type", mcp_preset_type_name(type)}, {"slot", nullptr},
                           {"before", before}, {"after", name}, {"discarded", discarded}};
-            if (before != name) mcp_undo(row, "Switch back", "Switch " + group_label + " back to " + before);
+            // The panel's Switch back drops unsaved edits the same way this switch did (no dialog): say so.
+            if (before != name)
+                mcp_undo(row, "Switch back", "Switch " + group_label + " back to " + before + " (drops unsaved edits)");
             mcp_record(std::move(row));
         }
         return {{"selected", name}, {"discarded_changes", discarded}};
@@ -3060,7 +3062,9 @@ Response Controller::handle_create_plate(const std::string &body)
         api_notify("Added plate " + std::to_string(idx + 1));
         {
             McpRow row = mcp_row("plate", "Added plate", "Plate " + std::to_string(idx + 1));
-            row.target = {{"type", "plate_added"}, {"index", idx}};
+            // The origin tells the panel's undo it is still this plate (the grid moves plates when others go).
+            const Vec3d org = plates.get_plate(idx)->get_origin();
+            row.target = {{"type", "plate_added"}, {"index", idx}, {"origin", {org.x(), org.y(), org.z()}}};
             mcp_undo(row, "Delete plate", "Delete Plate " + std::to_string(idx + 1) + " (only while it is empty)");
             mcp_record(std::move(row));
         }
@@ -4748,6 +4752,34 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
     if (name == "result") {
         return { 200, run_on_ui([]() -> nlohmann::json {
                      return s_mcp_async_result.is_null() ? nlohmann::json{{"status", "pending"}} : s_mcp_async_result;
+                 }) };
+    }
+    if (name == "corrupt_point") {
+        // Spoils a restore point so a restore fails after OrcaSlicer started replacing the project: {"group"} writes
+        // bytes that are no 3MF (OrcaSlicer then shows its load-error dialog), {"group", "from": "<file>"} copies
+        // that file over it instead (an empty-geometry .3mf fails silently while an API task runs).
+        if (!in.contains("group") || !in["group"].is_number_integer()) return { 400, {{"error", "group_must_be_integer"}} };
+        const int         group = in["group"].get<int>();
+        const std::string from  = in.value("from", std::string());
+        return { 200, run_on_ui([group, from]() -> nlohmann::json {
+                     McpRecorder &rec = McpRecorder::get();
+                     rec.sync_project();
+                     const std::string file = rec.history().checkpoint_of(group);
+                     if (file.empty()) return {{"status", "failed"}, {"reason", "no checkpoint"}};
+                     const boost::filesystem::path dst = path_from_utf8(rec.checkpoint_path(file));
+                     boost::system::error_code ec;
+                     if (!from.empty()) {
+                         if (!boost::filesystem::is_regular_file(path_from_utf8(from), ec))
+                             return {{"status", "failed"}, {"reason", "file_not_found"}};
+                         boost::filesystem::copy_file(path_from_utf8(from), dst,
+                                                      boost::filesystem::copy_options::overwrite_existing, ec);
+                         if (ec) return {{"status", "failed"}, {"reason", ec.message()}};
+                     } else {
+                         std::ofstream out(dst.string(), std::ios::binary | std::ios::trunc);
+                         out << "not a 3mf";
+                         if (!out) return {{"status", "failed"}, {"reason", "write failed"}};
+                     }
+                     return {{"status", "ok"}, {"file", file}};
                  }) };
     }
     if (name == "as_user") {

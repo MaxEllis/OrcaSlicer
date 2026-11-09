@@ -486,10 +486,10 @@ void McpRecorder::take_checkpoint(int point)
     if (!m_history.checkpoint_of(point).empty()) return;
     const std::string name = write_checkpoint("cp-" + std::to_string(point));
     m_history.set_checkpoint(point, name, name.empty());
-    prune();
+    prune_checkpoints();
 }
 
-void McpRecorder::prune()
+void McpRecorder::prune_checkpoints()
 {
     const fs::path dir = history_root() / m_key;
     for (const std::string &gone : m_history.prune_checkpoints()) {
@@ -498,11 +498,11 @@ void McpRecorder::prune()
     }
 }
 
-void McpRecorder::set_point_checkpoint(int point, const std::string &file)
+void McpRecorder::set_point_checkpoint(int point, const std::string &file, bool prune)
 {
     if (!m_loaded || file.empty()) return;
     m_history.set_checkpoint(point, file, false);
-    prune();
+    if (prune) prune_checkpoints();
 }
 
 void McpRecorder::close_group()

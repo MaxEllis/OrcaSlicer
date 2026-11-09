@@ -443,10 +443,12 @@ void refresh_extruder_column(int oi, const ModelObject *mo)
     obj_list->Refresh();
 }
 
-// Returns "" (done), or the reason it failed; cancelled set when the user cancelled a dialog.
-std::string undo_row(const McpRow &r, bool &cancelled)
+// Returns "" (done), or the reason it failed; cancelled set when the user cancelled a dialog. note: added to the
+// journal line (the unsaved edits a switch back dropped).
+std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
 {
     cancelled = false;
+    note.clear();
     const json       &t    = r.target;
     const std::string type = t.value("type", std::string());
     Plater           *p    = plater();
@@ -516,11 +518,16 @@ std::string undo_row(const McpRow &r, bool &cancelled)
         if (c->find_preset(before, false, true) == nullptr) return before + " is no longer there";
         Tab *tab = wxGetApp().get_tab(preset_type(scope));
         if (tab == nullptr) return "The settings tab is not ready";
-        // The way PUT /preset avoids the unsaved-changes dialog: drop the unsaved edits first.
-        discard_edits();
+        // The way PUT /preset avoids the unsaved-changes dialog: drop the unsaved edits first (the row's tip says so).
+        const std::vector<std::string> dropped = discard_edits();
         if (!tab->select_preset(before, false, "", /*force_select=*/true, /*force_no_transfer=*/true)) {
             cancelled = true;
             return "Switch cancelled";
+        }
+        if (!dropped.empty()) {
+            note = " (dropped unsaved edits: ";
+            for (size_t i = 0; i < dropped.size(); ++i) note += (i ? ", " : "") + dropped[i];
+            note += ")";
         }
         return {};
     }
@@ -541,7 +548,15 @@ std::string undo_row(const McpRow &r, bool &cancelled)
         PartPlateList &plates = p->get_partplate_list();
         const int      idx    = t.value("index", -1);
         if (idx < 0 || idx >= plates.get_plate_count()) return "Plate " + std::to_string(idx + 1) + " is gone";
-        if (!plates.get_plate(idx)->empty()) return "It has objects on it now";
+        PartPlate *plate = plates.get_plate(idx);
+        // Still the plate the row added: at the same place in the plate grid (deleting an earlier plate moves the
+        // later ones down a slot), and empty.
+        const json origin = t.value("origin", json());
+        if (origin.is_array() && origin.size() == 3) {
+            const Vec3d o = plate->get_origin();
+            if (!same_matrix(json{o.x(), o.y(), o.z()}, origin)) return "The plate has changed since";
+        }
+        if (!plate->empty()) return "It has objects on it now";
         if (!p->can_delete_plate()) return "It is the last plate";
         if (p->delete_plate(idx) != 0) return "Couldn't delete it";
         Controller::slice_state_follows_plate();
@@ -876,14 +891,19 @@ std::string open_point(const std::string &path_utf8)
         // The API's open steps on the checkpoint: presets from it, unsaved edits dropped, prompts answered, no
         // sensitive-key check (the user's own earlier state).
         const json r = Controller::open_project_from(p, path_utf8, /*keep_presets=*/false, /*policy_check=*/false);
-        if (r.contains("error")) {
-            BOOST_LOG_TRIVIAL(error) << "MCP panel: restore point not opened: " << r.dump();
-            return "Couldn't open the restore point";
-        }
         // The project's own name and path back (an Untitled one keeps its name and no path), and the checkpoint
-        // out of File > Recent.
+        // out of File > Recent; also after a failed open, which may have replaced the project half way (load_project
+        // resets it before reading the file).
         p->set_project_filename(orig_path.empty() ? orig_name : from_u8(orig_path));
         Controller::forget_recent(path_utf8);
+        McpRecorder::forget_project_opened();
+        if (r.contains("error")) {
+            BOOST_LOG_TRIVIAL(error) << "MCP panel: restore point not opened: " << r.dump();
+            p->set_plater_dirty(true);
+            p->update_title_dirty_status();
+            Controller::slice_state_follows_plate();
+            return "Couldn't open the restore point";
+        }
     }
     // Opening the checkpoint is not the project being opened: the recorder keeps this project's timeline.
     McpRecorder::forget_project_opened();
@@ -960,9 +980,9 @@ json McpActions::undo(int row_id)
         return result_failed(std::string("Can't check it now: ") + e.what());
     }
     bool        cancelled = false;
-    std::string why;
+    std::string why, note;
     try {
-        why = undo_row(r, cancelled);
+        why = undo_row(r, cancelled, note);
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "MCP panel: undo of row " << r.id << " failed: " << e.what();
         why = "Couldn't undo it";
@@ -972,7 +992,7 @@ json McpActions::undo(int row_id)
     rec.history().mark_undone(r.id, McpRecorder::hhmm(rec.now_s()));
     rec.changed();
     publish({{"event", "panel.reverted"}, {"group", r.group}, {"row", r.id}});
-    tell(journal_line(r));
+    tell(journal_line(r) + note);
     return result_ok();
 }
 
@@ -997,6 +1017,18 @@ json McpActions::restore(int group)
     Controller::set_backup_in_progress(true);
     ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
 
+    // An earlier restore's Undo ends here: its snapshot is about to be replaced, and a failed write must never
+    // leave an Undo that opens an older state.
+    restore_state_current(rec);
+    RestoreState next;
+    next.prev_restored_to = s_restore.restored_to;
+    next.marked_before    = s_marked;
+    s_restore.snapshot.clear();
+    for (const char *old : {"pre-restore.3mf", "pre-restore.json"}) {
+        boost::system::error_code rec_ec;
+        fs::remove(into_path(from_u8(rec.checkpoint_path(old))), rec_ec);
+    }
+
     // The state now, for "Undo" on the "Restored to" line. It is also the newest group's end state.
     const std::string snapshot = rec.write_checkpoint("pre-restore");
     if (snapshot.empty()) return result_failed("Couldn't save the current state first");
@@ -1006,17 +1038,25 @@ json McpActions::restore(int group)
         boost::system::error_code cec;
         fs::copy_file(into_path(from_u8(rec.checkpoint_path(snapshot))), into_path(from_u8(rec.checkpoint_path(name))),
                       fs::copy_options::overwrite_existing, cec);
-        if (!cec) rec.set_point_checkpoint(newest, name);
+        // Not pruned yet: at the 20-point cap that could delete the very point being restored.
+        if (!cec) rec.set_point_checkpoint(newest, name, /*prune=*/false);
     }
 
-    RestoreState next;
-    restore_state_current(rec);
-    next.prev_restored_to = s_restore.restored_to;
-    next.marked_before    = s_marked;
+    // Undoable from here on, also when the open below fails half way (the project may already be replaced).
     for (const McpRow &r : h.rows()) next.marks_before[r.id] = r.undone_at;
+    next.key         = rec.history_dir();
+    next.restored_to = group;
+    next.snapshot    = snapshot;
+    rec.close_group(); // the next assistant change starts a group of its own
+    next.groups_at = h.groups().size();
+    s_restore      = next;
 
     const std::string err = open_point(path);
-    if (!err.empty()) return result_failed(err);
+    rec.prune_checkpoints();
+    if (!err.empty()) {
+        rec.changed();
+        return result_failed(err);
+    }
 
     // The groups after the point are undone; ones an earlier restore undid up to here are back.
     const std::string now = McpRecorder::hhmm(rec.now_s());
@@ -1031,13 +1071,6 @@ json McpActions::restore(int group)
         }
     }
     for (auto &m : marks) h.mark_undone(m.first, m.second);
-    // The next assistant change starts a group of its own.
-    rec.close_group();
-    next.key         = rec.history_dir();
-    next.restored_to = group;
-    next.groups_at   = h.groups().size();
-    next.snapshot    = snapshot;
-    s_restore        = std::move(next);
     rec.changed();
     publish({{"event", "panel.restored"}, {"group", group}});
     tell("Restored in the panel to " + point_time(h, group));
