@@ -220,7 +220,56 @@ std::string transform_change(const std::array<double, 16> &a, const std::array<d
 
 int op_rank(const std::string &op) { return op == "rotated" ? 3 : op == "scaled" ? 2 : op == "moved" ? 1 : 0; }
 
-void diff_objects(const McpBaseline &a, const McpBaseline &b, std::vector<McpJournalEntry> &out)
+// An object's own settings: "<label> of <name> <old> -> <new>", "default" for a key it does not set.
+void diff_object_config(const McpTextFns &f, const McpObjectSnap &p, const McpObjectSnap &o, std::vector<McpJournalEntry> &out)
+{
+    static const std::string kDefault = "\x1F(default)"; // compared only, never shown
+    std::set<std::string> keys;
+    for (const auto &kv : p.config) keys.insert(kv.first);
+    for (const auto &kv : o.config) keys.insert(kv.first);
+    for (const std::string &k : keys) {
+        auto       pi      = p.config.find(k), oi = o.config.find(k);
+        const bool has_old = pi != p.config.end(), has_new = oi != o.config.end();
+        if (has_old && has_new && pi->second == oi->second) continue;
+        McpJournalEntry e = setting_entry(f, "Model", "object:" + std::to_string(o.id), k, has_old ? pi->second : std::string(),
+                                          has_new ? oi->second : std::string());
+        e.label = label_of(f, k) + " of " + o.name;
+        if (!has_old) {
+            e.old_cmp = e.sensitive ? hidden(kDefault) : kDefault;
+            if (!e.sensitive) e.old_text = "default";
+        }
+        if (!has_new) {
+            e.new_cmp = e.sensitive ? hidden(kDefault) : kDefault;
+            if (!e.sensitive) e.new_text = "default";
+        }
+        mcp_entry_text(e);
+        out.push_back(std::move(e));
+    }
+}
+
+// The project settings PUT /config writes (group "Project"). Keys sized by the filament or plate count are compared
+// only while that count stays: a new filament or plate resizes them, which is not an edit of its own.
+void diff_project(const McpTextFns &f, const McpBaseline &a, const McpBaseline &b, std::vector<McpJournalEntry> &out)
+{
+    const bool same_filaments = a.filament_slots.size() == b.filament_slots.size();
+    const bool same_plates    = a.plates == b.plates;
+    for (const auto &kv : b.project.values) {
+        const std::string &k = kv.first;
+        if (!same_filaments && (k == "flush_volumes_matrix" || k == "flush_volumes_vector")) continue;
+        if (!same_plates && (k == "wipe_tower_x" || k == "wipe_tower_y")) continue;
+        auto it = a.project.values.find(k);
+        if (it != a.project.values.end() && it->second != kv.second)
+            out.push_back(setting_entry(f, "Project", "project", k, it->second, kv.second));
+    }
+    if (!same_filaments || a.filament_colours.size() != b.filament_colours.size()) return;
+    const bool many = b.filament_colours.size() > 1;
+    for (size_t i = 0; i < b.filament_colours.size(); ++i)
+        if (a.filament_colours[i] != b.filament_colours[i])
+            out.push_back(setting_entry(f, "Project", "project", "filament_colour", a.filament_colours[i],
+                                        b.filament_colours[i], {int(i + 1)}, many));
+}
+
+void diff_objects(const McpTextFns &f, const McpBaseline &a, const McpBaseline &b, std::vector<McpJournalEntry> &out)
 {
     std::map<uint64_t, const McpObjectSnap *> before;
     for (const McpObjectSnap &o : a.objects) before[o.id] = &o;
@@ -241,6 +290,7 @@ void diff_objects(const McpBaseline &a, const McpBaseline &b, std::vector<McpJou
                     if (op_rank(c) > op_rank(op)) op = c;
                 }
         if (!op.empty()) out.push_back(object_entry(o.id, o.name, op.c_str()));
+        diff_object_config(f, p, o, out);
         if (o.instance_ids.size() != p.instance_ids.size()) {
             McpJournalEntry e = count_entry("object", "Model", "copies:" + std::to_string(o.id), "copy",
                                             int(p.instance_ids.size()), int(o.instance_ids.size()));
@@ -301,7 +351,8 @@ std::vector<McpJournalEntry> mcp_diff(const McpBaseline &a, const McpBaseline &b
     diff_config(f, "Printer", "printer", "Printer", a.printer, b.printer, out);
     diff_config(f, "Print", "print", "Print", a.print, b.print, out);
     diff_filaments(f, a, b, out);
-    diff_objects(a, b, out);
+    diff_project(f, a, b, out);
+    diff_objects(f, a, b, out);
     if (a.plates != b.plates) out.push_back(count_entry("plate", "Plates", "plates", "plate", a.plates, b.plates));
     return out;
 }
@@ -419,8 +470,15 @@ void McpJournal::begin_request(McpBaseline now, const std::string &hhmm)
 {
     if (m_has_baseline && m_api_job_pending) {
         if (!m_api_job.expired()) {
-            // The API's job is still moving objects: compare them once it is done.
-            now.objects = m_baseline.objects;
+            // The API's job is still moving objects: compare their places once it is done. Their own settings are
+            // the user's (a job never changes them), so those are compared now.
+            std::vector<McpObjectSnap> kept = m_baseline.objects;
+            for (McpObjectSnap &o : kept) {
+                auto it = std::find_if(now.objects.begin(), now.objects.end(),
+                                       [&o](const McpObjectSnap &n) { return n.id == o.id; });
+                if (it != now.objects.end()) o.config = it->config;
+            }
+            now.objects = std::move(kept);
             now.plates  = m_baseline.plates;
         } else {
             // The job was dropped without finishing (OrcaSlicer clears its queue on a delete, a new or opened

@@ -17,6 +17,7 @@
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <openssl/evp.h>
 
 #include <algorithm>
 #include <chrono>
@@ -34,7 +35,9 @@ namespace Slic3r { namespace GUI { namespace RemoteAPI {
 namespace fs = boost::filesystem;
 using nlohmann::json;
 
-std::atomic<bool>    McpRecorder::s_project_opened{false};
+std::atomic<bool>     McpRecorder::s_project_opened{false};
+std::atomic<uint64_t> McpRecorder::s_load_gen{0};
+bool                  McpRecorder::s_opening_point = false;
 std::atomic<int64_t> McpRecorder::s_clock_offset{0};
 std::atomic<int>     McpRecorder::s_checkpoint_delay{0};
 
@@ -261,6 +264,44 @@ std::string McpRecorder::checkpoint_path(const std::string &file) const
     return (history_root() / m_key / file).string();
 }
 
+std::string McpRecorder::history_root_dir() { return history_root().string(); }
+
+McpFingerprint McpRecorder::fingerprint(const std::string &path_utf8)
+{
+    McpFingerprint fp;
+    boost::nowide::ifstream in(path_utf8.c_str(), std::ios::binary);
+    if (!in) return fp;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    if (ctx == nullptr) return fp;
+    ScopeGuard free_ctx([ctx] { EVP_MD_CTX_free(ctx); });
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr) != 1) return fp;
+    std::vector<char> buf(size_t(1) << 16);
+    uint64_t          size = 0;
+    while (in) {
+        in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+        const std::streamsize n = in.gcount();
+        if (n <= 0) break;
+        if (EVP_DigestUpdate(ctx, buf.data(), static_cast<size_t>(n)) != 1) return fp;
+        size += static_cast<uint64_t>(n);
+    }
+    if (in.bad()) return fp;
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int  len = 0;
+    if (EVP_DigestFinal_ex(ctx, md, &len) != 1) return fp;
+    static const char *const hex = "0123456789abcdef";
+    std::string h;
+    h.reserve(size_t(len) * 2);
+    for (unsigned int i = 0; i < len; ++i) {
+        h += hex[md[i] >> 4];
+        h += hex[md[i] & 15];
+    }
+    fp.size   = size;
+    fp.sha256 = std::move(h);
+    return fp;
+}
+
+std::string McpRecorder::load_stamp() const { return m_stash_session + "/" + std::to_string(s_load_gen.load()); }
+
 void McpRecorder::notify()
 {
     if (m_listener) m_listener();
@@ -268,17 +309,42 @@ void McpRecorder::notify()
 
 void McpRecorder::changed()
 {
+    if (!wxThread::IsMain()) return;
+    save();
+    notify();
+}
+
+void McpRecorder::schedule_flush()
+{
+    m_dirty = true;
+    if (m_flush_posted) return;
+    m_flush_posted = true;
+    // After the current GUI task: every row of an API request (a PUT with ten keys) is written in one go.
+    wxGetApp().CallAfter([] { McpRecorder::get().flush(); });
+}
+
+void McpRecorder::flush()
+{
+    if (!wxThread::IsMain()) return;
+    m_flush_posted = false;
+    if (!m_dirty) return;
     save();
     notify();
 }
 
 void McpRecorder::save()
 {
+    m_dirty = false;
     if (!m_loaded) return;
-    // Nothing recorded: no folder for every project the pane merely looked at.
-    if (m_history.rows().empty() && m_history.groups().empty()) return;
     const fs::path dir = history_root() / m_key;
     boost::system::error_code ec;
+    // A bounded timeline: the oldest groups beyond the row / group caps go, with their restore points.
+    for (const std::string &gone : m_history.cap_rows()) {
+        boost::system::error_code rec;
+        fs::remove(dir / gone, rec);
+    }
+    // Nothing recorded: no folder for every project the pane merely looked at.
+    if (m_history.rows().empty() && m_history.groups().empty()) return;
     fs::create_directories(dir, ec);
     if (ec) {
         BOOST_LOG_TRIVIAL(error) << "MCP panel: cannot create " << dir.string() << ": " << ec.message();
@@ -449,8 +515,14 @@ bool McpRecorder::write_preset_checkpoint(const std::string &path_utf8)
 
 std::string McpRecorder::write_checkpoint(const std::string &stem)
 {
+    if (!wxThread::IsMain()) return std::string();
     Plater *plater = wxGetApp().plater();
     if (plater == nullptr || !m_loaded) return std::string();
+    // Mid-load (an arrange job finishing inside a restore's load pump, say) the model is half there: no point.
+    if (s_opening_point || plater->is_loading_project()) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: no checkpoint " << stem << " while a project is loading";
+        return std::string();
+    }
     const fs::path dir = history_root() / m_key;
     boost::system::error_code ec;
     fs::create_directories(dir, ec);
@@ -472,7 +544,18 @@ std::string McpRecorder::write_checkpoint(const std::string &stem)
             // past the longest checkpoint we keep, and MainFrame skips it while backup_in_progress() anyway.
             Slic3r::backup_defer(static_cast<long>(kCheckpointMaxS));
             Controller::set_backup_in_progress(true);
-            ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
+            m_writing_point = true;
+            ScopeGuard gate([this] {
+                m_writing_point = false;
+                Controller::set_backup_in_progress(false);
+                if (!m_deferred_slices.empty())
+                    wxGetApp().CallAfter([] {
+                        McpRecorder &rec = McpRecorder::get();
+                        std::vector<DeferredSlice> slices;
+                        slices.swap(rec.m_deferred_slices);
+                        for (const DeferredSlice &d : slices) rec.slice_finished(d.stats, d.ok, d.error);
+                    });
+            });
             try {
                 ok = plater->export_3mf_copy(file);
             } catch (const std::exception &e) {
@@ -500,8 +583,18 @@ void McpRecorder::take_checkpoint(int point)
     // A panel restore already gave this point its end state (the pre-restore snapshot); the state now is the
     // restored one, which belongs to the point restored to, not to this one.
     if (!m_history.checkpoint_of(point).empty()) return;
-    const std::string name = write_checkpoint("cp-" + std::to_string(point));
-    m_history.set_checkpoint(point, name, name.empty());
+    std::string    name = write_checkpoint("cp-" + std::to_string(point));
+    McpFingerprint fp;
+    if (!name.empty()) {
+        fp = fingerprint(checkpoint_path(name));
+        if (fp.sha256.empty()) {
+            // Unreadable right after writing: a point that can never be checked is no point.
+            boost::system::error_code rec;
+            fs::remove(history_root() / m_key / name, rec);
+            name.clear();
+        }
+    }
+    m_history.set_checkpoint(point, name, name.empty(), fp);
     prune_checkpoints();
 }
 
@@ -514,10 +607,10 @@ void McpRecorder::prune_checkpoints()
     }
 }
 
-void McpRecorder::set_point_checkpoint(int point, const std::string &file, bool prune)
+void McpRecorder::set_point_checkpoint(int point, const std::string &file, const McpFingerprint &fingerprint, bool prune)
 {
     if (!m_loaded || file.empty()) return;
-    m_history.set_checkpoint(point, file, false);
+    m_history.set_checkpoint(point, file, false, fingerprint);
     if (prune) prune_checkpoints();
 }
 
@@ -542,8 +635,7 @@ void McpRecorder::open_change(bool checkpoint)
         if (checkpoint && m_deferred_point >= 0) {
             take_checkpoint(m_deferred_point);
             m_deferred_point = -1;
-            save();
-            notify();
+            schedule_flush();
         }
         return;
     }
@@ -551,8 +643,7 @@ void McpRecorder::open_change(bool checkpoint)
     // slicing-completed event, not inside an API task, and neither changes anything in the project.
     m_deferred_point = checkpoint ? -1 : c.prev_point;
     if (checkpoint) take_checkpoint(c.prev_point);
-    save();
-    notify();
+    schedule_flush();
 }
 
 int McpRecorder::record(McpRow row)
@@ -563,8 +654,7 @@ int McpRecorder::record(McpRow row)
     row.ts   = now_s();
     row.time = hhmm(row.ts);
     const int id = m_history.add_row(std::move(row));
-    save();
-    notify();
+    schedule_flush();
     return id;
 }
 
@@ -586,6 +676,13 @@ void McpRecorder::record_refusal(std::string label, std::string why, std::string
 void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &error)
 {
     if (!wxThread::IsMain()) return;
+    if (m_writing_point) {
+        // The slice ended inside a checkpoint export's event pump: recorded once the export is over (posted from
+        // write_checkpoint), not in the middle of the group that export is opening. Queued, not re-posted: a
+        // re-posted call would run again inside the same pump.
+        m_deferred_slices.push_back({stats, ok, error});
+        return;
+    }
     sync_project();
     if (!m_open) open_change(false);
     Plater *plater = wxGetApp().plater();

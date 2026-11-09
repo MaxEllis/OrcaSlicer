@@ -51,6 +51,7 @@ std::vector<McpObjectSnap> capture_objects(Plater *plater, int &plates)
         McpObjectSnap o;
         o.id   = (uint64_t) mo->id().id;
         o.name = mo->name;
+        for (const std::string &k : mo->config.keys()) o.config.emplace(k, mo->config.opt_serialize(k));
         for (const ModelInstance *mi : mo->instances) {
             o.instance_ids.push_back((uint64_t) mi->id().id);
             const Transform3d     &t = mi->get_matrix();
@@ -112,6 +113,17 @@ McpBaseline mcp_capture_baseline()
             } else {
                 s.preset = name;
             }
+        }
+    }
+    if (bundle != nullptr) {
+        // The project settings PUT /config writes; filament_colour per slot.
+        const DynamicPrintConfig &proj = bundle->project_config;
+        for (const std::string &k : Controller::writable_project_keys()) {
+            if (k == "filament_colour") {
+                if (const auto *c = proj.option<ConfigOptionStrings>(k)) b.filament_colours = c->values;
+                continue;
+            }
+            if (const ConfigOption *o = proj.option(k)) b.project.values.emplace(k, o->serialize());
         }
     }
     b.objects = capture_objects(wxGetApp().plater(), b.plates);

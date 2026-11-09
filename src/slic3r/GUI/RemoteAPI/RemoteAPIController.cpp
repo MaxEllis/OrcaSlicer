@@ -170,9 +170,34 @@ static void mcp_before_change()
     }
 }
 
+// Object targets get the object's name and the current load stamp: ObjectIDs are renewed by every project load,
+// after which the panel finds the object by its name (McpRecorder.hpp, the target schema).
+static void mcp_stamp_objects(McpRow &row)
+{
+    if (!row.target.is_object()) return;
+    Plater *plater = wxGetApp().plater();
+    if (plater == nullptr) return;
+    const Model &model   = plater->model();
+    auto         name_of = [&model](nlohmann::json &t) {
+        if (!t.is_object() || !t.contains("object_id") || !t["object_id"].is_number_integer()) return false;
+        const uint64_t id = t["object_id"].get<uint64_t>();
+        for (const ModelObject *mo : model.objects)
+            if ((uint64_t) mo->id().id == id) {
+                t["object_name"] = mo->name;
+                break;
+            }
+        return true;
+    };
+    bool any = name_of(row.target);
+    if (row.target.contains("items") && row.target["items"].is_array())
+        for (nlohmann::json &it : row.target["items"]) any = name_of(it) || any;
+    if (any) row.target["load"] = McpRecorder::get().load_stamp();
+}
+
 static void mcp_record(McpRow row)
 {
     try {
+        mcp_stamp_objects(row);
         McpRecorder::get().record(std::move(row));
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "MCP panel: row not recorded: " << e.what();
@@ -249,6 +274,7 @@ static std::string mcp_reason(const std::string &e, const char *fallback = "Reje
         {"tray_not_ready", "Tray not ready"},
         {"duplicate_tray", "Tray used twice"},
         {"slots_unavailable", "No CANVAS trays"},
+        {"protected_path", "Restore point folder"},
     };
     auto it = reasons.find(e);
     if (it != reasons.end()) return it->second;
@@ -257,6 +283,25 @@ static std::string mcp_reason(const std::string &e, const char *fallback = "Reje
         e.find("tied_to") == 0 || e.find("live_printer_state") == 0 || e == "not_writable_project_key")
         return "Read-only";
     return fallback;
+}
+
+// The MCP panel's restore points (<data_dir>/mcp_history) are out of the API's reach: a restore opens its file
+// without the sensitive-key check, so the API must never put a file there, take one out, or open, save or load one.
+// Also checked against the file's fingerprint at restore (McpActions); this keeps the points themselves intact.
+// null when `path` (UTF-8) is outside, else the error reply.
+static nlohmann::json mcp_history_refusal(const std::string &path)
+{
+    if (path.empty()) return nullptr;
+    bool inside = true; // unknown counts as inside
+    try {
+        inside = mcp_path_within(McpRecorder::history_root_dir(), path);
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: path check failed for " << path << ": " << e.what();
+    }
+    if (!inside) return nullptr;
+    return {{"error", "protected_path"}, {"path", path},
+            {"detail", "this is the MCP panel's restore point folder; the API does not open, save, move, delete or "
+                       "load files there"}};
 }
 
 // A refused change. label = the setting or action; value = "Not allowed" for a policy block, else a short
@@ -809,7 +854,7 @@ static std::string strip_url_userinfo(const std::string &url)
 // any input and unconditionally returns true, so a short or non-numeric matrix
 // sails through as "applied". Hence an explicit allow-list, each entry carrying
 // the invariant its consumers assume, checked after the whole batch is staged.
-static bool project_key_writable(const std::string &key)
+static const std::set<std::string> &project_writable_set()
 {
     static const std::set<std::string> s_writable {
         "flush_volumes_matrix",  // filaments^2 * nozzles
@@ -821,7 +866,14 @@ static bool project_key_writable(const std::string &key)
         "wipe_tower_x",          // per-plate vector, written via set_at
         "wipe_tower_y",
     };
-    return s_writable.count(key) > 0;
+    return s_writable;
+}
+
+static bool project_key_writable(const std::string &key) { return project_writable_set().count(key) > 0; }
+
+std::vector<std::string> Controller::writable_project_keys()
+{
+    return std::vector<std::string>(project_writable_set().begin(), project_writable_set().end());
 }
 
 // Why a recognized project key stays read-only. Keeps the 422 actionable rather
@@ -1755,6 +1807,10 @@ Response Controller::handle_load_model(const std::string &body)
             e.erase("path");
             return e;
         };
+        if (nlohmann::json e = mcp_history_refusal(path); !e.is_null()) {
+            e.erase("path");
+            return refuse(e);
+        }
         if (!boost::filesystem::exists(path))
             return refuse({{"error", "file_not_found"}}); // not "not_found": that token means a missing route (F18)
         Plater *plater = wxGetApp().plater();
@@ -1798,6 +1854,7 @@ Response Controller::handle_load_model(const std::string &body)
     if (r.contains("error")) {
         api_notify("Couldn't load " + fn, true);
         if (r["error"] == "file_not_found") return { 404, r };
+        if (r["error"] == "protected_path") return { 403, r };
         return { 422, r };
     }
     api_notify("Added " + fn + " to the plate");
@@ -3529,6 +3586,8 @@ static std::set<std::string> project_sensitive_changes(const std::string &path_u
 static Response project_error_response(const nlohmann::json &r)
 {
     const std::string e = r["error"].get<std::string>();
+    if (e == "protected_path")
+        return { 403, r };
     if (e == "file_not_found" || e == "directory_not_found" || e == "not_in_recent" || e == "unknown_recent")
         return { 404, r };
     if (e == "slicing" || e == "exists" || e == "busy" || e == "project_is_open")
@@ -3707,6 +3766,7 @@ Response Controller::handle_save_project(const std::string &body)
         if (target.empty())
             return refuse({{"error", "no_project_path"},
                            {"detail", "the project has never been saved; pass a path"}});
+        if (nlohmann::json e = mcp_history_refusal(target); !e.is_null()) return refuse(e);
         const boost::filesystem::path bp = path_from_utf8(target);
         boost::system::error_code ec;
         if (!bp.parent_path().empty() && !boost::filesystem::is_directory(bp.parent_path(), ec))
@@ -3918,6 +3978,10 @@ Response Controller::handle_open_project(const std::string &body)
     // 120 s like POST /model: a large project takes a while to read and render.
     nlohmann::json r = run_on_ui([path, if_unsaved, presets]() -> nlohmann::json {
         Plater *plater = wxGetApp().plater();
+        if (nlohmann::json e = mcp_history_refusal(path); !e.is_null()) {
+            mcp_refused_reply("Open project " + mcp_file_name(path), e, "POST /project/open");
+            return e;
+        }
         nlohmann::json out = open_project_from(plater, path, presets == "keep_current", /*policy_check=*/true,
             [plater, if_unsaved](nlohmann::json &o) -> nlohmann::json {
                 const std::string err = answer_unsaved_prompt(plater, if_unsaved, o);
@@ -4159,6 +4223,8 @@ Response Controller::handle_move_project_file(const std::string &body)
             return e;
         };
         Plater *plater = wxGetApp().plater();
+        if (nlohmann::json e = mcp_history_refusal(from); !e.is_null()) return refuse(e);
+        if (nlohmann::json e = mcp_history_refusal(to); !e.is_null()) return refuse(e);
         const boost::filesystem::path src = path_from_utf8(from);
         const boost::filesystem::path dst = path_from_utf8(to);
         boost::system::error_code ec;
@@ -4258,6 +4324,7 @@ Response Controller::handle_delete_project_file(const std::string &body)
             return e;
         };
         Plater *plater = wxGetApp().plater();
+        if (nlohmann::json e = mcp_history_refusal(path); !e.is_null()) return refuse(e);
         const boost::filesystem::path p = path_from_utf8(path);
         boost::system::error_code ec;
         if (!project_file_changes_allowed())
@@ -4769,11 +4836,15 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
     if (name == "corrupt_point") {
         // Spoils a restore point so a restore fails after OrcaSlicer started replacing the project: {"group"} writes
         // bytes that are no 3MF (OrcaSlicer then shows its load-error dialog), {"group", "from": "<file>"} copies
-        // that file over it instead (an empty-geometry .3mf fails silently while an API task runs).
+        // that file over it instead (an empty-geometry .3mf fails silently while an API task runs). The point's
+        // fingerprint is taken again, so the restore gets as far as opening it; with {"tamper": true} it is not, and
+        // the restore must refuse the changed file.
         if (!in.contains("group") || !in["group"].is_number_integer()) return { 400, {{"error", "group_must_be_integer"}} };
-        const int         group = in["group"].get<int>();
-        const std::string from  = in.value("from", std::string());
-        return { 200, run_on_ui([group, from]() -> nlohmann::json {
+        if (in.contains("tamper") && !in["tamper"].is_boolean()) return { 400, {{"error", "tamper_must_be_bool"}} };
+        const int         group  = in["group"].get<int>();
+        const std::string from   = in.value("from", std::string());
+        const bool        tamper = in.value("tamper", false);
+        return { 200, run_on_ui([group, from, tamper]() -> nlohmann::json {
                      McpRecorder &rec = McpRecorder::get();
                      rec.sync_project();
                      const std::string file = rec.history().checkpoint_of(group);
@@ -4789,9 +4860,14 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
                      } else {
                          std::ofstream out(dst.string(), std::ios::binary | std::ios::trunc);
                          out << "not a 3mf";
+                         out.close();
                          if (!out) return {{"status", "failed"}, {"reason", "write failed"}};
                      }
-                     return {{"status", "ok"}, {"file", file}};
+                     if (!tamper) {
+                         rec.history().set_fingerprint(group, McpRecorder::fingerprint(rec.checkpoint_path(file)));
+                         rec.changed();
+                     }
+                     return {{"status", "ok"}, {"file", file}, {"tampered", tamper}};
                  }) };
     }
     if (name == "pane") {
@@ -4855,6 +4931,17 @@ static bool post_journal_task(void (*fn)())
 // full capture each (their handlers and end steps still queue behind it, in order).
 static std::atomic<bool> s_journal_begin_pending{false};
 
+// m6: requests between their start and their journal end step; the panel's actions wait for them (busy_reason).
+static RequestsInFlight s_requests_in_flight;
+
+bool Controller::requests_in_flight() { return s_requests_in_flight.any(); }
+
+static void journal_end_task()
+{
+    struct Out { ~Out() { s_requests_in_flight.end(); } } out; // also when the baseline throws
+    mcp_journal_end();
+}
+
 static void journal_begin_task()
 {
     s_journal_begin_pending.store(false); // a request after this point posts its own begin
@@ -4867,7 +4954,11 @@ void Controller::journal_begin()
     // Not posted: no begin will clear the flag, so the next request posts its own.
     if (!post_journal_task(&journal_begin_task)) s_journal_begin_pending.store(false);
 }
-void Controller::journal_end() { post_journal_task(&mcp_journal_end); }
+void Controller::journal_end()
+{
+    // Not posted: nothing will count the request out, so do it here.
+    if (!post_journal_task(&journal_end_task)) s_requests_in_flight.end();
+}
 
 // GET /api/v1/user_changes?since=<seq>: the journal entries newer than seq (see McpJournal::since).
 Response Controller::handle_user_changes(const std::string &target)
@@ -4908,10 +4999,20 @@ Response Controller::dispatch(const Request &req)
     // The panel's test hooks act as the user (a panel action takes its own baseline), and reading the journal
     // changes nothing: neither leaves a baseline.
     const bool leaves_baseline = path.rfind("/api/v1/activity/test/", 0) != 0 && path != "/api/v1/user_changes";
-    if (journal) journal_begin();
-    Response r = dispatch_route(req);
-    if (journal && leaves_baseline) journal_end();
-    return r;
+    if (!journal) return dispatch_route(req);
+    if (!leaves_baseline) {
+        journal_begin();
+        return dispatch_route(req);
+    }
+    // Counted in before its begin is posted, counted out by its end step on the GUI thread (or here if the handler
+    // throws past dispatch_route's own handlers: the end step is posted all the same).
+    s_requests_in_flight.begin();
+    struct End {
+        Controller *c;
+        ~End() { c->journal_end(); }
+    } end{this};
+    journal_begin();
+    return dispatch_route(req);
 }
 
 Response Controller::dispatch_route(const Request &req)

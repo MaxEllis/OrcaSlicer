@@ -45,6 +45,9 @@
 //   {"type":"refused", "action"}                                                   any refused change
 // Matrices: ModelInstance::get_matrix() as 16 doubles, column-major (Eigen's matrix().data() order).
 // object_id / instance_id: ObjectBase::id().id. Slice rows (slice_finished) carry no target.
+// Object targets (and each arrange/orient item) also carry "object_name", and the target "load" = load_stamp() at
+// recording: ObjectIDs are renewed by every project load, so after one the actions find the object by its name
+// (mcp_find_object in McpHistory.hpp).
 #include "McpHistory.hpp"
 
 #include <atomic>
@@ -71,8 +74,10 @@ public:
     // state now (the previous group's end state, or the start point), then prune. Calling it again within
     // the same burst is a no-op.
     void before_change();
-    // Adds a row (ts, time, id and group are filled in) and saves. Opens a group itself (with its checkpoint)
-    // only when none is open: no group yet, or the last one was closed by a slice result. Returns the row id.
+    // Adds a row (ts, time, id and group are filled in). Opens a group itself (with its checkpoint) only when none
+    // is open: no group yet, or the last one was closed by a slice result. Returns the row id. The history file is
+    // written, and the listener called, once for all the rows of a request: from a posted flush() after the
+    // current GUI task.
     int  record(McpRow row);
     // A change the API refused: kind "refused", `value` ("Not allowed" for a policy block, else a short reason),
     // where = why. It joins the open group (within the burst); otherwise it opens a group WITHOUT a checkpoint
@@ -97,27 +102,42 @@ public:
     // for the newest point, unless that point already has one). Call changed() afterwards.
     void close_group();
     // Gives a restore point a checkpoint file written by write_checkpoint (a panel restore keeps its pre-restore
-    // snapshot as the newest point's end state), then prunes beyond the 20 newest unless prune is false (a restore
-    // must not lose the point it is about to open: it prunes once the open is over).
-    void set_point_checkpoint(int point, const std::string &file, bool prune = true);
-    // Clears checkpoints beyond the 20 newest and removes their files.
+    // snapshot as the newest point's end state) with its fingerprint, then prunes beyond the cap unless prune is
+    // false (a restore must not lose the point it is about to open: it prunes once the open is over).
+    void set_point_checkpoint(int point, const std::string &file, const McpFingerprint &fingerprint, bool prune = true);
+    // Clears checkpoints beyond the cap (the start point always stays) and removes their files.
     void prune_checkpoints();
 
     // Called after any change of the history (the pane refreshes).
     void set_listener(std::function<void()> fn) { m_listener = std::move(fn); }
     // After editing history() directly (mark_undone, ...): saves and calls the listener.
     void changed();
+    // Writes the rows recorded since the last save and calls the listener (no-op when nothing is pending).
+    void flush();
 
     McpHistory &history() { return m_history; }
     // The loaded project's history dir (UTF-8), empty before the first sync.
     std::string history_dir() const;
     // Full path (UTF-8) of a checkpoint file name stored in the history (cp-<point>.3mf / .json).
     std::string checkpoint_path(const std::string &file) const;
+    // <data_dir>/mcp_history (UTF-8): every project's history. The API's file routes refuse paths inside it.
+    static std::string history_root_dir();
+    // Size and SHA-256 of a file (UTF-8 path); an empty sha256 when it cannot be read.
+    static McpFingerprint fingerprint(const std::string &path_utf8);
+
+    // Identifies the current project load: the app run plus a count bumped by every project open and restore.
+    // Stamped on object targets ("load"); see the target schema above.
+    std::string load_stamp() const;
+    // A restore replaced the project (new ObjectIDs) without notify_project_opened. Any thread.
+    static void note_project_reloaded() { s_load_gen.fetch_add(1); }
+    // While a restore opens its point: no checkpoint may be written (the model is half loaded). GUI thread.
+    static void set_opening_point(bool on) { s_opening_point = on; }
 
     // Writes the current state as <stem>.3mf (<stem>.json with the presets and their unsaved edits when no
     // object is loaded) in the history dir, inside set_backup_in_progress(true/false). Returns the file name,
-    // or "" when it failed or took over kCheckpointMaxS (a partial file is removed). Used for the restore
-    // points; Task 6 uses it for the snapshot before a restore.
+    // or "" when it failed or took over kCheckpointMaxS (a partial file is removed), and also "" while a project
+    // is loading or a restore is opening its point (the model is half there). Used for the restore points and
+    // the snapshot before a restore.
     std::string write_checkpoint(const std::string &stem);
 
     // "Put back" for a removed object: a full copy (volumes, modifiers, paint, per-object config, layer ranges,
@@ -153,8 +173,12 @@ public:
     static std::string hhmm(int64_t epoch_s);
 
     // From Controller::notify_project_opened (end of Plater::load_project): the next sync treats a path
-    // change as an open, not a save. Any thread.
-    static void note_project_opened() { s_project_opened.store(true); }
+    // change as an open, not a save; and the objects have new ObjectIDs (load_stamp changes). Any thread.
+    static void note_project_opened()
+    {
+        s_project_opened.store(true);
+        s_load_gen.fetch_add(1);
+    }
     // A restore opens a checkpoint file as a project and then puts the real path back: call this after it
     // so the restore is not taken for an open.
     static void forget_project_opened() { s_project_opened.store(false); }
@@ -174,6 +198,7 @@ private:
     void load(const std::string &key, bool fresh);
     void save();
     void notify();
+    void schedule_flush();
     void sweep_stale_dirs(const std::string &keep);
 
     McpHistory            m_history;
@@ -190,8 +215,15 @@ private:
     int                                       m_next_stash = 1;
     std::string                               m_stash_session;
     std::map<int, uint64_t>                   m_created_plates; // row id -> plate ObjectID (POST /plates)
+    bool                                      m_dirty         = false; // rows recorded since the last save
+    bool                                      m_flush_posted  = false;
+    bool                                      m_writing_point = false; // inside write_checkpoint's export
+    struct DeferredSlice { nlohmann::json stats; bool ok; std::string error; };
+    std::vector<DeferredSlice>                m_deferred_slices; // slice results that arrived inside that export
 
-    static std::atomic<bool>    s_project_opened;
+    static std::atomic<bool>     s_project_opened;
+    static std::atomic<uint64_t> s_load_gen;
+    static bool                  s_opening_point;
     static std::atomic<int64_t> s_clock_offset;
     static std::atomic<int>     s_checkpoint_delay;
 };

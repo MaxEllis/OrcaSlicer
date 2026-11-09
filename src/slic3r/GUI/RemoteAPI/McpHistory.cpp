@@ -1,9 +1,11 @@
 #include "McpHistory.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
+#include <system_error>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -37,36 +39,82 @@ int McpHistory::add_row(McpRow row)
 
 void McpHistory::close_group() { m_closed = true; }
 
-void McpHistory::set_checkpoint(int point, std::string file, bool failed)
+bool mcp_fingerprint_ok(const McpFingerprint &recorded, const McpFingerprint &now)
+{
+    return !recorded.sha256.empty() && recorded == now;
+}
+
+void McpHistory::set_checkpoint(int point, std::string file, bool failed, McpFingerprint fingerprint)
 {
     if (point == 0) {
         m_has_start = true;
         m_start.id = 0;
         m_start.checkpoint = std::move(file);
         m_start.checkpoint_failed = failed;
+        m_start.fingerprint = std::move(fingerprint);
         return;
     }
     for (McpGroup &g : m_groups)
         if (g.id == point) {
             g.checkpoint = std::move(file);
             g.checkpoint_failed = failed;
+            g.fingerprint = std::move(fingerprint);
+            return;
+        }
+}
+
+void McpHistory::set_fingerprint(int point, McpFingerprint fingerprint)
+{
+    if (point == 0) {
+        if (m_has_start) m_start.fingerprint = std::move(fingerprint);
+        return;
+    }
+    for (McpGroup &g : m_groups)
+        if (g.id == point) {
+            g.fingerprint = std::move(fingerprint);
             return;
         }
 }
 
 std::vector<std::string> McpHistory::prune_checkpoints()
 {
-    // Oldest first: the start point, then groups by id.
+    // The start point always stays; the group points share the rest of the cap, oldest dropped first.
+    const bool start_kept = m_has_start && !m_start.checkpoint.empty();
+    const size_t room = kMaxCheckpoints - (start_kept ? 1 : 0);
     std::vector<McpGroup *> holders;
-    if (m_has_start && !m_start.checkpoint.empty()) holders.push_back(&m_start);
     for (McpGroup &g : m_groups)
         if (!g.checkpoint.empty()) holders.push_back(&g);
     std::vector<std::string> out;
-    if (holders.size() <= kMaxCheckpoints) return out;
-    const size_t drop = holders.size() - kMaxCheckpoints;
+    if (holders.size() <= room) return out;
+    const size_t drop = holders.size() - room;
     for (size_t i = 0; i < drop; ++i) {
         out.push_back(std::move(holders[i]->checkpoint));
         holders[i]->checkpoint.clear();
+        holders[i]->fingerprint = McpFingerprint();
+    }
+    return out;
+}
+
+std::vector<std::string> McpHistory::cap_rows()
+{
+    std::vector<std::string> out;
+    auto over = [this] { return m_rows.size() > kMaxRows || m_groups.size() > kMaxGroups; };
+    // Two passes: groups without a restore point first, then (only if still over) the oldest ones that have one.
+    for (int pass = 0; pass < 2 && over(); ++pass) {
+        for (size_t i = 0; i + 1 < m_groups.size() && over();) {
+            McpGroup &g = m_groups[i];
+            if (pass == 0 && !g.checkpoint.empty()) { ++i; continue; }
+            if (i == 0 && m_has_start && m_start.time.empty()) {
+                // "Before the assistant started" keeps the time it had (the first group's).
+                m_start.ts   = g.ts;
+                m_start.time = g.time;
+            }
+            if (!g.checkpoint.empty()) out.push_back(g.checkpoint);
+            const int gid = g.id;
+            m_rows.erase(std::remove_if(m_rows.begin(), m_rows.end(), [gid](const McpRow &r) { return r.group == gid; }),
+                         m_rows.end());
+            m_groups.erase(m_groups.begin() + std::ptrdiff_t(i));
+        }
     }
     return out;
 }
@@ -77,6 +125,14 @@ std::string McpHistory::checkpoint_of(int point) const
     for (const McpGroup &g : m_groups)
         if (g.id == point) return g.checkpoint;
     return std::string();
+}
+
+McpFingerprint McpHistory::fingerprint_of(int point) const
+{
+    if (point == 0) return m_has_start ? m_start.fingerprint : McpFingerprint();
+    for (const McpGroup &g : m_groups)
+        if (g.id == point) return g.fingerprint;
+    return McpFingerprint();
 }
 
 McpRow *McpHistory::row(int id)
@@ -124,9 +180,12 @@ json McpHistory::page_history() const
                         {"on_disk", r.on_disk}});
     }
     json groups = json::array();
-    if (m_has_start && !m_groups.empty())
-        groups.push_back({{"id", 0}, {"ts", m_groups.front().ts}, {"time", m_groups.front().time},
-                          {"restore", restore_json(m_start)}});
+    if (m_has_start && !m_groups.empty()) {
+        // The start point's time is the first group's; once that group was dropped (cap_rows), the time it kept.
+        const bool own = !m_start.time.empty();
+        groups.push_back({{"id", 0}, {"ts", own ? m_start.ts : m_groups.front().ts},
+                          {"time", own ? m_start.time : m_groups.front().time}, {"restore", restore_json(m_start)}});
+    }
     for (const McpGroup &g : m_groups)
         groups.push_back({{"id", g.id}, {"ts", g.ts}, {"time", g.time}, {"restore", restore_json(g)}});
     return {{"rows", rows}, {"groups", groups}};
@@ -143,7 +202,8 @@ json McpHistory::to_json() const
                         {"error", r.error}, {"on_disk", r.on_disk}});
     auto gj = [](const McpGroup &g) {
         return json{{"id", g.id}, {"ts", g.ts}, {"time", g.time}, {"checkpoint", g.checkpoint},
-                    {"checkpoint_failed", g.checkpoint_failed}};
+                    {"checkpoint_failed", g.checkpoint_failed}, {"size", g.fingerprint.size},
+                    {"sha256", g.fingerprint.sha256}};
     };
     json groups = json::array();
     for (const McpGroup &g : m_groups) groups.push_back(gj(g));
@@ -163,7 +223,12 @@ McpHistory McpHistory::from_json(const json &j, const std::function<bool(const s
             o.time = g.value("time", std::string());
             o.checkpoint = g.value("checkpoint", std::string());
             o.checkpoint_failed = g.value("checkpoint_failed", false);
-            if (!o.checkpoint.empty() && !(file_exists && file_exists(o.checkpoint))) o.checkpoint.clear();
+            o.fingerprint.size = g.value("size", uint64_t(0));
+            o.fingerprint.sha256 = g.value("sha256", std::string());
+            if (!o.checkpoint.empty() && !(file_exists && file_exists(o.checkpoint))) {
+                o.checkpoint.clear();
+                o.fingerprint = McpFingerprint();
+            }
             return o;
         };
         for (const json &r : j.value("rows", json::array())) {
@@ -205,11 +270,15 @@ McpHistory McpHistory::from_json(const json &j, const std::function<bool(const s
     return h;
 }
 
-std::string mcp_history_key(const std::string &project_path_utf8)
+static char ascii_lower(char c) { return (c >= 'A' && c <= 'Z') ? char(c - 'A' + 'a') : c; }
+
+std::string mcp_history_key(const std::string &project_path_utf8, bool fold_case)
 {
     if (project_path_utf8.empty()) return "untitled";
     // u8path/generic_u8string: on Windows the plain std::string forms go through the ANSI code page.
-    const std::string norm = std::filesystem::u8path(project_path_utf8).lexically_normal().generic_u8string();
+    std::string norm = std::filesystem::u8path(project_path_utf8).lexically_normal().generic_u8string();
+    if (fold_case)
+        for (char &c : norm) c = ascii_lower(c);
     uint64_t hash = 14695981039346656037ULL;
     for (unsigned char c : norm) {
         hash ^= c;
@@ -218,6 +287,92 @@ std::string mcp_history_key(const std::string &project_path_utf8)
     char buf[17];
     std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(hash));
     return buf;
+}
+
+// Absolute, weakly canonical (existing part with symlinks resolved), lexically normal, as UTF-8 components without
+// empty ones (a trailing separator).
+static std::vector<std::string> canonical_parts(const std::string &utf8)
+{
+    namespace sfs = std::filesystem;
+    std::error_code ec;
+    const sfs::path in  = sfs::u8path(utf8);
+    sfs::path       abs = sfs::absolute(in, ec);
+    if (ec) abs = in;
+    ec.clear();
+    sfs::path c = sfs::weakly_canonical(abs, ec);
+    if (ec) c = abs;
+    c = c.lexically_normal();
+    std::vector<std::string> parts;
+    for (const sfs::path &part : c) {
+        std::string s = part.generic_u8string();
+        if (s.empty()) continue;
+        parts.push_back(std::move(s));
+    }
+    return parts;
+}
+
+bool mcp_path_within(const std::string &dir_utf8, const std::string &path_utf8, bool fold_case)
+{
+    if (dir_utf8.empty() || path_utf8.empty()) return false;
+    const std::vector<std::string> d = canonical_parts(dir_utf8), p = canonical_parts(path_utf8);
+    if (d.empty() || p.size() < d.size()) return false;
+    for (size_t i = 0; i < d.size(); ++i) {
+        if (d[i].size() != p[i].size()) return false;
+        for (size_t k = 0; k < d[i].size(); ++k) {
+            const char a = fold_case ? ascii_lower(d[i][k]) : d[i][k];
+            const char b = fold_case ? ascii_lower(p[i][k]) : p[i][k];
+            if (a != b) return false;
+        }
+    }
+    return true;
+}
+
+bool mcp_target_current(const json &target, const std::string &stamp)
+{
+    if (!target.is_object() || stamp.empty()) return false;
+    auto it = target.find("load");
+    return it != target.end() && it->is_string() && it->get<std::string>() == stamp;
+}
+
+int mcp_find_object(const json &target, bool current, const std::string &fallback_name, const std::vector<McpObjectRef> &now)
+{
+    if (!target.is_object()) return -2;
+    if (current) {
+        auto it = target.find("object_id");
+        if (it == target.end() || !it->is_number_integer()) return -1;
+        const uint64_t id = it->get<uint64_t>();
+        for (size_t i = 0; i < now.size(); ++i)
+            if (now[i].id == id) return int(i);
+        return -1;
+    }
+    std::string name = fallback_name;
+    auto        nit  = target.find("object_name");
+    if (nit != target.end() && nit->is_string() && !nit->get<std::string>().empty()) name = nit->get<std::string>();
+    if (name.empty()) return -2;
+    int found = -2;
+    for (size_t i = 0; i < now.size(); ++i)
+        if (now[i].name == name) {
+            if (found >= 0) return -2; // more than one: can't tell which
+            found = int(i);
+        }
+    return found;
+}
+
+int mcp_find_instance(const json &target, bool current, const std::vector<uint64_t> &instance_ids)
+{
+    if (!target.is_object()) return -1;
+    if (current) {
+        auto it = target.find("instance_id");
+        if (it == target.end() || !it->is_number_integer()) return -1;
+        const uint64_t id = it->get<uint64_t>();
+        for (size_t i = 0; i < instance_ids.size(); ++i)
+            if (instance_ids[i] == id) return int(i);
+        return -1;
+    }
+    auto it = target.find("instance");
+    if (it == target.end() || !it->is_number_integer()) return -1;
+    const int64_t i = it->get<int64_t>();
+    return i >= 0 && i < int64_t(instance_ids.size()) ? int(i) : -1;
 }
 
 std::vector<std::string> mcp_stale_history_dirs(const std::vector<std::pair<std::string, int64_t>> &dirs_with_mtime,

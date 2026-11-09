@@ -11,6 +11,7 @@
 // the gate has opened meanwhile, and the parked tasks run in arrival order from ONE posted drain (not re-posted one
 // by one to the back of the event queue, where tasks posted in between would overtake them). The drain stops as soon
 // as the gate closes again and leaves the rest parked for the next one.
+#include <atomic>
 #include <cstddef>
 #include <deque>
 #include <functional>
@@ -101,6 +102,27 @@ private:
     int              m_backup_depth = 0;
     bool             m_drain_posted = false;
     bool             m_draining     = false;
+};
+
+// Remote API requests between the start of their journal step and the end of it (the io thread counts a request in
+// before it posts the journal's begin, the end step counts it out on the GUI thread). While any is in flight the MCP
+// panel's actions wait: one that ran between a request's change and its end step would diff against the request's
+// begin baseline and report the assistant's change as the user's. Any thread.
+class RequestsInFlight
+{
+public:
+    void begin() { m_n.fetch_add(1); }
+    // Never below zero (an end without its begin is ignored).
+    void end()
+    {
+        int v = m_n.load();
+        while (v > 0 && !m_n.compare_exchange_weak(v, v - 1)) {}
+    }
+    bool any() const { return m_n.load() > 0; }
+    int  count() const { return m_n.load(); }
+
+private:
+    std::atomic<int> m_n{0};
 };
 
 }}} // namespace Slic3r::GUI::RemoteAPI

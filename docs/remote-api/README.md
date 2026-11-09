@@ -422,7 +422,7 @@ plates, placement, per-object and per-plate settings, height ranges, slot
 presets and colours, and unsaved config edits. Afterwards `GET /status` reports
 the new `project` path and `project_dirty: false`, and the file is at the top of
 File > Recent. Errors: `400 not_3mf`, `404 directory_not_found`, `409 slicing`,
-`422 save_failed`.
+`422 save_failed`, `403 protected_path` (see [MCP panel activity](#mcp-panel-activity)).
 
 ### POST /project/open
 
@@ -455,7 +455,7 @@ project's own config edits are not kept in that mode. Errors: `404 file_not_foun
 (with a `detail` when the file is a stale recent entry) `| unknown_recent`,
 `409 slicing | busy`, `422 unsaved_changes | no_project_path | unsupported_format |
 load_failed | blocked_by_remote_api_policy` (with `keys`),
-`400 missing_path | bad_recent | bad_if_unsaved | bad_presets`.
+`400 missing_path | bad_recent | bad_if_unsaved | bad_presets`, `403 protected_path`.
 
 ### POST /project/new
 
@@ -533,7 +533,7 @@ and the open project's own file is never overwritten. A rename that only changes
 the case of the name works on a case-insensitive disk. Errors:
 `404 file_not_found | directory_not_found`, `409 exists | project_is_open`,
 `400 not_3mf | same_path | missing_path`, `422 move_failed` (with the OS message) `|
-blocked_by_remote_api_policy`.
+blocked_by_remote_api_policy`, `403 protected_path` (for `from` or `to`).
 
 ### DELETE /project/file
 
@@ -547,7 +547,7 @@ curl -X DELETE -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
 Removes a `.3mf` from disk, permanently, and from File > Recent. The open project's
 own file is refused with `409 project_is_open`: start a new project or open another
 first. Needs the file changes box. Errors: `404 file_not_found`,
-`400 not_3mf | missing_path`, `422 delete_failed | blocked_by_remote_api_policy`.
+`400 not_3mf | missing_path`, `422 delete_failed | blocked_by_remote_api_policy`, `403 protected_path`.
 
 ## MCP panel activity
 
@@ -586,24 +586,43 @@ The same shape the panel shows. `kind` is `setting`, `preset`, `model`, `plate`,
 row in the panel (or the time of a restore that undid its group), else `""`. `error` is `""` or the text of a
 refusal or failure. `on_disk` marks changes written to disk (saved or moved projects, saved or deleted presets),
 which a restore does not undo. Group `0` is the point before the assistant's first change; a group's `restore`
-is `null` for the newest group, `{"available": true}` when its end state can be restored, or `available: false`
-with the reason. `restored_to` is the group the user last restored to (until the next API change),
+is `{"available": true}` when its end state can be restored, `available: false` with the reason, or `null` when
+it has no restore point yet (the page offers no restore on the newest group, whatever it says).
+`restored_to` is the group the user last restored to (until the next API change or refusal),
 `restore_failed` is `true` when that restore failed after it had started replacing the project (the panel then
 says "Couldn't restore to"), and `can_undo_restore` whether the panel still offers to undo that restore. Reading
-it changes nothing.
+it records nothing (it does follow the open project first, like every recorder call: a project saved under a new
+name since gets its timeline moved or started there).
 
 While the user restores the project in the panel, every API request gets
 `409 {"error": "busy", "detail": "the user is restoring"}`; retry after a moment.
 
-The timeline is kept per project file in `<data dir>/mcp_history/`, with up to 20 restore points.
+The timeline is kept per project file in `<data dir>/mcp_history/` (the file's path, case-folded on Windows and
+macOS, picks its folder), with up to 20 restore points: "Before the assistant started" always stays, and the 19
+newest group points. The timeline itself keeps the latest 500 rows and 100 groups; beyond that the oldest groups
+go, those without a restore point first.
+
+A restore opens its file without the API's script / G-code check (it is the user's own earlier state), so the API
+cannot reach that folder: `POST /project/open`, `/project/save`, `/project/move` (either path), `DELETE
+/project/file` and `POST /model` answer `403 {"error": "protected_path"}` for any path inside
+`<data dir>/mcp_history/`, however it is spelled (`..`, symlinks, letter case on Windows and macOS). Every restore
+point also carries the size and SHA-256 of its file, taken when it was written; a restore (or the Undo of one)
+whose file no longer matches is refused ("The restore point was changed on disk, so it is not used") and opens
+nothing.
+
+Object rows name their object by its id, which OrcaSlicer renews whenever a project is loaded (opened, restored,
+or after a restart). After a load the panel finds the object by its name when exactly one object has it;
+otherwise the row's undo says "Can't track this object after the project was reloaded".
 
 ### GET /user_changes?since=
 
 What changed in OrcaSlicer outside the API: settings edited by hand, presets switched, objects added, removed,
 moved, rotated or scaled, plates added or removed, a project opened or a new one started, and the panel's own
 undos and restores. Every API request compares the project with the state the previous request left (settings
-of the print, printer and every filament slot's preset, the objects and their copies' placement, the plate
-count), so a difference is something the user did in between; at the end of the request the project is taken as
+of the print, printer and every filament slot's preset, the project settings `PUT /config` writes (plate type,
+filament colours, flush volumes and multipliers, prime volume mode, wipe tower position), each object's own
+settings, the objects and their copies' placement, the plate count), so a difference is something the user did in
+between; at the end of the request the project is taken as
 the new reference, so the API's own changes never show up here. An arrange or orient started by the API is the
 API's too, even though it finishes after its request.
 
@@ -643,7 +662,13 @@ The answer is kept small:
   only for that slot).
 - Opening a project (`"Opened project <name>"`) or starting a new one (`"New project"`) is one entry and drops
   every entry before it.
-- Camera and view, plate selection and the user's own slices are not reported.
+- Project settings are group `Project` (`"Plate type Cool Plate → Textured PEI Plate"`, a filament colour with
+  ` (filament 2)` when more than one is loaded); flush volumes are not reported while the filament count changed,
+  nor the wipe tower position while the plate count changed (they resize with it). An object's own settings are
+  group `Model`, `"Wall loops of bracket.stl 2 → 4"`, with `default` for a setting the object does not set.
+- Camera and view, plate selection and the user's own slices are not reported. Not compared at all: layer height
+  profiles, height ranges, the settings of part modifiers and the CANVAS filament slot mapping (the panel's rows
+  for those still show "changed by you" when the user changed them).
 
 Reading it changes nothing, but like every request it first compares the project, so an edit made just before
 appears in the same answer. The journal keeps the latest 200 entries in memory (a restart starts it empty), and
@@ -660,8 +685,10 @@ and answer what the panel gets, `{"status": "ok" | "cancelled" | "failed", "reas
 the restore as the panel does, outside any request, answers `202 {"status":"started"}`, and
 `/result {}` returns its result later); `/clock {"advance_s"}` moves the panel's clock forward;
 `/checkpoint_delay {"seconds"}` slows every restore-point save; `/as_user {"changes": {key: value}}` edits the
-print, filament or printer settings as the user would by hand (no row, no policy check; `/user_changes` reports it). `/corrupt_point {"group", "from"?}`
-spoils a restore point (overwrites its file with `from`, or with bytes that are no 3MF) to test a failed restore.
+print, filament or printer settings as the user would by hand (no row, no policy check; `/user_changes` reports it). `/corrupt_point {"group", "from"?, "tamper"?}`
+spoils a restore point (overwrites its file with `from`, or with bytes that are no 3MF) to test a failed restore;
+its fingerprint is taken again, so the restore gets as far as opening it, unless `tamper` is `true`, when the
+restore must refuse the changed file.
 `/pane {"clear"?: true, "post"?: message | [messages]}` drives the dock pane: `clear` starts recording what the
 pane sends to its page, `post` hands the pane page messages as if the page had sent them; the answer is
 `{"open": bool, "messages": [...], "posted"?: bool}`.

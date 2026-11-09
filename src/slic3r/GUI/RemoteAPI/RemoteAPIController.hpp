@@ -55,6 +55,11 @@ public:
                                                // (nests: a depth count, so an inner
                                                // false never clears an outer bracket)
     static bool backup_in_progress();          // an export is bracketed right now
+    // An API request has started and its journal end step has not run yet (UiTaskGate.hpp RequestsInFlight). Any thread.
+    static bool requests_in_flight();
+    // The project-scope keys PUT /config writes (curr_bed_type, filament_colour, flush volumes and multipliers,
+    // prime_volume_mode, wipe_tower_x/y). The user-change journal compares them too.
+    static std::vector<std::string> writable_project_keys();
 
     SliceState slice_state() const { std::lock_guard<std::mutex> lk(m_mutex); return m_slice; }
 

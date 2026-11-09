@@ -43,8 +43,7 @@ std::atomic<bool> McpActions::s_restoring{false};
 
 namespace {
 
-int                             s_test_depth = 0; // TestCallScope nesting
-McpActions::PanelActionListener s_listener;
+int s_test_depth = 0; // TestCallScope nesting
 
 // The last restore of the open project: the "Restored to" line and its Undo. In memory only (a restart forgets
 // it, like the stashed copies behind "Put back").
@@ -52,8 +51,9 @@ struct RestoreState
 {
     std::string                key;              // McpRecorder::history_dir() of the project it belongs to
     int                        restored_to = -1; // -1: none
-    size_t                     groups_at   = 0;  // history groups right after it; a new group ends it
+    int                        newest_at   = -1; // id of the newest history group right after it; a new group ends it
     std::string                snapshot;         // pre-restore checkpoint file name ("" = no Undo)
+    McpFingerprint             snapshot_fp;      // what that file held when it was written
     std::map<int, std::string> marks_before;     // row id -> undone_at before the restore
     std::set<int>              marked_before;    // s_marked before the restore
     int                        prev_restored_to = -1;
@@ -68,6 +68,8 @@ const char *const kMovedSince   = "moved since";
 const char *const kChangedSince = "changed since";
 const char *const kRemovedSince = "removed since";
 const char *const kArrow        = "\xE2\x86\x92"; // U+2192, as the move-to-plate rows write it
+const char *const kUntracked    = "Can't track this object after the project was reloaded";
+const char *const kPointChanged = "The restore point was changed on disk, so it is not used";
 
 struct Live
 {
@@ -145,22 +147,22 @@ Transform3d matrix_from(const json &a)
     return t;
 }
 
-int object_index(uint64_t id)
+// The model's objects with their ids, names and instance ids, in model order (indices are object indices).
+std::vector<McpObjectRef> object_refs()
 {
-    const Model &model = plater()->model();
-    for (size_t i = 0; i < model.objects.size(); ++i)
-        if ((uint64_t) model.objects[i]->id().id == id) return int(i);
-    return -1;
+    std::vector<McpObjectRef> out;
+    for (const ModelObject *mo : plater()->model().objects) {
+        McpObjectRef o;
+        o.id   = (uint64_t) mo->id().id;
+        o.name = mo->name;
+        for (const ModelInstance *mi : mo->instances) o.instance_ids.push_back((uint64_t) mi->id().id);
+        out.push_back(std::move(o));
+    }
+    return out;
 }
 
-int instance_index(const ModelObject *mo, uint64_t instance_id)
-{
-    for (size_t i = 0; i < mo->instances.size(); ++i)
-        if ((uint64_t) mo->instances[i]->id().id == instance_id) return int(i);
-    return -1;
-}
-
-uint64_t u64(const json &t, const char *key) { return t.contains(key) && t[key].is_number() ? t[key].get<uint64_t>() : 0; }
+// Was the row's target recorded in this project load (else its ObjectIDs are stale and the object is found by name)?
+bool target_current(const json &t) { return mcp_target_current(t, McpRecorder::get().load_stamp()); }
 
 PresetCollection *collection(const std::string &scope)
 {
@@ -316,22 +318,26 @@ Live live_of(const McpRow &r)
         return live_value(r.value);
     }
 
-    // Object rows.
+    // Object rows. After a project load the ids are new: found by name, else no live value (the undo says why).
     if (type == "removed") return live_value(r.value); // its availability is decided by the stash, on click
+    const bool                      current = target_current(t);
+    const std::vector<McpObjectRef> refs    = object_refs();
     if (type == "instances") {
         const json items = t.value("items", json::array());
         for (const json &it : items) {
-            const int oi = object_index(u64(it, "object_id"));
+            const int oi = mcp_find_object(it, current, std::string(), refs);
+            if (oi == -2) return {};
             if (oi < 0) return live_gone();
             const ModelObject *mo = p->model().objects[oi];
-            const int          ii = instance_index(mo, u64(it, "instance_id"));
+            const int          ii = mcp_find_instance(it, current, refs[size_t(oi)].instance_ids);
             if (ii < 0) return live_value(kMovedSince);
             if (!same_matrix(McpRecorder::instance_matrix(*mo->instances[ii]), it.value("after", json()))) return live_value(kMovedSince);
         }
         return live_value(r.value);
     }
     if (!t.contains("object_id")) return {};
-    const int oi = object_index(u64(t, "object_id"));
+    const int oi = mcp_find_object(t, current, object_name_of(r), refs);
+    if (oi == -2) return {};
     if (oi < 0) return live_gone();
     const ModelObject *mo = p->model().objects[oi];
 
@@ -365,7 +371,7 @@ Live live_of(const McpRow &r)
     if (type == "height_ranges_cleared")
         return live_value(mo->layer_config_ranges.empty() ? r.value : std::string("ranges set since"));
     if (type == "transform" || type == "duplicate" || type == "instance_plate") {
-        const int ii = instance_index(mo, u64(t, "instance_id"));
+        const int ii = mcp_find_instance(t, current, refs[size_t(oi)].instance_ids);
         if (ii < 0) return live_value(type == "duplicate" ? "copy removed since" : kMovedSince);
         return live_value(same_matrix(McpRecorder::instance_matrix(*mo->instances[ii]), t.value("after", json())) ? r.value
                                                                                                             : std::string(kMovedSince));
@@ -615,6 +621,9 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         return {};
     }
 
+    const bool                      current = target_current(t);
+    const std::vector<McpObjectRef> refs    = object_refs();
+
     if (type == "instances") {
         // Every instance back where it was, on the plates there were: plates the job added are dropped (only
         // when they hold nothing but these instances), plates it deleted are made again first, so the plate
@@ -624,9 +633,10 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         const json     items         = t.value("items", json::array());
         std::set<std::pair<int, int>> ours;
         for (const json &it : items) {
-            const int oi = object_index(u64(it, "object_id"));
+            const int oi = mcp_find_object(it, current, std::string(), refs);
+            if (oi == -2) return kUntracked;
             if (oi < 0) return gone;
-            const int ii = instance_index(p->model().objects[oi], u64(it, "instance_id"));
+            const int ii = mcp_find_instance(it, current, refs[size_t(oi)].instance_ids);
             if (ii < 0) return "Moved again since";
             ours.insert({oi, ii});
         }
@@ -643,13 +653,15 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             if (plates.create_plate() < 0) break;
         while (plates.get_plate_count() > plates_before && plates.get_plate_count() > 1)
             if (p->delete_plate(plates.get_plate_count() - 1) != 0) break;
+        // Found again: dropping a plate may have taken objects with it, which shifts the object indices.
+        const std::vector<McpObjectRef> now = object_refs();
         std::map<int, std::vector<int>> by_object;
         for (const json &it : items) {
-            const int    oi = object_index(u64(it, "object_id"));
-            ModelObject *mo = p->model().objects[oi];
-            const int    ii = instance_index(mo, u64(it, "instance_id"));
+            const int oi = mcp_find_object(it, current, std::string(), now);
+            if (oi < 0) continue;
+            const int ii = mcp_find_instance(it, current, now[size_t(oi)].instance_ids);
             if (ii < 0) continue;
-            set_matrix(mo, ii, it.value("before", json()));
+            set_matrix(p->model().objects[oi], ii, it.value("before", json()));
             by_object[oi].push_back(ii);
         }
         for (const auto &kv : by_object) instances_changed(kv.first, kv.second);
@@ -659,9 +671,11 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     }
 
     // Rows about one object.
-    const int oi = object_index(u64(t, "object_id"));
+    const int oi = mcp_find_object(t, current, object_name_of(r), refs);
+    if (oi == -2) return kUntracked;
     if (oi < 0) return gone;
     ModelObject *mo = p->model().objects[oi];
+    const std::vector<uint64_t> &instance_ids = refs[size_t(oi)].instance_ids;
 
     if (type == "added") {
         Plater::TakeSnapshot snapshot(p, "Delete Object: " + mo->name);
@@ -715,7 +729,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         return {};
     }
     if (type == "transform" || type == "instance_plate") {
-        const int ii = instance_index(mo, u64(t, "instance_id"));
+        const int ii = mcp_find_instance(t, current, instance_ids);
         if (ii < 0) return "Moved again since";
         Plater::TakeSnapshot snapshot(p, type == "transform" ? "Transform Object" : "move to plate");
         set_matrix(mo, ii, t.value("before", json()));
@@ -724,7 +738,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         return {};
     }
     if (type == "duplicate") {
-        const int ii = instance_index(mo, u64(t, "instance_id"));
+        const int ii = mcp_find_instance(t, current, instance_ids);
         if (ii < 0) return "The copy is gone already";
         Plater::TakeSnapshot snapshot(p, "Decrease Instances");
         PartPlateList &plates = p->get_partplate_list();
@@ -779,13 +793,6 @@ void tell(const std::string &text)
 {
     // The journal entry, then a new baseline: the change is reported as this panel action, not again as an edit.
     mcp_journal_panel(text);
-    if (s_listener) {
-        try {
-            s_listener("panel", text);
-        } catch (const std::exception &e) {
-            BOOST_LOG_TRIVIAL(error) << "MCP panel: action listener failed: " << e.what();
-        }
-    }
 }
 
 void publish(json event)
@@ -805,8 +812,13 @@ std::string busy_reason()
     if (McpActions::restoring()) return "A restore is running";
     if (p->is_loading_project()) return "Not while a project is loading";
     if (p->is_background_process_slicing()) return "Not while slicing";
-    // Inside an export's or an API task's event pump the project is being written or changed: wait.
-    if (Controller::backup_in_progress() || (Controller::api_ui_task_active() && s_test_depth == 0))
+    // An arrange or orient job finishes (and records its row) from the job queue, maybe inside a restore's load.
+    if (!p->get_ui_job_worker().is_idle()) return "Not while objects are being arranged";
+    // Inside an export's or an API task's event pump the project is being written or changed: wait. Also while an
+    // API request is between its change and its journal baseline: the journal would take the API's change for the
+    // user's.
+    if (Controller::backup_in_progress() ||
+        ((Controller::api_ui_task_active() || Controller::requests_in_flight()) && s_test_depth == 0))
         return "Busy with the assistant's request; try again in a moment";
     return {};
 }
@@ -819,7 +831,8 @@ bool restore_state_current(McpRecorder &rec)
         s_marked_key = rec.history_dir();
     }
     if (s_restore.restored_to < 0 && s_restore.snapshot.empty()) return false;
-    if (s_restore.key != rec.history_dir() || rec.history().groups().size() != s_restore.groups_at) {
+    const auto &gs = rec.history().groups();
+    if (s_restore.key != rec.history_dir() || (gs.empty() ? -1 : gs.back().id) != s_restore.newest_at) {
         s_restore = RestoreState();
         return false;
     }
@@ -899,25 +912,64 @@ std::string open_preset_point(const std::string &path_utf8)
     return {};
 }
 
+// After a project load OrcaSlicer leaves an edited preset's *_settings_id at the value the 3MF carried, which can
+// differ from the selected preset's own (its dirty check, Preset.cpp skipped_in_dirty, ignores those keys, so the GUI
+// shows nothing). The API's modified lists would then gain print_settings_id after a restore: put the selected
+// preset's value back, so a restore brings back exactly the edits there were.
+void settings_ids_follow_selection()
+{
+    auto *b   = wxGetApp().preset_bundle;
+    auto  fix = [](PresetCollection &c, const char *key) {
+        Preset             &ed = c.get_edited_preset();
+        const ConfigOption *so = c.get_selected_preset().config.option(key);
+        ConfigOption       *eo = ed.config.option(key);
+        if (so != nullptr && eo != nullptr && so->type() == eo->type() && !(*so == *eo)) eo->set(so);
+    };
+    fix(b->prints, "print_settings_id");
+    fix(b->filaments, "filament_settings_id");
+    fix(b->printers, "printer_settings_id");
+}
+
 // Opens a restore point (.3mf as a project, .json as presets) and keeps the project's own name and path.
 std::string open_point(const std::string &path_utf8)
 {
     Plater           *p         = plater();
     const std::string orig_path = p->get_project_filename(".3mf").ToUTF8().data();
     const wxString    orig_name = p->get_project_name();
+    // No checkpoint while the point is being opened (an arrange job finishing inside the load's event pump), and
+    // the objects get new ids however the open ends: rows recorded before it find them by name from now on.
+    McpRecorder::set_opening_point(true);
+    ScopeGuard opening([] {
+        McpRecorder::set_opening_point(false);
+        McpRecorder::note_project_reloaded();
+    });
     if (boost::algorithm::iends_with(path_utf8, ".json")) {
         const std::string err = open_preset_point(path_utf8);
         if (!err.empty()) return err;
     } else {
-        // The API's open steps on the checkpoint: presets from it, unsaved edits dropped, prompts answered, no
-        // sensitive-key check (the user's own earlier state).
-        const json r = Controller::open_project_from(p, path_utf8, /*keep_presets=*/false, /*policy_check=*/false);
         // The project's own name and path back (an Untitled one keeps its name and no path), and the checkpoint
         // out of File > Recent; also after a failed open, which may have replaced the project half way (load_project
-        // resets it before reading the file).
-        p->set_project_filename(orig_path.empty() ? orig_name : from_u8(orig_path));
-        Controller::forget_recent(path_utf8);
-        McpRecorder::forget_project_opened();
+        // resets it before reading the file), and when the open throws: a later Save must never write into the
+        // history folder.
+        bool put_back      = false;
+        auto put_name_back = [&] {
+            if (put_back) return;
+            put_back = true;
+            p->set_project_filename(orig_path.empty() ? orig_name : from_u8(orig_path));
+            Controller::forget_recent(path_utf8);
+            McpRecorder::forget_project_opened();
+        };
+        ScopeGuard on_throw([&put_name_back] {
+            try {
+                put_name_back();
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(error) << "MCP panel: project name not put back after a failed restore";
+            }
+        });
+        // The API's open steps on the checkpoint: presets from it, unsaved edits dropped, prompts answered, no
+        // sensitive-key check (the user's own earlier state, checked against its fingerprint by the caller).
+        const json r = Controller::open_project_from(p, path_utf8, /*keep_presets=*/false, /*policy_check=*/false);
+        put_name_back();
         if (r.contains("error")) {
             BOOST_LOG_TRIVIAL(error) << "MCP panel: restore point not opened: " << r.dump();
             p->set_plater_dirty(true);
@@ -926,6 +978,7 @@ std::string open_point(const std::string &path_utf8)
             return "Couldn't open the restore point";
         }
     }
+    settings_ids_follow_selection();
     // Opening the checkpoint is not the project being opened: the recorder keeps this project's timeline.
     McpRecorder::forget_project_opened();
     p->set_plater_dirty(true);
@@ -938,8 +991,6 @@ std::string open_point(const std::string &path_utf8)
 
 McpActions::TestCallScope::TestCallScope() { ++s_test_depth; }
 McpActions::TestCallScope::~TestCallScope() { --s_test_depth; }
-
-void McpActions::set_panel_action_listener(PanelActionListener fn) { s_listener = std::move(fn); }
 
 json McpActions::activity()
 {
@@ -1004,6 +1055,10 @@ json McpActions::undo(int row_id)
     }
     bool        cancelled = false;
     std::string why, note;
+    // Park API tasks (and their journal steps) while the undo runs: a preset switch back or a plate deletion may
+    // pump events, and a task run inside would see the undo half applied.
+    Controller::set_backup_in_progress(true);
+    ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
     try {
         why = undo_row(r, cancelled, note);
     } catch (const std::exception &e) {
@@ -1041,6 +1096,13 @@ json McpActions::restore(int group)
     Controller::set_backup_in_progress(true);
     ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
 
+    // The point opens without the API's sensitive-key check: it must be the file the recorder wrote. Checked with
+    // the API parked (409 while restoring, tasks held by the gate), before anything changes.
+    if (!mcp_fingerprint_ok(h.fingerprint_of(group), McpRecorder::fingerprint(path))) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: restore point " << file << " does not match its fingerprint";
+        return result_failed(kPointChanged);
+    }
+
     // An earlier restore's Undo ends here: its snapshot is about to be replaced, and a failed write must never
     // leave an Undo that opens an older state.
     restore_state_current(rec);
@@ -1054,8 +1116,9 @@ json McpActions::restore(int group)
     }
 
     // The state now, for "Undo" on the "Restored to" line. It is also the newest group's end state.
-    const std::string snapshot = rec.write_checkpoint("pre-restore");
-    if (snapshot.empty()) return result_failed("Couldn't save the current state first");
+    const std::string    snapshot    = rec.write_checkpoint("pre-restore");
+    const McpFingerprint snapshot_fp = snapshot.empty() ? McpFingerprint() : McpRecorder::fingerprint(rec.checkpoint_path(snapshot));
+    if (snapshot.empty() || snapshot_fp.sha256.empty()) return result_failed("Couldn't save the current state first");
     if (h.checkpoint_of(newest).empty()) {
         const std::string ext  = fs::path(snapshot).extension().string();
         const std::string name = "cp-" + std::to_string(newest) + ext;
@@ -1063,7 +1126,7 @@ json McpActions::restore(int group)
         fs::copy_file(into_path(from_u8(rec.checkpoint_path(snapshot))), into_path(from_u8(rec.checkpoint_path(name))),
                       fs::copy_options::overwrite_existing, cec);
         // Not pruned yet: at the 20-point cap that could delete the very point being restored.
-        if (!cec) rec.set_point_checkpoint(newest, name, /*prune=*/false);
+        if (!cec) rec.set_point_checkpoint(newest, name, snapshot_fp, /*prune=*/false); // a byte copy: same fingerprint
     }
 
     // Undoable from here on, also when the open below fails half way (the project may already be replaced).
@@ -1071,8 +1134,9 @@ json McpActions::restore(int group)
     next.key         = rec.history_dir();
     next.restored_to = group;
     next.snapshot    = snapshot;
+    next.snapshot_fp = snapshot_fp;
     rec.close_group(); // the next assistant change starts a group of its own
-    next.groups_at = h.groups().size();
+    next.newest_at = h.groups().back().id;
     s_restore      = next;
 
     const std::string err = open_point(path);
@@ -1080,6 +1144,9 @@ json McpActions::restore(int group)
     if (!err.empty()) {
         s_restore.failed = true; // the page says "Couldn't restore to"; its Undo stays
         rec.changed();
+        // The open may have replaced the project half way: the journal says so (and takes the new baseline), so
+        // the next request does not report the half-loaded project as the user's edits.
+        tell("Tried to restore in the panel to " + point_time(h, group) + "; it failed");
         return result_failed(err);
     }
 
@@ -1119,8 +1186,16 @@ json McpActions::undo_restore()
     Controller::set_backup_in_progress(true);
     ScopeGuard gate([] { Controller::set_backup_in_progress(false); });
 
+    if (!mcp_fingerprint_ok(s_restore.snapshot_fp, McpRecorder::fingerprint(path))) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: the pre-restore snapshot does not match its fingerprint";
+        return result_failed("The snapshot before the restore was changed on disk, so it is not used");
+    }
+
     const std::string err = open_point(path);
-    if (!err.empty()) return result_failed(err);
+    if (!err.empty()) {
+        tell("Tried to undo the restore in the panel; it failed");
+        return result_failed(err);
+    }
 
     McpHistory &h = rec.history();
     for (const McpRow &r : h.rows()) {
@@ -1132,7 +1207,7 @@ json McpActions::undo_restore()
     RestoreState back;
     back.key         = rec.history_dir();
     back.restored_to = s_restore.prev_restored_to;
-    back.groups_at   = h.groups().size();
+    back.newest_at   = h.groups().empty() ? -1 : h.groups().back().id;
     s_restore        = std::move(back); // one level: no Undo of the undo
     rec.close_group();
     rec.changed();

@@ -29,12 +29,24 @@ struct McpRow {
     bool        on_disk = false;
 };
 
+// What a checkpoint file held when the recorder wrote it: a restore opens it only while it still matches (a file
+// planted or changed in the history folder could otherwise bring scripts or G-code past the API's policy).
+struct McpFingerprint {
+    uint64_t    size = 0;
+    std::string sha256;      // lowercase hex; empty = none recorded (the point cannot be trusted)
+    bool operator==(const McpFingerprint &o) const { return size == o.size && sha256 == o.sha256; }
+    bool operator!=(const McpFingerprint &o) const { return !(*this == o); }
+};
+// True only when a fingerprint was recorded and the file still has it.
+bool mcp_fingerprint_ok(const McpFingerprint &recorded, const McpFingerprint &now);
+
 struct McpGroup {
-    int         id = 0;
-    int64_t     ts = 0;
-    std::string time;
-    std::string checkpoint;  // checkpoint file, empty when none
-    bool        checkpoint_failed = false;
+    int            id = 0;
+    int64_t        ts = 0;
+    std::string    time;
+    std::string    checkpoint;  // checkpoint file, empty when none
+    bool           checkpoint_failed = false;
+    McpFingerprint fingerprint; // of the checkpoint file, when written
 };
 
 // What begin_change did. prev_point is the restore point a checkpoint taken NOW represents: the previous
@@ -47,7 +59,9 @@ struct McpChange {
 class McpHistory {
 public:
     static constexpr int64_t kBurstGapS    = 60;
-    static constexpr size_t  kMaxCheckpoints = 20;
+    static constexpr size_t  kMaxCheckpoints = 20;  // the start point plus the 19 newest groups' points
+    static constexpr size_t  kMaxRows      = 500;   // cap_rows: beyond these the oldest groups go
+    static constexpr size_t  kMaxGroups    = 100;
 
     // opened = this change opens a new group (also for the first change ever); see McpChange.
     McpChange begin_change(int64_t now_s);
@@ -57,12 +71,22 @@ public:
     void close_group();
 
     // point 0 = start point, otherwise a group id. Unknown points are ignored.
-    void set_checkpoint(int point, std::string file, bool failed);
-    // Clears checkpoints beyond the kMaxCheckpoints newest; returns their files for deletion.
+    void set_checkpoint(int point, std::string file, bool failed, McpFingerprint fingerprint = {});
+    // A new fingerprint for a point's file (the test hook that spoils a point on purpose). Unknown points are ignored.
+    void set_fingerprint(int point, McpFingerprint fingerprint);
+    // Clears checkpoints beyond kMaxCheckpoints; returns their files for deletion. The start point ("Before the
+    // assistant started", the way back to the very beginning) is never pruned: the oldest group points go first.
     std::vector<std::string> prune_checkpoints();
+    // Keeps the timeline bounded: while there are more than kMaxRows rows or kMaxGroups groups, drops the oldest
+    // group (its rows and its point) other than the newest one. Groups without a restore point go first, so the
+    // points the page offers stay as long as possible; the start point is never dropped (it takes the dropped
+    // first group's time). Returns the checkpoint files of the dropped groups for deletion.
+    std::vector<std::string> cap_rows();
 
     // The checkpoint file of a restore point (0 = start point, else a group id); "" when it has none.
     std::string checkpoint_of(int point) const;
+    // The fingerprint recorded for that file (empty when none).
+    McpFingerprint fingerprint_of(int point) const;
 
     McpRow *row(int id);
     void    mark_undone(int id, std::string hhmm);
@@ -87,9 +111,44 @@ private:
     int                   m_next_row  = 1;
 };
 
+// Windows and macOS file systems ignore case (by default): paths are compared, and history keys made, case-folded.
+#if defined(_WIN32) || defined(__APPLE__)
+constexpr bool kMcpFoldPathCase = true;
+#else
+constexpr bool kMcpFoldPathCase = false;
+#endif
+
 // "untitled" for an empty path, else 16 lowercase hex chars of FNV-1a 64 over the lexically normalised path
-// (read as UTF-8 and hashed as UTF-8, so non-ASCII paths key the same on every platform).
-std::string mcp_history_key(const std::string &project_path_utf8);
+// (read as UTF-8 and hashed as UTF-8, so non-ASCII paths key the same on every platform). With fold_case (the
+// default on Windows and macOS) ASCII letters are lower-cased first, so C:\Users\Max\a.3mf and c:\users\max\A.3mf
+// share one timeline.
+std::string mcp_history_key(const std::string &project_path_utf8, bool fold_case = kMcpFoldPathCase);
+
+// True when `path` (UTF-8) is `dir` (UTF-8) or lies inside it. Both are made absolute and weakly canonical first
+// (symlinks of the existing part resolved, "." and ".." removed), then compared component by component, ASCII
+// case-folded with fold_case. Used to keep the API's file routes out of <data_dir>/mcp_history.
+bool mcp_path_within(const std::string &dir_utf8, const std::string &path_utf8, bool fold_case = kMcpFoldPathCase);
+
+// ---- Object identity across project loads -------------------------------------------------------------------
+// Object rows name objects by ObjectID, which OrcaSlicer renews whenever a project is loaded (open, restore,
+// restart). The recorder stamps each object target with the load it was recorded in ("load") and the object's
+// name ("object_name"); while the stamp is current the id is used, after a reload the name, when exactly one
+// object has it.
+struct McpObjectRef {
+    uint64_t              id = 0;
+    std::string           name;
+    std::vector<uint64_t> instance_ids;
+};
+// The target was recorded in the current load (its "load" stamp equals `stamp`).
+bool mcp_target_current(const nlohmann::json &target, const std::string &stamp);
+// Index in `now` of the object a target (or an arrange/orient item) names: by "object_id" when `current`, else by
+// "object_name" (fallback_name when the target has none). -1: gone (current, no such id); -2: cannot be tracked
+// (after a reload no object, or more than one, has the name).
+int mcp_find_object(const nlohmann::json &target, bool current, const std::string &fallback_name,
+                    const std::vector<McpObjectRef> &now);
+// Index of the instance a target names: by "instance_id" when `current`, else by the recorded "instance" index.
+// -1 when there is no such instance.
+int mcp_find_instance(const nlohmann::json &target, bool current, const std::vector<uint64_t> &instance_ids);
 
 // Names of directories whose mtime is more than max_age_s before now_s.
 std::vector<std::string> mcp_stale_history_dirs(const std::vector<std::pair<std::string, int64_t>> &dirs_with_mtime,

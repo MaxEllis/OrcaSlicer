@@ -1,7 +1,9 @@
 #pragma once
 // The user-change journal behind GET /api/v1/user_changes: what changed in OrcaSlicer outside the Remote API
-// since the assistant's last request (settings edited by hand, presets switched, objects added / removed /
-// moved, plates added / removed, projects opened, and the MCP panel's own undos and restores).
+// since the assistant's last request (settings edited by hand, presets switched, the project settings PUT /config
+// writes (plate type, filament colours, flush volumes, wipe tower position), an object's own settings, objects
+// added / removed / moved, plates added / removed, projects opened, and the MCP panel's own undos and restores).
+// Not compared: layer height profiles, height ranges, part modifiers' settings and the CANVAS slot mapping.
 //
 // The host takes a baseline (McpBaseline) at the end of every API request and compares the project with it at
 // the start of the next one; each difference becomes an entry. The route answers the entries newer than a seq,
@@ -33,6 +35,7 @@ struct McpObjectSnap {
     std::string                         name;
     std::vector<uint64_t>               instance_ids;    // ObjectBase::id().id of each instance
     std::vector<std::array<double, 16>> transforms;      // per instance, ModelInstance::get_matrix(), column-major
+    std::map<std::string, std::string>  config;          // the object's own settings: key -> serialize()
 };
 
 struct McpBaseline {
@@ -41,6 +44,8 @@ struct McpBaseline {
     McpConfigSnap                        print, printer;
     std::vector<std::string>             filament_slots;  // preset name per filament slot
     std::map<std::string, McpConfigSnap> filaments;       // per distinct preset name in filament_slots
+    McpConfigSnap                        project;         // project keys PUT /config writes, filament_colour aside
+    std::vector<std::string>             filament_colours; // filament_colour, one per filament slot
     std::vector<McpObjectSnap>           objects;
     int                                  plates = 0;
 };
@@ -74,7 +79,9 @@ struct McpJournalEntry {
 
 // The differences between two baselines, as entries without seq and time. Bulk rules: a new project
 // generation is one project entry and nothing else; a preset switch is one entry plus the values edited on
-// top of the new preset (compared with its saved values).
+// top of the new preset (compared with its saved values). Project settings are group "Project" (filament colours
+// per slot, and not while the filament count changed; flush volumes neither; the wipe tower not while the plate
+// count changed); an object's own settings are group "Model", "<label> of <object>", "default" when not set.
 std::vector<McpJournalEntry> mcp_diff(const McpBaseline &before, const McpBaseline &after, const McpTextFns &fns);
 
 // Recomposes e.text from its fields (after coalescing).
@@ -158,7 +165,8 @@ private:
 };
 
 // ---- GUI side (McpJournalCapture.cpp), GUI thread only. Not part of the standalone tests. --------------------
-// The project now: selected presets and their edited configs (every filament slot), objects, plate count.
+// The project now: selected presets and their edited configs (every filament slot), the project settings PUT /config
+// writes, objects with their own settings, plate count.
 McpBaseline mcp_capture_baseline();
 // Start of an API request: diff + new baseline (with the test clock's HH:MM). Also before a panel action, so the
 // user's edits before it are reported as theirs.
