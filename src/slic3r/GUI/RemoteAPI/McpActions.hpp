@@ -21,7 +21,8 @@ class McpActions
 {
 public:
     // McpHistory::page_history() of the open project + "restored_to" (null | the group id the project was last
-    // restored to, until the next assistant change) + "can_undo_restore" (the pre-restore snapshot is there and
+    // restored to, until the next assistant change) + "restore_failed" (true when that restore failed once it had
+    // started: the page says "Couldn't restore to") + "can_undo_restore" (the pre-restore snapshot is there and
     // nothing was recorded since). Read-only.
     static nlohmann::json activity();
 

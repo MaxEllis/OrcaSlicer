@@ -1,12 +1,17 @@
 #pragma once
-// The OrcaSlicer MCP dock pane: the shared panel page (resources/web/orcaslicer_mcp/panel.html, protocol at its
-// top) in a DockPanel on the right of the 3D view, caption "OrcaSlicer MCP", pane name "orcaslicer-mcp".
+// The OrcaSlicer MCP dock pane: the shared panel page (resources/web/orcaslicer_mcp/panel.html; its protocol is in
+// docs/remote-api/README.md, "MCP panel page and protocol") in a DockPanel on the right of the 3D view, caption
+// "OrcaSlicer MCP", pane name "orcaslicer-mcp".
 //
-// Host -> page: "state" ({api: on|off}) when the page is ready and after Preferences closes; "history"
-// (McpActions::activity() + type, version 1, capabilities) when the page is ready and after every recorder change;
+// Host -> page: "state" ({api: on|off}, on = the API server is listening) when the page is ready and after
+// Preferences closes; "history" (McpActions::activity() + type, version 1, capabilities, with off_text when the API
+// is enabled but not listening) when the page is ready, after Preferences closes and after every recorder change;
 // "live" (McpActions::live_values()) when the page asks and after config / model / project changes; "result" for
-// every undo, restore and undo_restore ({action, row|group, status ok|cancelled|failed, reason}, never silent).
-// Page -> host: ready, live, undo {row}, restore {group}, undo_restore, open_settings (Preferences > Remote API).
+// every undo, restore and undo_restore ({action, row|group, status ok|cancelled|failed, reason}, never silent;
+// failed without running while the GUI is rebuilt or the app closes). A page load with no ready yet also gets state
+// and history (the page's ready can be lost while the bridge registers; the page repeats it too).
+// Page -> host: ready, live, undo {row}, restore {group}, undo_restore, open_settings (Preferences > Remote API; one
+// at a time, a second request while it is queued or open is dropped).
 //
 // It opens at start (and after the GUI is rebuilt) when the Remote API is enabled and the user has not closed it:
 // app_config "remote_api_panel" is "0" after a close from the pane's own button, "1" after View > OrcaSlicer MCP

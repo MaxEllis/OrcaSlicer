@@ -57,6 +57,7 @@ struct RestoreState
     std::map<int, std::string> marks_before;     // row id -> undone_at before the restore
     std::set<int>              marked_before;    // s_marked before the restore
     int                        prev_restored_to = -1;
+    bool                       failed           = false; // the open failed (the project may be half replaced)
 };
 RestoreState  s_restore;
 // Rows a restore marked undone, so a later restore to a later point can unmark them. Per project.
@@ -947,6 +948,7 @@ json McpActions::activity()
     json       j       = rec.history().page_history();
     const bool current = restore_state_current(rec);
     j["restored_to"]   = current && s_restore.restored_to >= 0 ? json(s_restore.restored_to) : json(nullptr);
+    j["restore_failed"] = current && s_restore.restored_to >= 0 && s_restore.failed;
     bool can_undo = false;
     if (current && !s_restore.snapshot.empty()) {
         boost::system::error_code ec;
@@ -1076,6 +1078,7 @@ json McpActions::restore(int group)
     const std::string err = open_point(path);
     rec.prune_checkpoints();
     if (!err.empty()) {
+        s_restore.failed = true; // the page says "Couldn't restore to"; its Undo stays
         rec.changed();
         return result_failed(err);
     }

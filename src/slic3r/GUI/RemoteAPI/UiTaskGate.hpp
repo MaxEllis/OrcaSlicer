@@ -61,6 +61,13 @@ private:
         explicit Depth(int &d) : d(d) { ++d; }
         ~Depth() { --d; }
     };
+    // m_draining is cleared however the drain ends: a task that throws must not leave every later task parked.
+    struct Draining
+    {
+        bool &b;
+        explicit Draining(bool &b) : b(b) { b = true; }
+        ~Draining() { b = false; }
+    };
 
     void run(Task &task)
     {
@@ -79,13 +86,12 @@ private:
     {
         m_drain_posted = false;
         if (m_draining) return; // a drain further up the stack (inside a task's event pump) carries on
-        m_draining = true;
+        Draining draining(m_draining);
         while (open() && !m_parked.empty()) {
             Task t = std::move(m_parked.front());
             m_parked.pop_front();
-            run(t);
+            run(t); // a throw leaves the rest parked for the next arrival's drain
         }
-        m_draining = false;
         // Closed again with tasks left: the bracket's end (backup(false)) or the next arrival posts the next drain.
     }
 

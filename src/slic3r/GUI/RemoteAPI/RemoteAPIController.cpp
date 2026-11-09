@@ -4830,7 +4830,7 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
 // (parked ones too, see UiTask::run), so the begin task runs before the handler's tasks and the end task after them
 // and after whatever they posted. A stuck GUI thread therefore costs a request its own timeout only, and a request
 // that times out cannot leave a stale baseline: its end task still runs, after its handler (cancelled or finished).
-static void post_journal_task(void (*fn)())
+static bool post_journal_task(void (*fn)())
 {
     try {
         auto task       = std::make_shared<UiTask>();
@@ -4841,9 +4841,11 @@ static void post_journal_task(void (*fn)())
             return nullptr;
         };
         task->schedule();
+        return true;
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(warning) << "MCP journal: task not posted: " << e.what();
     }
+    return false;
 }
 
 // One begin covers every request that arrives before it ran: while the GUI thread is busy, requests do not pile up a
@@ -4859,7 +4861,8 @@ static void journal_begin_task()
 void Controller::journal_begin()
 {
     if (s_journal_begin_pending.exchange(true)) return;
-    post_journal_task(&journal_begin_task);
+    // Not posted: no begin will clear the flag, so the next request posts its own.
+    if (!post_journal_task(&journal_begin_task)) s_journal_begin_pending.store(false);
 }
 void Controller::journal_end() { post_journal_task(&mcp_journal_end); }
 

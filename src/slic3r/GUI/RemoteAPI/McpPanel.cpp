@@ -17,6 +17,7 @@
 #include <wx/thread.h>
 #include <wx/timer.h>
 #include <wx/weakref.h>
+#include <wx/webview.h>
 
 #include <algorithm>
 #include <cmath>
@@ -47,6 +48,10 @@ constexpr size_t  kTestOutboxMax   = 200;
 bool                s_test_record = false; // test_clear() was called: keep what the pane sends
 std::deque<json>    s_test_outbox;
 bool                s_waiting     = false; // an open_when_ready() waits for the plater
+// Preferences asked for from the pane is queued or on screen. A second request meanwhile (a double click, delivered
+// inside the first dialog's modal loop) is dropped: a nested Preferences that rebuilds the GUI under the outer modal
+// crashes (see GUI_App::open_preferences).
+bool                s_prefs_from_pane = false;
 
 std::string text_field(const json &j, const char *key)
 {
@@ -88,6 +93,17 @@ bool user_closed()
     return c != nullptr && c->get(kWantedKey) == "0";
 }
 
+// Whether the Remote API server is listening now: it can be enabled in Preferences and still fail to bind its port.
+bool api_listening() { return wxGetApp().remote_api_server().running(); }
+
+// The window is being rebuilt or the app is closing: pane actions are dropped ("" when they can run).
+std::string closing_reason()
+{
+    if (wxGetApp().is_closing()) return "Not while OrcaSlicer is closing";
+    if (wxGetApp().is_recreating_gui()) return "Not while the window is being rebuilt";
+    return {};
+}
+
 void set_wanted(bool wanted)
 {
     if (AppConfig *c = wxGetApp().app_config) c->set(kWantedKey, wanted ? "1" : "0");
@@ -117,10 +133,14 @@ std::string read_page()
 
 json capabilities()
 {
-    return {{"restore", true},
-            {"kinds", {"setting", "preset", "model", "plate", "slice", "file", "refused"}},
-            {"open_settings", true},
-            {"settings_hint", ""}};
+    json c = {{"restore", true},
+              {"kinds", {"setting", "preset", "model", "plate", "slice", "file", "refused"}},
+              {"open_settings", true},
+              {"settings_hint", ""}};
+    // The page's default off line ("The Remote API is off.") fits a switched-off API; an enabled one that failed to
+    // bind its port says so.
+    if (api_enabled() && !api_listening()) c["off_text"] = "The Remote API couldn't start. Check its port.";
+    return c;
 }
 
 // Runs fn once the plater is on screen (null when the app is closing instead), then deletes itself. A pane added
@@ -174,6 +194,8 @@ public:
         , m_timer(this)
     {
         Bind(wxEVT_TIMER, &McpPane::on_timer, this);
+        // WebPanel's own handler (bootstrap swap, theme) is bound first and skips; this one skips too.
+        browser()->Bind(wxEVT_WEBVIEW_LOADED, &McpPane::on_loaded, this);
     }
 
     ~McpPane() override
@@ -196,11 +218,16 @@ public:
 
     void want_settings()
     {
+        if (s_prefs_from_pane) {
+            BOOST_LOG_TRIVIAL(info) << "MCP panel: Preferences already opening, request dropped";
+            return;
+        }
         m_want_settings = true;
         if (!m_timer.IsRunning()) m_timer.StartOnce(1);
     }
 
-    void push_state() { push({{"type", "state"}, {"api", api_enabled() ? "on" : "off"}}); }
+    // "on" only while the server is really listening, not merely enabled in Preferences.
+    void push_state() { push({{"type", "state"}, {"api", api_listening() ? "on" : "off"}}); }
 
     void push_history()
     {
@@ -239,11 +266,19 @@ public:
     {
         const std::string action = text_field(data, "action");
         if (action == "ready") {
+            // The page repeats ready until its first history arrives: each answer is the current state (cheap) and
+            // a history push, coalesced with any already pending on the timer.
+            m_ready_seen = true;
             push_state();
             schedule(true, false, 1);
         } else if (action == "live") {
             schedule(false, true, 1);
         } else if (action == "undo" || action == "restore" || action == "undo_restore") {
+            const std::string why = closing_reason();
+            if (!why.empty()) {
+                push(dropped_result(action, data, why));
+                return;
+            }
             run_action(action, data);
         } else if (action == "open_settings") {
             want_settings();
@@ -253,6 +288,28 @@ public:
     }
 
 private:
+    // The result for an action that is not run: the page's id echoed back, status failed, the reason.
+    static json dropped_result(const std::string &action, const json &data, const std::string &why)
+    {
+        json result = {{"type", "result"}, {"action", action}, {"status", "failed"}, {"reason", why}};
+        if (action != "undo_restore") {
+            const char *key = action == "undo" ? "row" : "group";
+            int         id  = 0;
+            result[key]     = int_field(data, key, id) ? json(id) : json(nullptr);
+        }
+        return result;
+    }
+
+    // A page finished loading (the bootstrap page first, then ours; a WebKit reload again). When the page has not
+    // said ready yet (its message can be lost while the bridge registers), push the state and the timeline anyway.
+    void on_loaded(wxWebViewEvent &event)
+    {
+        event.Skip();
+        if (m_ready_seen) return;
+        m_want_state = true;
+        schedule(true, false, kChangeMs);
+    }
+
     void push(const json &m)
     {
         if (s_test_record) {
@@ -282,6 +339,15 @@ private:
         }
         wxWeakRef<McpPane> self(this);
         wxGetApp().CallAfter([self, action, id, result]() mutable {
+            // Queued before a GUI rebuild or the app's close: not run against a half torn-down window.
+            const std::string why = closing_reason();
+            if (!why.empty()) {
+                if (!self) return;
+                result["status"] = "failed";
+                result["reason"] = why;
+                self->push(result);
+                return;
+            }
             json res;
             try {
                 if (action == "undo")
@@ -315,17 +381,28 @@ private:
 
     void on_timer(wxTimerEvent &)
     {
+        if (m_want_state) { // touches no project state: also while busy
+            m_want_state = false;
+            push_state();
+        }
         if (busy()) {
             m_timer.StartOnce(kBusyRetryMs);
             return;
         }
         if (m_want_settings) {
             m_want_settings = false;
-            // From the app's queue: Preferences may rebuild the GUI (a language change), which destroys this pane.
-            wxGetApp().CallAfter([]() {
-                if (wxGetApp().is_closing() || wxGetApp().mainframe == nullptr) return;
-                wxGetApp().open_preferences(PreferencesTab::RemoteAPI);
-            });
+            if (!s_prefs_from_pane) {
+                s_prefs_from_pane = true;
+                // From the app's queue: Preferences may rebuild the GUI (a language change), which destroys this pane.
+                wxGetApp().CallAfter([]() {
+                    struct Done
+                    {
+                        ~Done() { s_prefs_from_pane = false; }
+                    } done;
+                    if (!closing_reason().empty() || wxGetApp().mainframe == nullptr) return;
+                    wxGetApp().open_preferences(PreferencesTab::RemoteAPI);
+                });
+            }
         }
         if (m_want_history)
             push_history();
@@ -337,6 +414,8 @@ private:
     bool    m_want_history  = false;
     bool    m_want_live     = false;
     bool    m_want_settings = false;
+    bool    m_want_state    = false; // a state push before the next history (the page has not said ready)
+    bool    m_ready_seen    = false; // the page said ready at least once
 };
 
 McpPane *create(Plater *plater)
@@ -401,9 +480,10 @@ void McpPanel::project_changed()
 void McpPanel::settings_changed()
 {
     if (!wxThread::IsMain()) return;
-    if (s_pane != nullptr)
+    if (s_pane != nullptr) {
         s_pane->push_state();
-    else
+        s_pane->schedule(true, false, kChangeMs); // capabilities.off_text follows whether the server came up
+    } else
         open_when_ready();
 }
 

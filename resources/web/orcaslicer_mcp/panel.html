@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- OrcaSlicer MCP panel. One page for every host: the messages it takes and sends are documented in
+     docs/remote-api/README.md, "MCP panel page and protocol". Hosts vendor this file unchanged. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -62,6 +64,7 @@
   .row:hover { background: var(--hover-soft); }
   .row .l { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row .v { color: var(--fg); white-space: nowrap; }
+  .row .v .sw { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--border); border-radius: 2px; }
   .row .l .chg { display: block; color: var(--faint); font-size: 11px; line-height: 1.2; }
   .row.refused .v { color: var(--warn); }
   .more { display: none; padding: 0 10px 6px 73px; color: var(--muted); font-size: 12px; justify-content: space-between; gap: 8px; }
@@ -107,6 +110,7 @@
 
   var PROTOCOL_VERSION = 1;
   var START_TITLE = 'Before the assistant started';
+  var OFF_TEXT = 'The Remote API is off.'; // when the host sends no capabilities.off_text
 
   function has(s) { return s !== null && s !== undefined && s !== ''; }
 
@@ -212,6 +216,17 @@
     return String(a) === String(b);
   }
 
+  // A colour value (#RGB, #RRGGBB or #RRGGBBAA, as filament colour rows carry it): the CSS colour, else ''.
+  var COLOUR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+  function colourOf(v) {
+    var t = has(v) ? String(v).trim() : '';
+    return COLOUR_RE.test(t) ? t : '';
+  }
+
+  function offText(caps) {
+    return caps && has(caps.off_text) ? String(caps.off_text) : OFF_TEXT;
+  }
+
   function liveEntry(row, live) {
     return live && Object.prototype.hasOwnProperty.call(live, row.id) ? live[row.id] : null;
   }
@@ -250,7 +265,10 @@
     groupTitle: groupTitle,
     groupResult: groupResult,
     liveDisplay: liveDisplay,
-    undoState: undoState
+    undoState: undoState,
+    sameValue: sameValue,
+    colourOf: colourOf,
+    offText: offText
   };
 })(window);
 </script>
@@ -260,8 +278,8 @@
   var Core = window.McpPanelCore;
   var TIP = { setting: 'Setting', preset: 'Preset', model: 'Model', plate: 'Plate', slice: 'Slice result', refused: 'Refused', file: 'File', start: 'Starting point' };
   var history = { rows: [], groups: [] };
-  var caps = { restore: false, open_settings: true, settings_hint: '' };
-  var restoredTo = null, canUndoRestore = false;
+  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '' };
+  var restoredTo = null, canUndoRestore = false, restoreFailed = false;
   var live = {};
   var api = 'on';
   var openGroups = {};          // group id -> bool
@@ -274,6 +292,8 @@
   var restoreBusy = null;       // group id | 'undo'
   var restoreError = {};        // group id | 'undo' -> reason
   var groups = [];
+  var READY_RETRY_MS = 500, READY_RETRIES = 20;
+  var gotHistory = false, readyTries = 0, readyTimer = null;
 
   function esc(s) { return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function has(s) { return s !== null && s !== undefined && s !== ''; }
@@ -283,6 +303,7 @@
   function isNewest(g) { return groups.length && groups[0].id === g.id; }
   function isUndone(g) {
     if (restoredTo === null || restoredTo === undefined) return false;
+    if (restoreFailed) return false; // the host marked nothing undone
     if (g.id === restoredTo) return false;
     var t = null;
     groups.forEach(function (x) { if (x.id === restoredTo) t = x; });
@@ -315,6 +336,13 @@
     return r.undo.verb + ' ' + (has(r.value) ? r.value : r.label);
   }
 
+  // Filament colour rows: a small swatch of the colour shown beside it (the value is validated as #hex first).
+  function swatch(r, value) {
+    if (r.kind !== 'setting') return '';
+    var c = Core.colourOf(value);
+    return c ? '<span class="sw" style="background:' + c + '"></span>' : '';
+  }
+
   function rowHtml(r, g, newest) {
     var disp = Core.liveDisplay(r, live, newest);
     var detail = detailText(r, disp);
@@ -342,7 +370,7 @@
     if (errLine) more = '<div class="more"><span class="d bad">' + esc(errLine) + '</span>' + tail + '</div>';
     else if (kind === 'refused' && has(r.error) && !detail) more = '<div class="more"><span class="d">' + esc(r.error) + '</span>' + tail + '</div>';
     return '<div class="row' + rc + open + '" data-row="' + r.id + '"><span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
-      '<span class="l">' + esc(r.label) + (disp.note ? '<span class="chg">' + esc(disp.note) + '</span>' : '') + '</span><span class="v">' + esc(disp.value) + '</span></div>' + more;
+      '<span class="l">' + esc(r.label) + (disp.note ? '<span class="chg">' + esc(disp.note) + '</span>' : '') + '</span><span class="v">' + swatch(r, disp.value) + esc(disp.value) + '</span></div>' + more;
   }
 
   function groupHtml(g, idx) {
@@ -388,7 +416,8 @@
     else if (restoreError.undo) right = '<span class="ask" style="display:flex;grid-column:auto"><span class="line"><span class="bad">' + esc(restoreError.undo) + '</span></span></span>';
     else if (canUndoRestore) right = '<span class="ask" style="display:flex;grid-column:auto"><a class="tip-left" data-undo-restore="1" data-tip="Go back to before the restore">Undo</a></span>';
     else right = '';
-    return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="name">Restored to ' + esc(t) + (canUndoRestore && !restoreBusy && !restoreError.undo ? ' \u00b7' : '') + '</span>' + right + '</div></div>';
+    var lead = restoreFailed ? 'Couldn\'t restore to ' : 'Restored to ';
+    return '<div class="group restored"><div class="ghead"><span class="t"></span><span class="name">' + esc(lead + t) + (canUndoRestore && !restoreBusy && !restoreError.undo ? ' \u00b7' : '') + '</span>' + right + '</div></div>';
   }
 
   function updateFold() {
@@ -409,7 +438,7 @@
     groups = Core.groupRows(history);
     var html = '';
     if (api === 'off') {
-      html += '<div class="empty offnote">The Remote API is off.' + (caps.open_settings
+      html += '<div class="empty offnote">' + esc(Core.offText(caps)) + (caps.open_settings
         ? ' <a data-settings="1">Open the Remote API settings</a>'
         : (caps.settings_hint ? '<br>' + esc(caps.settings_hint) : '')) + '</div>';
     }
@@ -430,9 +459,12 @@
   function applyHistory(m) {
     history = { rows: m.rows || [], groups: m.groups || [] };
     var c = m.capabilities || {};
-    caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '' };
+    caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '', off_text: c.off_text || '' };
     restoredTo = has(m.restored_to) || m.restored_to === 0 ? m.restored_to : null;
+    restoreFailed = restoredTo !== null && m.restore_failed === true;
     canUndoRestore = !!m.can_undo_restore;
+    gotHistory = true;
+    if (readyTimer !== null) { window.clearTimeout(readyTimer); readyTimer = null; }
     var gs = Core.groupRows(history);
     var newest = gs.length ? gs[0].id : null;
     gs.forEach(function (g, i) { if (!(g.id in openGroups)) openGroups[g.id] = (i === 0); });
@@ -534,9 +566,19 @@
       openGroups[tid] = !openGroups[tid]; render(); return;
     }
   });
+  // The host may miss the first ready (its message handler can register after the page's script ran): say it again
+  // every READY_RETRY_MS until the first history arrives, at most READY_RETRIES more times.
+  function retryReady() {
+    readyTimer = null;
+    if (gotHistory || readyTries >= READY_RETRIES) return;
+    readyTries++;
+    send({ action: 'ready' });
+    readyTimer = window.setTimeout(retryReady, READY_RETRY_MS);
+  }
   render();
   send({ action: 'ready' });
   send({ action: 'live' });
+  if (!gotHistory) readyTimer = window.setTimeout(retryReady, READY_RETRY_MS);
 })();
 </script>
 </body>

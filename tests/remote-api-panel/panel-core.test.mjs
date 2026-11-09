@@ -134,3 +134,24 @@ test('tolerant_numeric_compare', () => {
   assert.equal(same('160 %', '160 mm/s'), false);
   assert.equal(C.liveDisplay(row({ id: 951, value: '3' }), { 951: { value: '3.0', present: true } }, true).note, '');
 });
+
+test('colour_values', () => {
+  assert.equal(C.colourOf('#F2754E'), '#F2754E');
+  assert.equal(C.colourOf('#f2754eff'), '#f2754eff');
+  assert.equal(C.colourOf('#abc'), '#abc');
+  assert.equal(C.colourOf(' #00FF00 '), '#00FF00');
+  assert.equal(C.colourOf('#00FF0'), '');
+  assert.equal(C.colourOf('3'), '');
+  assert.equal(C.colourOf('#00FF00;background:url(x)'), '');
+  assert.equal(C.colourOf(null), '');
+});
+test('off_text_default_and_supplied', () => {
+  assert.equal(C.offText(undefined), 'The Remote API is off.');
+  assert.equal(C.offText({}), 'The Remote API is off.');
+  assert.equal(C.offText({ off_text: '' }), 'The Remote API is off.');
+  assert.equal(C.offText({ off_text: 'Assistant access is off.' }), 'Assistant access is off.');
+});
+test('same_value_is_exported', () => {
+  assert.equal(C.sameValue('3.0', '3'), true);
+  assert.equal(C.sameValue('#FF0000', '#ff0000'), false);
+});
