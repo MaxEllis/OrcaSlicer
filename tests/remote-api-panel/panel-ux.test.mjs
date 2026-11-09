@@ -19,7 +19,7 @@ function element() {
 }
 
 // A fresh page. bg: the body's computed background ("rgb(r, g, b)"), for the theme check.
-function page(bg) {
+function page(bg, docExtra) {
   const els = { list: element(), fold: element(), gear: element() };
   const root = element();
   const sent = [];
@@ -32,7 +32,7 @@ function page(bg) {
   if (bg) window.getComputedStyle = () => ({ backgroundColor: bg });
   const handlers = {};
   const document = { getElementById: (id) => els[id], addEventListener: (type, fn) => { handlers[type] = fn; },
-                     body: {}, documentElement: root };
+                     body: {}, documentElement: root, ...(docExtra || {}) };
   const ctx = vm.createContext({ window, document });
   vm.runInContext(core, ctx);
   vm.runInContext(view, ctx);
@@ -49,8 +49,9 @@ function page(bg) {
     const el = { getAttribute: (k) => (k === attr ? String(value) : null), hasAttribute: (k) => k === attr, parentNode: null };
     handlers.click({ target: { ...el, closest: () => null }, stopPropagation() {} });
   }
+  function clickTarget(target) { handlers.click({ target, stopPropagation() {} }); }
   function clickRow(id) { handlers.click({ target: { getAttribute: () => null, hasAttribute: () => false, closest: (sel) => (sel === '.row' ? rowTarget(id) : null) }, stopPropagation() {} }); }
-  return { sent, window, root, receive: (m) => window.__mcpPanelReceive(m), list: () => els.list.innerHTML, key, rowTarget, click, clickRow };
+  return { sent, window, root, receive: (m) => window.__mcpPanelReceive(m), list: () => els.list.innerHTML, key, rowTarget, click, clickRow, clickTarget };
 }
 
 const rowOf = (o) => ({ id: 1, group: 1, ts: 100, time: '10:00', kind: 'setting', label: 'Wall loops', value: '3', before: '2',
@@ -132,7 +133,7 @@ test('ctrl_p_and_ctrl_s_do_nothing', () => {
 test('reverted_row_shows_the_current_value_struck_through_undone_one', () => {
   const p = page();
   p.receive(historyOf({ rows: [rowOf({ undone_at: '10:03' })] }));
-  assert.match(p.list(), /<span class="v"><s class="old">3<\/s>2<\/span>/);
+  assert.match(p.list(), /<span class="chg"><s class="old">3<\/s> reverted<\/span><\/span><span class="v">2<\/span>/);
   assert.match(p.list(), /class="row reverted"/);
   assert.match(p.list(), />Reverted<\/span>/);
 });
@@ -142,7 +143,7 @@ test('reverted_here_before_history_catches_up', () => {
   p.receive(historyOf({}));
   p.click('data-undo', 1);
   p.receive({ type: 'result', action: 'undo', row: 1, status: 'ok' });
-  assert.match(p.list(), /<s class="old">3<\/s>2/);
+  assert.match(p.list(), /<s class="old">3<\/s> reverted<\/span><\/span><span class="v">2<\/span>/);
 });
 
 // ---- M2 / R43: live state for the latest row of each setting
@@ -250,7 +251,7 @@ test('restore_control_always_there_on_older_groups', () => {
   const l = p.list();
   assert.match(l, /data-ask="1" data-fk="a:1" data-tip="Restore the project to how it was at 10:00 \(undoes later changes\)" aria-label="Restore the project to how it was at 10:00 \(undoes later changes\)"/);
   assert.equal((l.match(/class="act /g) || []).length, 1, 'none on the newest group');
-  assert.match(css, /\.ghead \.act \{[^}]*opacity: \.55/);
+  assert.match(css, /\.ghead \.act \{[^}]*opacity: \.8/);
   const actRule = css.match(/\n  \.ghead \.act \{[^}]*\}/)[0];
   assert.match(actRule, /display: grid/, 'not hover-only');
   assert.doesNotMatch(css, /\.ghead:hover \.act \{ display/, 'hover does not reveal it any more');
@@ -323,4 +324,58 @@ test('m6_restore_undone_line_until_the_next_change', () => {
   assert.match(p.list(), /<span class="name faint">Restore undone<\/span>/);
   p.receive(historyOf({ rows: [rowOf({ id: 1 }), rowOf({ id: 2, label: 'Infill' })] }));
   assert.doesNotMatch(p.list(), /Restore undone/);
+});
+
+// ---- fix round 1
+test('superseded_without_restore_points_does_not_send_the_user_to_one', () => {
+  const p = page();
+  const rows = [rowOf({ id: 1, group: 1, ts: 100, superseded: true }), rowOf({ id: 2, group: 2, ts: 200, time: '10:05', value: '4', before: '3' })];
+  p.receive(twoGroups(rows, { restore: false }));
+  p.clickRow(1);
+  assert.match(p.list(), /aria-disabled="true" data-fk="u:1" data-tip="Changed again since"/);
+  assert.doesNotMatch(p.list(), /restore an earlier point/);
+  const C = vm.runInNewContext(core + ';window.McpPanelCore', { window: {} });
+  // the non-tracked older-group branch too
+  assert.equal(C.undoState(rowOf({ id: 3 }), { 3: { value: '9', present: true } }, false, false, false).why, 'Changed again since');
+  assert.equal(C.undoState(rowOf({ id: 3 }), { 3: { value: '9', present: true } }, false, false).why,
+    'Changed again since; restore an earlier point instead', 'default: the host has restore points');
+});
+
+test('disabled_restore_icon_does_nothing', () => {
+  const p = page();
+  const h = twoGroups();
+  h.groups[1].restore = { available: false, why: 'No restore point here' };
+  p.receive(h);
+  assert.match(p.list(), /class="act tip-left off" aria-disabled="true"/);
+  const before = p.list();
+  const target = { getAttribute: (k) => (k === 'aria-disabled' ? 'true' : null), hasAttribute: (k) => k === 'aria-disabled',
+                   parentNode: null, closest: (sel) => (sel === '[data-toggle]' ? { getAttribute: () => '1' } : null) };
+  p.window.__click = target;
+  p.clickTarget(target);
+  assert.equal(p.list(), before, 'the group did not toggle');
+});
+
+test('long_values_go_under_the_label', () => {
+  const p = page();
+  p.receive(historyOf({ rows: [rowOf({ value: '0.82 mm · a long value that wraps', before: '0.8 mm' })] }));
+  assert.match(p.list(), /class="row long" data-row="1"/);
+  assert.match(css, /\.row\.long \.v \{ grid-column: 2; text-align: left; \}/);
+});
+
+test('focus_rules_stand_alone', () => {
+  assert.match(css, /\n  :focus-visible \{ outline: 2px solid var\(--focus\)/);
+  assert.match(css, /:focus:not\(:focus-visible\) \{ outline: none; \}/);
+  assert.doesNotMatch(css, /:hover[^{]*,[^{]*:focus-visible|:focus-visible[^{]*,[^{]*:hover/, 'no hover rule shares a list with :focus-visible');
+  assert.match(css, /\n  \[data-tip\]:hover::after \{/);
+});
+
+test('refocus_only_when_the_page_has_focus', () => {
+  for (const focused of [false, true]) {
+    let focusCalls = 0;
+    const p = page(undefined, { hasFocus: () => focused, activeElement: { getAttribute: (k) => (k === 'data-fk' ? 'r:1' : null) },
+                                querySelector: () => ({ focus: () => { focusCalls++; } }) });
+    p.receive(historyOf({}));
+    p.receive({ type: 'live', values: { 1: { value: '5', present: true } } });
+    assert.equal(focusCalls > 0, focused, focused ? 'focus kept while the page has it' : 'no focus taken from OrcaSlicer');
+  }
 });

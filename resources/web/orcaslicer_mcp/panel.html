@@ -22,17 +22,20 @@
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--fg); font: 13px/1.4 var(--font); display: flex; flex-direction: column; overflow: hidden; }
   button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: inherit; }
-  /* Keyboard focus: a ring in the theme's focus colour on every control (rows are role=button). */
-  :focus { outline: none; }
+  /* Keyboard focus: a ring in the theme's focus colour on every control (rows are role=button). Rules that name
+     :focus-visible stand alone: an engine without it drops only them (and keeps its default focus outline). */
   :focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 3px; }
+  :focus:not(:focus-visible) { outline: none; }
   #app { display: flex; flex-direction: column; flex: 1; min-height: 0; }
   .title { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-bottom: 1px solid var(--border); flex: none; }
   .title .sp { flex: 1; }
   .list { flex: 1; overflow-y: auto; overflow-x: hidden; }
   .ibtn { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); cursor: pointer; }
-  .ibtn:hover, .ibtn:focus-visible { background: var(--hover); color: var(--fg); }
+  .ibtn:hover { background: var(--hover); color: var(--fg); }
+  .ibtn:focus-visible { background: var(--hover); color: var(--fg); }
   .ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  .title [data-tip]:hover::after, .title [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
+  .title [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
+  .title [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
 
   svg.i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .k-setting { color: var(--t-set); } .k-preset { color: var(--t-preset); } .k-model { color: var(--t-model); }
@@ -58,9 +61,11 @@
   .ghead .res { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; display: inline-flex; gap: 5px; align-items: center; }
   .ghead .res.stale { color: var(--faint); }
   /* Restore: always shown (dimmed) on an older group, brighter on hover and focus. */
-  .ghead .act { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); opacity: .55; }
-  .ghead:hover .act, .ghead .act:focus-visible { opacity: 1; }
-  .ghead .act:hover, .ghead .act:focus-visible { background: var(--hover); color: var(--fg); }
+  /* opacity .8 keeps the dimmed icon at 3:1 or more (3.65:1 on #363636, 3.18:1 on #eeeeee with the hosts' muted). */
+  .ghead .act { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 3px; color: var(--muted); opacity: .8; }
+  .ghead:hover .act { opacity: 1; }
+  .ghead .act:hover { background: var(--hover); color: var(--fg); }
+  .ghead .act:focus-visible { opacity: 1; background: var(--hover); color: var(--fg); }
   .ghead .act.off { opacity: .3; cursor: default; }
   .ghead .act svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .group.open .ghead .t { color: var(--muted); }
@@ -82,7 +87,12 @@
   .row .v { color: var(--fg); text-align: right; overflow-wrap: anywhere; min-width: 0; }
   .row .v .sw { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--border); border-radius: 2px; }
   .row .v .old { color: var(--faint); text-decoration: line-through; margin-right: 6px; }
-  .row .l .chg { display: block; color: var(--faint); font-size: 11px; line-height: 1.2; }
+  .row .old { text-decoration: line-through; }
+  /* A long value goes on its own line under the label (the label keeps the row's width). */
+  .row.long { grid-template-columns: 14px minmax(0, 1fr); }
+  .row.long .v { grid-column: 2; text-align: left; }
+  .row .l .chg { display: block; color: var(--muted); font-size: 11px; line-height: 1.2; }
+  .row .l .chg .old { color: var(--muted); }
   .row.refused .v { color: var(--warn); }
   .row.stale .v, .row.stale .l .lt { color: var(--faint); }
   .more { display: none; padding: 0 10px 6px 73px; color: var(--muted); font-size: 12px; justify-content: space-between; gap: 8px; }
@@ -102,15 +112,26 @@
   .ghead .rl { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
   .ghead .rl .name { min-width: 0; }
   .ghead .rl .sep { color: var(--muted); flex: none; }
-  .group.restored [data-tip]:hover::after, .group.restored [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
+  .group.restored [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
+  .group.restored [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
   [data-tip] { position: relative; }
-  [data-tip]:hover::after, button[data-tip]:focus-visible::after, .row:focus-visible .l[data-tip]::after {
+  [data-tip]:hover::after {
     content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
     white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
-  .tip-left:hover::after, .tip-left:focus-visible::after { left: auto; right: 0; transform: none; }
+  button[data-tip]:focus-visible::after {
+    content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
+  .row:focus-visible .l[data-tip]::after {
+    content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+    white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
+  .tip-left:hover::after { left: auto; right: 0; transform: none; }
+  .tip-left:focus-visible::after { left: auto; right: 0; transform: none; }
   .row .ic { display: inline-flex; }
-  /* After the general tag rule: a row's tag wraps inside the pane. */
-  .row .l[data-tip]:hover::after, .row:focus-visible .l[data-tip]::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
+  /* After the general tag rule: a row's tag and the restore icon's long tag wrap inside the pane. */
+  .row .l[data-tip]:hover::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
+  .row:focus-visible .l[data-tip]::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
+  .ghead .act[data-tip]:hover::after { white-space: normal; width: max-content; max-width: 220px; }
+  .ghead .act[data-tip]:focus-visible::after { white-space: normal; width: max-content; max-width: 220px; }
 </style>
 </head>
 <body>
@@ -335,12 +356,15 @@
     return { value: shown, note: '' };
   }
 
-  function undoState(row, live, isNewest, tracked) {
+  // canRestore (optional, default true): the host offers restore points (capabilities.restore); without them the
+  // reason does not send the user to one.
+  function undoState(row, live, isNewest, tracked, canRestore) {
+    var again = canRestore === false ? 'Changed again since' : 'Changed again since; restore an earlier point instead';
     if (!row.undo) return { available: false, why: '' };
     if (has(row.undone_at)) return { available: false, why: 'Reverted at ' + row.undone_at };
     // The assistant changed the same setting again later (the host's superseded flag): undoing this row would
     // overwrite that change.
-    if (row.superseded === true) return { available: false, why: 'Changed again since; restore an earlier point instead' };
+    if (row.superseded === true) return { available: false, why: again };
     var e = liveEntry(row, live);
     if (e) {
       if (!e.present) {
@@ -350,7 +374,7 @@
       if (!sameValue(e.value, has(row.value) ? String(row.value) : '')) {
         return {
           available: false,
-          why: (tracked || isNewest) ? 'You changed it since' : 'Changed again since; restore an earlier point instead'
+          why: (tracked || isNewest) ? 'You changed it since' : again
         };
       }
     }
@@ -503,7 +527,7 @@
     var tail = '';
     var errLine = undoError[r.id];
     if (r.undo) {
-      var st = Core.undoState(r, live, newest, caps.tracked_live);
+      var st = Core.undoState(r, live, newest, caps.tracked_live, caps.restore);
       if (reverted) {
         tail = '<span class="faint">Reverted</span>';
         if (has(r.undone_at)) tail = '<span class="faint tip-left" data-tip="Reverted at ' + esc(r.undone_at) + '">Reverted</span>';
@@ -520,17 +544,24 @@
     var more = '<div class="more"><span class="d"' + dTip + '>' + esc(detail) + '</span>' + tail + '</div>';
     if (errLine) more = '<div class="more"><span class="d bad">' + esc(errLine) + '</span>' + tail + '</div>';
     else if (kind === 'refused' && has(r.error) && !detail) more = '<div class="more"><span class="d">' + esc(r.error) + '</span>' + tail + '</div>';
-    // A reverted row shows what is there now (the earlier value), the undone value struck through before it.
+    // A reverted row shows what is there now (the earlier value); the undone value, struck through, goes under the
+    // label so the label keeps its width.
     var value = esc(disp.value);
-    if (reverted && has(r.before)) value = '<s class="old">' + esc(disp.value) + '</s>' + swatch(r, r.before) + esc(r.before);
-    else if (reverted) value = '<s class="old">' + esc(disp.value) + '</s>';
-    else value = swatch(r, disp.value) + value;
+    var shownText = disp.value;
+    var noteHtml = '';
+    if (reverted) {
+      noteHtml = '<span class="chg"><s class="old">' + esc(disp.value) + '</s> reverted</span>';
+      value = has(r.before) ? swatch(r, r.before) + esc(r.before) : '';
+      shownText = has(r.before) ? r.before : '';
+    } else value = swatch(r, disp.value) + value;
     var note = disp.note || (staleNote ? 'out of date' : '');
+    if (note) noteHtml = '<span class="chg">' + esc(note) + '</span>';
+    if (String(shownText || '').length > 18) rc += ' long';
     var label = r.label + (has(disp.value) ? ' ' + disp.value : '') + (note ? ', ' + note : '') + (reverted ? ', reverted' : '');
     return '<div class="row' + rc + open + '" data-row="' + r.id + '" data-fk="r:' + r.id + '" role="button" tabindex="0" aria-expanded="' + isOpen + '" aria-label="' + esc(label) + '">' +
       '<span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
       '<span class="l"' + (!isOpen ? ' data-tip="' + esc(rowTip(r)) + '"' : '') + '><span class="lt">' + esc(r.label) + '</span>' +
-      (note ? '<span class="chg">' + esc(note) + '</span>' : '') + '</span><span class="v">' + value + '</span></div>' + more;
+      noteHtml + '</span><span class="v">' + value + '</span></div>' + more;
   }
 
   function groupHtml(g, idx) {
@@ -624,6 +655,9 @@
   function refocus(key) {
     if (!key) return;
     try {
+      // Never take the keyboard from OrcaSlicer: only while the page itself has it (a live update after the user
+      // clicked into the sidebar must not pull focus back).
+      if (document.hasFocus && !document.hasFocus()) return;
       if (!document.querySelector) return;
       var el = document.querySelector('[data-fk="' + key + '"]');
       if (el && el.focus) el.focus();
@@ -739,6 +773,8 @@
   // One click (or Enter / Space on a control): what it does.
   function activate(target) {
     var el;
+    // An unavailable control (a disabled restore icon or undo link) does nothing, and never toggles its group.
+    if (ancestor(target, 'aria-disabled')) return true;
     if ((el = ancestor(target, 'data-undo'))) {
       var id = Number(el.getAttribute('data-undo'));
       pendingUndo[id] = 'busy'; delete undoError[id];
