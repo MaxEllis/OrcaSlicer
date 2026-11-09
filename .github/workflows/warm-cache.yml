@@ -24,4 +24,4 @@ jobs:
       - name: Dispatch build_all on the release base
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run build_all.yml --repo "$GITHUB_REPOSITORY" --ref remote-api-242
+        run: gh workflow run build_all.yml --repo "$GITHUB_REPOSITORY" --ref remote-api-250
