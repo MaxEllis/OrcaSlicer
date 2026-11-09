@@ -619,7 +619,11 @@ curl -H "X-Api-Token: $TOK" "http://localhost:13130/api/v1/user_changes?since=12
 }
 ```
 `seq` is the newest entry's number (keep it and pass it as `since` next time; `since` defaults to 0, a value that
-is not an integer is `400 bad_since`). `changes` are the entries newer than `since`, oldest first. `kind` is
+is not an integer is `400 bad_since`). Seqs start at the clock in milliseconds when OrcaSlicer starts, so they keep
+growing across restarts: a `since` from before a restart still returns every entry of the new run. When `since` is
+greater than `seq` (a seq this run never handed out, as after the computer's clock was set back), the answer holds
+every entry and adds `"reset": true`; take the new `seq` and carry on from it. `changes` are the entries newer
+than `since`, oldest first. `kind` is
 `setting`, `preset`, `object`, `plate`, `project` or `panel`; `group` is `Print`, `Filament`, `Printer`,
 `Model`, `Plates`, `Project` or `Panel`; `key` is the config key of a `setting` entry. The text uses the
 timeline's words: the setting's label, the old and new value with their unit, and ` (filament 2)` /
@@ -641,7 +645,9 @@ The answer is kept small:
 Reading it changes nothing, but like every request it first compares the project, so an edit made just before
 appears in the same answer. The journal keeps the latest 200 entries in memory (a restart starts it empty), and
 the first request after a start only takes the reference. `GET /slice/status` neither compares nor takes a
-reference, so polling it never loses an edit.
+reference, so polling it never loses an edit. The comparison and the new reference run on OrcaSlicer's GUI thread
+around the request's own work, without the request waiting for them: a busy GUI delays a request by its own
+timeout only.
 
 ### Test hooks
 

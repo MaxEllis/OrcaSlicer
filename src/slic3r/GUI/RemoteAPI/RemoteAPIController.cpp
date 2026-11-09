@@ -2918,9 +2918,12 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
 static void mcp_queue_instances_row(Plater *plater, const char *op, std::vector<McpInstanceState> before, int plates_before)
 {
     const std::string opname = op;
-    mcp_journal_api_job_queued(); // the job moves objects after this request's baseline
+    // The job moves objects after this request's baseline. It keeps the journal's token: when OrcaSlicer drops the
+    // queued job unfinished (cancel_all on a delete or a project change), the token dies with it.
+    std::shared_ptr<int> token  = mcp_journal_api_job_queued();
     const bool queued = queue_job(plater->get_ui_job_worker(), [](Job::Ctl &) {},
-                                  [opname, before, plates_before](bool, std::exception_ptr &) {
+                                  [opname, before, plates_before, token](bool, std::exception_ptr &) {
+                                      (void) token;
                                       mcp_record_instances(opname.c_str(), before, plates_before);
                                   });
     if (!queued) mcp_record_instances(op, before, plates_before); // records what has moved so far
@@ -4819,36 +4822,28 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
 
 // The user-change journal: every request diffs the project against the baseline the previous one left (what
 // changed in between was the user's) and leaves a new baseline when it is done (its own changes are the API's).
-// Each step is a GUI task of its own; the end one is queued behind whatever the handler posted to the GUI thread.
-static std::atomic<bool> s_journal_stale{false};
-
-void Controller::journal_begin()
+// Both steps are GUI tasks the io thread posts and does NOT wait for: GUI tasks run in the order they were posted
+// (parked ones too, see UiTask::run), so the begin task runs before the handler's tasks and the end task after them
+// and after whatever they posted. A stuck GUI thread therefore costs a request its own timeout only, and a request
+// that times out cannot leave a stale baseline: its end task still runs, after its handler (cancelled or finished).
+static void post_journal_task(void (*fn)())
 {
     try {
-        run_on_ui([]() -> nlohmann::json {
-            if (s_journal_stale.exchange(false)) McpJournal::get().invalidate();
-            mcp_journal_begin();
+        auto task       = std::make_shared<UiTask>();
+        task->promise   = std::make_shared<std::promise<nlohmann::json>>(); // nobody waits on it
+        task->cancelled = std::make_shared<std::atomic<bool>>(false);
+        task->fn        = [fn]() -> nlohmann::json {
+            fn();
             return nullptr;
-        });
+        };
+        task->schedule();
     } catch (const std::exception &e) {
-        BOOST_LOG_TRIVIAL(warning) << "MCP journal: no diff for this request: " << e.what();
+        BOOST_LOG_TRIVIAL(warning) << "MCP journal: task not posted: " << e.what();
     }
 }
 
-void Controller::journal_end()
-{
-    try {
-        run_on_ui([]() -> nlohmann::json {
-            mcp_journal_end();
-            return nullptr;
-        });
-    } catch (const std::exception &e) {
-        // Without a baseline the next request would report this request's own change as the user's: it takes a
-        // fresh baseline instead (what the user changed meanwhile goes unreported).
-        s_journal_stale.store(true);
-        BOOST_LOG_TRIVIAL(warning) << "MCP journal: no baseline after this request: " << e.what();
-    }
-}
+void Controller::journal_begin() { post_journal_task(&mcp_journal_begin); }
+void Controller::journal_end() { post_journal_task(&mcp_journal_end); }
 
 // GET /api/v1/user_changes?since=<seq>: the journal entries newer than seq (see McpJournal::since).
 Response Controller::handle_user_changes(const std::string &target)

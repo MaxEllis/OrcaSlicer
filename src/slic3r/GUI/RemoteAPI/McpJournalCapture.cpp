@@ -81,8 +81,6 @@ McpJournal &journal()
     return j;
 }
 
-bool s_api_job = false; // an API arrange / orient job is moving objects
-
 std::string now_hhmm()
 {
     McpRecorder &rec = McpRecorder::get();
@@ -124,13 +122,7 @@ void mcp_journal_begin()
 {
     if (wxGetApp().plater() == nullptr || wxGetApp().preset_bundle == nullptr) return;
     try {
-        McpJournal &j   = journal();
-        McpBaseline now = mcp_capture_baseline();
-        if (s_api_job && j.has_baseline()) {
-            now.objects = j.baseline().objects;
-            now.plates  = j.baseline().plates;
-        }
-        j.begin_request(std::move(now), now_hhmm());
+        journal().begin_request(mcp_capture_baseline(), now_hhmm());
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "MCP journal: diff failed: " << e.what();
     }
@@ -157,11 +149,10 @@ void mcp_journal_panel(const std::string &text)
     mcp_journal_end();
 }
 
-void mcp_journal_api_job_queued() { s_api_job = true; }
+std::shared_ptr<int> mcp_journal_api_job_queued() { return McpJournal::get().api_job_started(); }
 
 void mcp_journal_api_objects_moved()
 {
-    s_api_job = false;
     try {
         int  plates = 0;
         auto objs   = capture_objects(wxGetApp().plater(), plates);

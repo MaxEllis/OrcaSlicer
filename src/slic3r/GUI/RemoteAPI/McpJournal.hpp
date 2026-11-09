@@ -14,6 +14,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <nlohmann/json.hpp>
@@ -86,6 +87,8 @@ void mcp_entry_text(McpJournalEntry &e);
 //   the next old value is not the last new one, the API changed it in between and the later entry starts over),
 //   and is dropped when they are equal; an object keeps its strongest change (added + removed = nothing).
 // A coalesced entry takes the seq and time of its last part.
+// A `since` greater than latest_seq (a seq this journal never handed out: the clock stepped back across a restart)
+// answers every entry, with "reset": true.
 nlohmann::json mcp_journal_reply(const std::deque<McpJournalEntry> &entries, int64_t since, int64_t latest_seq);
 
 // GUI thread only (the host's calls all run there).
@@ -93,6 +96,11 @@ class McpJournal {
 public:
     static constexpr size_t kMaxEntries = 200;
 
+    McpJournal() = default;
+    // The first entry gets first_seq + 1.
+    explicit McpJournal(int64_t first_seq) : m_seq(first_seq) {}
+
+    // The host's journal; its seqs start at the wall clock in milliseconds (they grow across restarts).
     static McpJournal &get();
 
     void set_text_fns(McpTextFns fns) { m_fns = std::move(fns); }
@@ -108,7 +116,13 @@ public:
     bool has_baseline() const { return m_has_baseline; }
     const McpBaseline &baseline() const { return m_baseline; }
     // An API job (arrange / orient) moved objects after its request ended: those positions are the API's.
+    // Also ends the guard of api_job_started.
     void rebaseline_objects(std::vector<McpObjectSnap> objects, int plates);
+    // An API arrange / orient job is queued. The job keeps the returned token: while it lives, begin_request does
+    // not compare objects and plates (the job moves them after its request). When the job is dropped unfinished
+    // the token dies with it, and the next begin_request takes the objects as the API's. A project change ends
+    // the guard too.
+    std::shared_ptr<int> api_job_started();
 
     // An entry of its own (the panel's undos and restores: kind "panel", group "Panel").
     void add(const std::string &kind, const std::string &group, const std::string &text, const std::string &hhmm);
@@ -122,7 +136,9 @@ public:
     void note_project(const std::string &text)
     {
         ++m_project_gen;
-        m_project_text = text;
+        m_project_text    = text;
+        m_api_job_pending = false; // the project the job worked on is gone
+        m_api_job.reset();
     }
     uint64_t           project_gen() const { return m_project_gen; }
     const std::string &project_text() const { return m_project_text; }
@@ -136,6 +152,8 @@ private:
     std::deque<McpJournalEntry> m_entries;
     int64_t                     m_seq = 0;
     uint64_t                    m_project_gen = 0;
+    std::weak_ptr<int>          m_api_job;
+    bool                        m_api_job_pending = false;
     std::string                 m_project_text;
 };
 
@@ -149,9 +167,8 @@ void mcp_journal_begin();
 void mcp_journal_end();
 // A panel undo / restore went through: its entry, then a new baseline (the change is not reported again as an edit).
 void mcp_journal_panel(const std::string &text);
-// An API arrange / orient job is queued: until it finished (mcp_journal_api_objects_moved), requests do not
-// compare objects and plates (the job moves them in between, as the API's change).
-void mcp_journal_api_job_queued();
+// An API arrange / orient job is queued: the job's finalize keeps the token (McpJournal::api_job_started).
+std::shared_ptr<int> mcp_journal_api_job_queued();
 // An API arrange / orient job finished after its request: the objects' new places are the API's.
 void mcp_journal_api_objects_moved();
 // Plater hooks (through Controller::notify_project_opened / notify_project_new).

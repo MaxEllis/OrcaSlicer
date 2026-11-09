@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <cstdlib>
+#include <limits>
 #include <set>
 #include <utility>
 
@@ -190,7 +192,8 @@ void diff_filaments(const McpTextFns &f, const McpBaseline &a, const McpBaseline
     if (na != nb) out.push_back(count_entry("preset", "Filament", "filament_count", "filament", int(na), int(nb)));
 }
 
-bool near(double x, double y) { return std::abs(x - y) <= 1e-6 * std::max({std::abs(x), std::abs(y), 1.0}); }
+// Not "near": <Windows.h> (force-included by the GUI build) defines near and far as empty macros.
+bool close_enough(double x, double y) { return std::abs(x - y) <= 1e-6 * std::max({std::abs(x), std::abs(y), 1.0}); }
 
 // The strongest change between two instance matrices (column-major 4x4): "rotated" > "scaled" > "moved", or "".
 std::string transform_change(const std::array<double, 16> &a, const std::array<double, 16> &b)
@@ -204,14 +207,14 @@ std::string transform_change(const std::array<double, 16> &a, const std::array<d
         }
         na = std::sqrt(na);
         nb = std::sqrt(nb);
-        if (!near(na, nb)) scaled = true;
+        if (!close_enough(na, nb)) scaled = true;
         for (int r = 0; r < 3; ++r) {
             const double ua = na > 0 ? a[c * 4 + r] / na : 0, ub = nb > 0 ? b[c * 4 + r] / nb : 0;
-            if (!near(ua, ub)) rotated = true;
+            if (!close_enough(ua, ub)) rotated = true;
         }
     }
     for (int r = 0; r < 3; ++r)
-        if (!near(a[12 + r], b[12 + r])) moved = true;
+        if (!close_enough(a[12 + r], b[12 + r])) moved = true;
     return rotated ? "rotated" : scaled ? "scaled" : moved ? "moved" : "";
 }
 
@@ -305,6 +308,9 @@ std::vector<McpJournalEntry> mcp_diff(const McpBaseline &a, const McpBaseline &b
 
 json mcp_journal_reply(const std::deque<McpJournalEntry> &entries, int64_t since, int64_t latest_seq)
 {
+    // A seq this journal never handed out (the clock stepped back before a restart): answer from the start.
+    const bool reset = since > latest_seq;
+    if (reset) since = std::numeric_limits<int64_t>::min();
     std::vector<McpJournalEntry> win;
     for (const McpJournalEntry &e : entries)
         if (e.seq > since) win.push_back(e);
@@ -378,13 +384,27 @@ json mcp_journal_reply(const std::deque<McpJournalEntry> &entries, int64_t since
         if (!e.key.empty()) c["key"] = e.key;
         changes.push_back(std::move(c));
     }
-    return {{"seq", latest_seq}, {"changes", changes}};
+    json reply = {{"seq", latest_seq}, {"changes", changes}};
+    if (reset) reply["reset"] = true;
+    return reply;
 }
 
 McpJournal &McpJournal::get()
 {
-    static McpJournal j;
+    // Seqs start at the clock in milliseconds, so they keep growing across OrcaSlicer restarts: a client holding a
+    // seq from the previous run still gets every entry of this one.
+    static McpJournal j(std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count());
     return j;
+}
+
+std::shared_ptr<int> McpJournal::api_job_started()
+{
+    auto token        = std::make_shared<int>(0);
+    m_api_job         = token;
+    m_api_job_pending = true;
+    return token;
 }
 
 void McpJournal::push(McpJournalEntry e, const std::string &hhmm)
@@ -397,6 +417,19 @@ void McpJournal::push(McpJournalEntry e, const std::string &hhmm)
 
 void McpJournal::begin_request(McpBaseline now, const std::string &hhmm)
 {
+    if (m_has_baseline && m_api_job_pending) {
+        if (!m_api_job.expired()) {
+            // The API's job is still moving objects: compare them once it is done.
+            now.objects = m_baseline.objects;
+            now.plates  = m_baseline.plates;
+        } else {
+            // The job was dropped without finishing (OrcaSlicer clears its queue on a delete, a new or opened
+            // project): whatever it moved is the API's.
+            m_baseline.objects = now.objects;
+            m_baseline.plates  = now.plates;
+            m_api_job_pending  = false;
+        }
+    }
     if (m_has_baseline)
         for (McpJournalEntry &e : mcp_diff(m_baseline, now, m_fns)) push(std::move(e), hhmm);
     m_baseline     = std::move(now);
@@ -411,6 +444,8 @@ void McpJournal::end_request(McpBaseline now)
 
 void McpJournal::rebaseline_objects(std::vector<McpObjectSnap> objects, int plates)
 {
+    m_api_job_pending = false;
+    m_api_job.reset();
     if (!m_has_baseline) return;
     m_baseline.objects = std::move(objects);
     m_baseline.plates  = plates;
