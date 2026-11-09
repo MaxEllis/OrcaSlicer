@@ -16,7 +16,9 @@
 #include "slic3r/GUI/GUI_ObjectList.hpp"
 #include "slic3r/GUI/I18N.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/ParamsPanel.hpp"   // switch_to_global (reveal)
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/SettingsIndex.hpp" // the settings sidebar's option index (reveal)
 #include "slic3r/GUI/Tab.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -1218,6 +1220,40 @@ json McpActions::undo_restore()
     rec.changed();
     publish({{"event", "panel.restored"}, {"group", nullptr}, {"undone", true}});
     tell("Undid the restore in the panel");
+    return result_ok();
+}
+
+json McpActions::reveal(int row_id)
+{
+    const std::string busy = busy_reason();
+    if (!busy.empty()) return result_failed(busy);
+    McpRecorder &rec = McpRecorder::get();
+    rec.sync_project();
+    const McpRow *r = rec.history().row(row_id);
+    if (r == nullptr) return result_failed("Not in this project's timeline");
+    if (!mcp_row_revealable(*r)) return result_failed("Nothing to show in the settings");
+    const std::string  key   = r->target.value("key", std::string());
+    const std::string  scope = r->target.value("scope", std::string());
+    const Preset::Type type  = scope == "print" ? Preset::TYPE_PRINT : scope == "filament" ? Preset::TYPE_FILAMENT : Preset::TYPE_PRINTER;
+    PresetCollection  *c     = collection(scope);
+    if (c == nullptr || !c->get_edited_preset().config.has(key)) return result_failed("The setting is not in this preset any more");
+    if (wxGetApp().get_tab(type) == nullptr) return result_failed("The settings tab is not there");
+
+    Sidebar &sidebar = wxGetApp().sidebar();
+    // The row changed the global print preset: show that, not an object's own value of the key (get_tab_for_option
+    // picks the object tab while the object settings are shown).
+    if (type == Preset::TYPE_PRINT)
+        if (ParamsPanel *panel = wxGetApp().params_panel()) panel->switch_to_global();
+    // As the sidebar's search does: the index entry gives the key as the page lists it (a vector option per element,
+    // "nozzle_temperature#0") and its page, so the field is found and blinks. Without an entry (hidden in the current
+    // mode) the bare key, as the notifications' "Jump to" links pass it.
+    int                   variant = -1;
+    const Search::Option &opt     = sidebar.settings_index().get_option(key, type, variant);
+    const std::string     found   = variant != -2 ? opt.opt_key() : std::string();
+    if (!found.empty())
+        sidebar.jump_to_option(found, type, opt.category);
+    else
+        sidebar.jump_to_option(key, type, L"");
     return result_ok();
 }
 

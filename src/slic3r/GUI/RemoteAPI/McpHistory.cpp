@@ -165,6 +165,19 @@ static std::string page_error(const McpRow &r)
     return "Failed";
 }
 
+bool mcp_row_revealable(const McpRow &row)
+{
+    if (row.kind != "setting" || !row.target.is_object()) return false;
+    const json &t = row.target;
+    auto str = [&t](const char *k) {
+        auto it = t.find(k);
+        return it != t.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
+    const std::string scope = str("scope");
+    return str("type") == "config" && !str("key").empty() &&
+           (scope == "print" || scope == "filament" || scope == "printer");
+}
+
 json McpHistory::page_history() const
 {
     json rows = json::array();
@@ -179,7 +192,7 @@ json McpHistory::page_history() const
                         {"undo", undo}, {"undone_at", r.undone_at},
                         {"title_hint", r.title_hint.empty() ? json(nullptr) : json(r.title_hint)},
                         {"result", r.result.is_null() ? json(nullptr) : r.result}, {"error", page_error(r)},
-                        {"on_disk", r.on_disk}});
+                        {"on_disk", r.on_disk}, {"reveal", mcp_row_revealable(r)}});
     }
     json groups = json::array();
     if (m_has_start && !m_groups.empty()) {

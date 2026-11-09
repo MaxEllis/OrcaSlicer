@@ -26,7 +26,7 @@
 
   svg.i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .k-setting { color: var(--t-set); } .k-preset { color: var(--t-preset); } .k-model { color: var(--t-model); }
-  .k-plate { color: var(--t-plate); } .k-slice { color: var(--t-slice); } .k-refused { color: var(--warn); } .k-start { color: var(--faint); } .k-file { color: var(--faint); }
+  .k-plate { color: var(--t-plate); } .k-slice { color: var(--t-slice); } .k-refused { color: var(--warn); } .k-file { color: var(--faint); }
 
   .empty { padding: 18px 14px; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
   .empty a { color: var(--accent); cursor: pointer; }
@@ -62,7 +62,9 @@
   .group.open .body { display: block; }
   .row { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; min-height: 26px; padding: 3px 10px 3px 51px; cursor: pointer; }
   .row:hover { background: var(--hover-soft); }
-  .row .l { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .l { color: var(--muted); min-width: 0; display: block; }
+  .row .l .lt { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .l[data-tip]:hover::after { left: 0; transform: none; }
   .row .v { color: var(--fg); white-space: nowrap; }
   .row .v .sw { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--border); border-radius: 2px; }
   .row .l .chg { display: block; color: var(--faint); font-size: 11px; line-height: 1.2; }
@@ -75,7 +77,9 @@
   .more a { color: var(--accent); cursor: pointer; white-space: nowrap; }
   .more a.off { color: var(--faint); cursor: default; }
   .more .faint { color: var(--faint); white-space: nowrap; }
-  .group.undone .ghead .name, .group.undone .ghead .res { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(127,127,127,.4); }
+  .group.newest .ghead .name { font-weight: 600; color: var(--fg); }
+  .group.older .ghead .name { color: var(--muted); }
+  .group.undone .ghead .name, .group.undone .ghead .res { color: var(--faint); font-weight: 400; text-decoration: line-through; text-decoration-color: rgba(127,127,127,.4); }
   .group.undone .ghead { cursor: pointer; }
   .group.restored .ghead { cursor: default; }
   .ghead .rl { display: flex; gap: 4px; align-items: baseline; min-width: 0; }
@@ -98,7 +102,6 @@
   <symbol id="i-plate" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></symbol>
   <symbol id="i-slice" viewBox="0 0 24 24"><path d="M3 8l9-4 9 4-9 4z"/><path d="M3 12l9 4 9-4M3 16l9 4 9-4"/></symbol>
   <symbol id="i-refused" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/></symbol>
-  <symbol id="i-start" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M7 9l5-5 5 5M7 15l5 5 5-5"/></symbol>
   <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M7 4l5 5 5-5M7 20l5-5 5 5"/></symbol>
@@ -114,14 +117,14 @@
   'use strict';
 
   var PROTOCOL_VERSION = 1;
-  var START_TITLE = 'Before the assistant started';
   var OFF_TEXT = 'The Remote API is off.'; // when the host sends no capabilities.off_text
   var SETTINGS_LABEL = 'Remote API settings'; // when the host sends no capabilities.settings_label
 
   function has(s) { return s !== null && s !== undefined && s !== ''; }
 
   // history = {rows, groups}; returns groups newest first (start point, id 0, last),
-  // each {id, ts, time, restore, rows}.
+  // each {id, ts, time, restore, rows}. The view does not show the start point: it is only the target of
+  // "Restored to" (and of a restore through the API).
   function groupRows(history) {
     var rows = (history && history.rows) || [];
     var metas = (history && history.groups) || [];
@@ -161,7 +164,6 @@
   }
 
   function groupTitle(group) {
-    if (group.id === 0) return START_TITLE;
     var all = group.rows || [];
     if (!all.length) return '';
     var rows = all.filter(function (r) { return r.kind !== 'slice' && r.kind !== 'refused'; });
@@ -298,9 +300,9 @@
 (function () {
   'use strict';
   var Core = window.McpPanelCore;
-  var TIP = { setting: 'Setting', preset: 'Preset', model: 'Model', plate: 'Plate', slice: 'Slice result', refused: 'Refused', file: 'File', start: 'Starting point' };
+  var TIP = { setting: 'Setting', preset: 'Preset', model: 'Model', plate: 'Plate', slice: 'Slice result', refused: 'Refused', file: 'File' };
   var history = { rows: [], groups: [] };
-  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '', settings_label: '' };
+  var caps = { restore: false, open_settings: true, settings_hint: '', off_text: '', settings_label: '', reveal: false };
   var restoredTo = null, canUndoRestore = false, restoreFailed = false;
   var live = {};
   var api = 'on';
@@ -323,6 +325,16 @@
   function icon(k) { return '<svg class="i k-' + k + '"><use href="#i-' + k + '"/></svg>'; }
 
   function isNewest(g) { return groups.length && groups[0].id === g.id; }
+  // The groups the list shows: every real group, newest first. The start point (id 0) stays in groups (the
+  // "Restored to" line names its time) but has no row of its own.
+  function shownGroups() { return groups.filter(function (g) { return g.id !== 0; }); }
+  // A setting row the host can find in its settings sidebar (capabilities.reveal and the row's reveal flag).
+  function revealable(r) { return caps.reveal && r.reveal === true; }
+  function rowById(id) {
+    var rs = history.rows;
+    for (var i = 0; i < rs.length; i++) if (rs[i].id === id) return rs[i];
+    return null;
+  }
   function isUndone(g) {
     if (restoredTo === null || restoredTo === undefined) return false;
     if (restoreFailed) return false; // the host marked nothing undone
@@ -392,7 +404,8 @@
     if (errLine) more = '<div class="more"><span class="d bad">' + esc(errLine) + '</span>' + tail + '</div>';
     else if (kind === 'refused' && has(r.error) && !detail) more = '<div class="more"><span class="d">' + esc(r.error) + '</span>' + tail + '</div>';
     return '<div class="row' + rc + open + '" data-row="' + r.id + '"><span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
-      '<span class="l">' + esc(r.label) + (disp.note ? '<span class="chg">' + esc(disp.note) + '</span>' : '') + '</span><span class="v">' + swatch(r, disp.value) + esc(disp.value) + '</span></div>' + more;
+      '<span class="l"' + (revealable(r) && !openRows[r.id] ? ' data-tip="Show in settings"' : '') + '><span class="lt">' + esc(r.label) + '</span>' +
+      (disp.note ? '<span class="chg">' + esc(disp.note) + '</span>' : '') + '</span><span class="v">' + swatch(r, disp.value) + esc(disp.value) + '</span></div>' + more;
   }
 
   function groupHtml(g, idx) {
@@ -400,7 +413,7 @@
     var undone = isUndone(g);
     var open = !!openGroups[g.id] && !undone;
     var res = Core.groupResult(g);
-    var cls = 'group' + (open ? ' open' : '') + (undone ? ' undone' : '');
+    var cls = 'group' + (open ? ' open' : '') + (undone ? ' undone' : '') + (newest ? ' newest' : ' older');
     var restorable = caps.restore && !newest && !undone && g.restore;
     var ask = '';
     if (restoreBusy === g.id) {
@@ -446,12 +459,12 @@
   }
 
   function updateFold() {
-    var cand = groups.filter(function (g) { return !isUndone(g); });
+    var cand = shownGroups().filter(function (g) { return !isUndone(g); });
     var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
     var f = document.getElementById('fold');
     f.setAttribute('data-tip', allOpen ? 'Collapse all' : 'Expand all');
     f.innerHTML = '<svg><use href="#i-' + (allOpen ? 'collapse' : 'expand') + '"/></svg>';
-    f.style.visibility = groups.length ? 'visible' : 'hidden';
+    f.style.visibility = shownGroups().length ? 'visible' : 'hidden';
   }
   function updateGear() {
     var g = document.getElementById('gear');
@@ -467,11 +480,12 @@
         ? ' <a data-settings="1">' + esc(Core.settingsLink(caps)) + '</a>'
         : (caps.settings_hint ? '<br>' + esc(caps.settings_hint) : '')) + '</div>';
     }
-    if (!groups.length) {
+    var shown = shownGroups();
+    if (!shown.length) {
       if (api !== 'off') html += '<div class="empty">When an assistant changes something, it shows up here.</div>';
     } else {
       html += restoredLineHtml();
-      html += groups.map(groupHtml).join('');
+      html += shown.map(groupHtml).join(''); // index 0 is the newest group: the "Restored to" line is not one
     }
     var list = document.getElementById('list');
     var top = list.scrollTop;
@@ -485,7 +499,7 @@
     history = { rows: m.rows || [], groups: m.groups || [] };
     var c = m.capabilities || {};
     caps = { restore: !!c.restore, open_settings: c.open_settings !== false, settings_hint: c.settings_hint || '', off_text: c.off_text || '',
-             settings_label: c.settings_label || '' };
+             settings_label: c.settings_label || '', reveal: c.reveal === true };
     restoredTo = has(m.restored_to) || m.restored_to === 0 ? m.restored_to : null;
     restoreFailed = restoredTo !== null && m.restore_failed === true;
     canUndoRestore = !!m.can_undo_restore;
@@ -576,7 +590,7 @@
       return;
     }
     if (e.target.closest && e.target.closest('#fold')) {
-      var cand = groups.filter(function (g) { return !isUndone(g); });
+      var cand = shownGroups().filter(function (g) { return !isUndone(g); });
       var allOpen = cand.length > 0 && cand.every(function (g) { return openGroups[g.id]; });
       cand.forEach(function (g) { openGroups[g.id] = !allOpen; });
       render(); return;
@@ -584,7 +598,11 @@
     if (e.target.closest && e.target.closest('.more')) return;
     if ((el = e.target.closest && e.target.closest('.row'))) {
       var rid = Number(el.getAttribute('data-row'));
-      openRows[rid] = !openRows[rid]; render(); return;
+      openRows[rid] = !openRows[rid];
+      // Opening a setting row also shows that setting in the host's settings sidebar (fire and forget).
+      var rr = openRows[rid] ? rowById(rid) : null;
+      if (rr && revealable(rr)) send({ action: 'reveal', row: rid });
+      render(); return;
     }
     if ((el = e.target.closest && e.target.closest('[data-toggle]'))) {
       var tid = Number(el.getAttribute('data-toggle'));

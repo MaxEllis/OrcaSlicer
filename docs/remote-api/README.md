@@ -566,11 +566,11 @@ curl -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/activity
     {"id": 1, "group": 1, "ts": 1762680660, "time": "10:31", "kind": "setting",
      "label": "Wall loops", "value": "3", "before": "2", "where": "0.20mm Standard @Printer (unsaved)",
      "undo": {"verb": "Revert", "tip": "Set Wall loops back to 2"}, "undone_at": "",
-     "title_hint": null, "result": null, "error": "", "on_disk": false},
+     "title_hint": null, "result": null, "error": "", "on_disk": false, "reveal": true},
     {"id": 2, "group": 1, "ts": 1762680702, "time": "10:31", "kind": "slice",
      "label": "Sliced", "value": "1h 48m · 41.2 g", "before": "", "where": "plate 1",
      "undo": null, "undone_at": "", "title_hint": null,
-     "result": {"seconds": 6480, "grams": 41.2}, "error": "", "on_disk": false}
+     "result": {"seconds": 6480, "grams": 41.2}, "error": "", "on_disk": false, "reveal": false}
   ],
   "groups": [
     {"id": 0, "ts": 1762680660, "time": "10:31", "restore": {"available": true, "why": ""}},
@@ -585,7 +585,10 @@ The same shape the panel shows. `kind` is `setting`, `preset`, `model`, `plate`,
 `before` is the previous value in the same form as `value`; `undone_at` is the time (HH:MM) the user undid the
 row in the panel (or the time of a restore that undid its group), else `""`. `error` is `""` or the text of a
 refusal or failure. `on_disk` marks changes written to disk (saved or moved projects, saved or deleted presets),
-which a restore does not undo. Group `0` is the point before the assistant's first change; a group's `restore`
+which a restore does not undo. `reveal` is `true` on a setting row of the print, filament or printer preset: the
+panel can show that setting in the settings sidebar (not per-object settings, project keys such as filament
+colours, or other kinds). Group `0` is the point before the assistant's first change (the panel does not list it
+as a group of its own; it stays here, and a "Restored to" line for it names its time); a group's `restore`
 is `{"available": true}` when its end state can be restored, `available: false` with the reason, or `null` when
 it has no restore point yet (the page offers no restore on the newest group, whatever it says).
 `restored_to` is the group the user last restored to (until the next API change or refusal),
@@ -598,9 +601,9 @@ While the user restores the project in the panel, every API request gets
 `409 {"error": "busy", "detail": "the user is restoring"}`; retry after a moment.
 
 The timeline is kept per project file in `<data dir>/mcp_history/` (the file's path, case-folded on Windows and
-macOS, picks its folder), with up to 20 restore points: "Before the assistant started" always stays, and the 19
-newest group points. The timeline itself keeps the latest 500 rows and 100 groups; beyond that the oldest groups
-go, those without a restore point first.
+macOS, picks its folder), with up to 20 restore points: the start point (before the assistant's first change)
+always stays, and the 19 newest group points. The timeline itself keeps the latest 500 rows and 100 groups;
+beyond that the oldest groups go, those without a restore point first.
 
 A restore opens its file without the API's script / G-code check (it is the user's own earlier state), so the API
 cannot reach that folder: `POST /project/open`, `/project/save`, `/project/move` (either path), `DELETE
@@ -719,9 +722,9 @@ records rows, answers live values, runs undos and restores, and passes messages.
 
 `window.McpPanelCore.PROTOCOL_VERSION` in the page (now `1`) and the `version` a host puts in every `history`
 message. Bump it in the page on any breaking change: a message or field renamed or removed, a field whose meaning
-or form changes, or a new field a host must send. A new optional field with a default (as `off_text` and
-`restore_failed` are) is not breaking. A host compares the page's `PROTOCOL_VERSION` with the version it
-implements (in its drift test, for instance) before it ships a newer copy. The page does not read `version`
+or form changes, or a new field a host must send. A new optional field with a default (as `off_text`,
+`restore_failed` and `reveal` are) is not breaking. A host compares the page's `PROTOCOL_VERSION` with the version
+it implements (in its drift test, for instance) before it ships a newer copy. The page does not read `version`
 today.
 
 ### Page to host
@@ -731,15 +734,17 @@ today.
 | `{"action": "ready"}` | When the page has loaded, then again every 500 ms until the first `history` arrives (at most 20 more times) | `state`, then `history`. A repeat is normal (the first may have been lost while the bridge was starting), so answer each one, and coalesce answers that are already pending |
 | `{"action": "live"}` | At load and after every `history` it receives | `live` |
 | `{"action": "undo", "row": <id>}` | The user clicked a row's undo link | exactly one `result` |
-| `{"action": "restore", "group": <id>}` | The user confirmed "Restore to HH:MM?" (`0` is "Before the assistant started") | exactly one `result` |
+| `{"action": "restore", "group": <id>}` | The user confirmed "Restore to HH:MM?" (a listed group; the page does not list `0`, the start point) | exactly one `result` |
 | `{"action": "undo_restore"}` | The user clicked Undo on the "Restored to" line | exactly one `result` |
+| `{"action": "reveal", "row": <id>}` | The user opened the detail line of a row with `reveal: true`, only when `capabilities.reveal` is `true` (closing it sends nothing) | nothing; show that setting in the host's settings (this fork: `Sidebar::jump_to_option`, as OrcaSlicer's own "Jump to" links, which switches to the setting's tab and page and highlights it). Ignore it while busy (a restore, a project load, an assistant request in progress), or when the setting is gone |
 | `{"action": "open_settings"}` | The settings icon, or the link in the off line (both only when `capabilities.open_settings` is not `false`) | nothing; open the host's settings (Preferences > Remote API here, the plugin's own settings page in the plugin) |
 
-Ids arrive as JavaScript numbers. Every `undo`, `restore` and `undo_restore` must get a `result`, also when it is
-refused or fails: until then the page shows "Reverting…" or "Restoring…". A host that is busy, closing or
-rebuilding its window answers `failed` with the reason instead of running the action. Run the action outside the
-web view's own message callback (a restore opens a project and pumps events). A host may get `open_settings` twice
-in a row (a double click): open one settings window, not one inside another.
+Ids arrive as JavaScript numbers. `reveal` never gets a `result` (fire and forget). Every `undo`, `restore` and
+`undo_restore` must get a `result`, also when it is refused or fails: until then the page shows "Reverting…" or
+"Restoring…". A host that is busy, closing or rebuilding its window answers `failed` with the reason instead of
+running the action. Run the action outside the web view's own message callback (a restore opens a project and pumps
+events). A host may get `open_settings` twice in a row (a double click): open one settings window, not one inside
+another.
 
 ### Host to page
 
@@ -750,7 +755,7 @@ in a row (a double click): open one settings window, not one inside another.
  "restored_to": null, "restore_failed": false, "can_undo_restore": false,
  "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused"],
                   "open_settings": true, "settings_hint": "", "settings_label": "Remote API settings",
-                  "off_text": "The Remote API is off."}}
+                  "off_text": "The Remote API is off.", "reveal": true}}
 ```
 - `rows`, `groups`, `restored_to`, `restore_failed` and `can_undo_restore` are the shape of `GET /activity`
   above (this fork sends exactly that object plus `type`, `version` and `capabilities`).
@@ -770,6 +775,9 @@ in a row (a double click): open one settings window, not one inside another.
     line's link reads "Open the " and the label, with an ordinary capitalised first word lower-cased ("Assistant
     settings" gives "Open the assistant settings"); a name keeps its capitals ("Open the Remote API settings",
     "Open the OrcaSlicer MCP settings").
+  - `reveal` (bool, optional, default `false`): the host can show a setting in its settings sidebar. With `true`
+    the page sends `reveal` when the user opens a row whose `reveal` is `true`, and gives such a row the hover tag
+    "Show in settings" on its label. This fork sends `true`; the plugin sends nothing (no such sidebar call).
   - `off_text` (string, optional): the line shown while `state.api` is `"off"`. Default "The Remote API is
     off."; the plugin sends "Assistant access is off.", this fork sends "The Remote API couldn't start. Check its
     port." when it is enabled but not listening, and nothing otherwise.
@@ -813,7 +821,7 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
 {"id": 12, "group": 3, "ts": 1762680660, "time": "10:31", "kind": "setting",
  "label": "Sparse infill density", "value": "15%", "before": "25%", "where": "0.20mm Standard @Printer (unsaved)",
  "undo": {"verb": "Revert", "tip": "Set Sparse infill density back to 25%"}, "undone_at": "",
- "title_hint": null, "result": null, "error": "", "on_disk": false}
+ "title_hint": null, "result": null, "error": "", "on_disk": false, "reveal": true}
 ```
 - `id` (int): unique within the project's timeline. `group` (int): the group it belongs to.
 - `ts` (seconds) and `time` (`"HH:MM"`, local): the host formats the time; the page never does.
@@ -833,17 +841,22 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
 - `error`: `""` or the text of a refusal or failure (any non-empty text marks the group with a warning).
 - `on_disk` (bool): the change wrote to disk (a saved or moved project, a saved or deleted preset); the restore
   confirm then adds "Files and presets saved to disk stay."
+- `reveal` (bool, optional, default `false`): the host can show this row's setting in its settings sidebar
+  (read only with `capabilities.reveal`). This fork marks setting rows of the print, filament and printer presets;
+  per-object settings, project keys (filament colours, wipe tower position), presets, models and plates are not
+  marked.
 
 ### Groups
 
 ```json
 {"id": 3, "ts": 1762680660, "time": "10:31", "restore": {"available": true, "why": ""}}
 ```
-One per burst of changes; `0` is the point before the assistant's first change ("Before the assistant started",
-always last). The page orders them newest first by `ts`, then `id`, and opens the newest. `restore` is `null` for
-the newest group (and for any group a host cannot restore to), `{"available": true}` for a restore point, or
-`{"available": false, "why": "<hover text>"}`. A row whose group is not listed still gets a group, from its own
-`ts` and `time`.
+One per burst of changes; `0` is the point before the assistant's first change (always last). Send it with the
+others: the page does not list it, but a "Restored to" line for it takes its `time`. The page orders the groups
+newest first by `ts`, then `id`, opens the newest and shows its title in bold, the older titles muted (the
+"Restored to" line above them is not a group). `restore` is `null` for the newest group (and for any group a host
+cannot restore to), `{"available": true}` for a restore point, or `{"available": false, "why": "<hover text>"}`. A
+row whose group is not listed still gets a group, from its own `ts` and `time`.
 
 ## Notes & limits
 

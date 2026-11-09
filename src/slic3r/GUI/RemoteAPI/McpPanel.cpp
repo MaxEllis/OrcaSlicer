@@ -47,6 +47,7 @@ constexpr size_t  kTestOutboxMax   = 200;
 
 bool                s_test_record = false; // test_clear() was called: keep what the pane sends
 std::deque<json>    s_test_outbox;
+json                s_test_last_reveal; // what the last reveal did (test hooks), null before any
 bool                s_waiting     = false; // an open_when_ready() waits for the plater
 
 std::string text_field(const json &j, const char *key)
@@ -132,7 +133,8 @@ json capabilities()
     json c = {{"restore", true},
               {"kinds", {"setting", "preset", "model", "plate", "slice", "file", "refused"}},
               {"open_settings", true},
-              {"settings_hint", ""}};
+              {"settings_hint", ""},
+              {"reveal", true}}; // a click on a setting row shows the setting in the sidebar (McpActions::reveal)
     // The page's default off line ("The Remote API is off.") fits a switched-off API; an enabled one that failed to
     // bind its port says so.
     if (api_enabled() && !api_listening()) c["off_text"] = "The Remote API couldn't start. Check its port.";
@@ -276,12 +278,37 @@ public:
             run_action(action, data);
         } else if (action == "open_settings") {
             want_settings();
+        } else if (action == "reveal") {
+            reveal(data);
         } else {
             BOOST_LOG_TRIVIAL(warning) << "MCP panel: unknown page message: " << data.dump(-1, ' ', false, json::error_handler_t::replace);
         }
     }
 
 private:
+    // A click on a setting row: show that setting in the settings sidebar. Fire and forget (no result). Run from the
+    // app's queue, off the web view's script callback, as OrcaSlicer's own "Jump to" links defer it; dropped while the
+    // window is rebuilt or the app closes, and McpActions::reveal does nothing while busy (a restore, a project load).
+    static void reveal(const json &data)
+    {
+        int id = 0;
+        if (!closing_reason().empty() || !int_field(data, "row", id)) return;
+        wxGetApp().CallAfter([id]() {
+            if (!closing_reason().empty()) return;
+            json res;
+            try {
+                res = McpActions::reveal(id);
+            } catch (const std::exception &e) {
+                res = {{"status", "failed"}, {"reason", std::string("Something went wrong: ") + e.what()}};
+            } catch (...) {
+                res = {{"status", "failed"}, {"reason", "Something went wrong"}};
+            }
+            const std::string status = text_field(res, "status");
+            if (status != "ok") BOOST_LOG_TRIVIAL(debug) << "MCP panel: reveal of row " << id << " not shown: " << text_field(res, "reason");
+            if (s_test_record) s_test_last_reveal = {{"row", id}, {"status", status}, {"reason", text_field(res, "reason")}};
+        });
+    }
+
     // The result for an action that is not run: the page's id echoed back, status failed, the reason.
     static json dropped_result(const std::string &action, const json &data, const std::string &why)
     {
@@ -478,6 +505,7 @@ void McpPanel::test_clear()
 {
     s_test_record = true;
     s_test_outbox.clear();
+    s_test_last_reveal = nullptr;
 }
 
 bool McpPanel::test_post(const json &message)
@@ -492,7 +520,7 @@ json McpPanel::test_state()
 {
     json messages = json::array();
     for (const json &m : s_test_outbox) messages.push_back(m);
-    return {{"open", s_pane != nullptr}, {"messages", messages}};
+    return {{"open", s_pane != nullptr}, {"messages", messages}, {"last_reveal", s_test_last_reveal}};
 }
 
 }}} // namespace Slic3r::GUI::RemoteAPI

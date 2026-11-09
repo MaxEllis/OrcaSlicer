@@ -11,7 +11,9 @@
 // failed without running while the GUI is rebuilt or the app closes). A page load with no ready yet also gets state
 // and history (the page's ready can be lost while the bridge registers; the page repeats it too).
 // Page -> host: ready, live, undo {row}, restore {group}, undo_restore, open_settings (Preferences > Remote API;
-// GUI_App::open_preferences ignores a request while Preferences is already up).
+// GUI_App::open_preferences ignores a request while Preferences is already up), reveal {row} (McpActions::reveal from
+// the app's queue; no result). capabilities.reveal is true: the history marks setting rows of the print, filament and
+// printer presets "reveal": true (McpHistory::page_history).
 //
 // It opens at start (and after the GUI is rebuilt) when the Remote API is enabled and the user has not closed it:
 // app_config "remote_api_panel" is "0" after a close from the pane's own button, "1" after View > OrcaSlicer MCP
@@ -43,7 +45,9 @@ public:
     // pane sends to the page; test_post hands the pane a message as if the page had sent it (false: no pane).
     static void           test_clear();
     static bool           test_post(const nlohmann::json &message);
-    static nlohmann::json test_state(); // {"open": bool, "messages": [what the pane sent since test_clear]}
+    // {"open": bool, "messages": [what the pane sent since test_clear], "last_reveal": null | {"row", "status",
+    // "reason"} (what the last reveal did, as it sends nothing to the page)}
+    static nlohmann::json test_state();
 };
 
 }}} // namespace Slic3r::GUI::RemoteAPI

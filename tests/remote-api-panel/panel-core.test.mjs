@@ -27,7 +27,8 @@ test('groups_newest_first', () => {
 test('start_point_is_last', () => {
   const g = C.groupRows({ rows: [row({ group: 1 })], groups: [meta(0, 0), meta(1, 100)] });
   assert.deepEqual(g.map((x) => x.id), [1, 0]);
-  assert.equal(C.groupTitle(g[1]), 'Before the assistant started');
+  // The page no longer shows the start point, so it has no title of its own.
+  assert.equal(C.groupTitle(g[1]), '');
 });
 
 test('title_single_change', () => {

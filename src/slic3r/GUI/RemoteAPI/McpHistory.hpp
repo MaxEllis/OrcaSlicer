@@ -94,7 +94,7 @@ public:
     const std::vector<McpGroup> &groups() const { return m_groups; } // real groups only (not the start point)
 
     // {"rows":[...],"groups":[...]} for the page's history message. A row's "error" is text there:
-    // "" when none, else its where (or value, or "Failed").
+    // "" when none, else its where (or value, or "Failed"). "reveal" is mcp_row_revealable().
     nlohmann::json page_history() const;
 
     nlohmann::json to_json() const;
@@ -110,6 +110,11 @@ private:
     int64_t               m_last_ts   = 0;
     int                   m_next_row  = 1;
 };
+
+// A row the panel can show in the settings sidebar (the page's "reveal"): a setting row whose target names a key of
+// the print, filament or printer preset (target type "config", scope print|filament|printer). Per-object settings,
+// project-scope keys (filament colours, wipe tower position) and every other kind are not revealable.
+bool mcp_row_revealable(const McpRow &row);
 
 // Windows and macOS file systems ignore case (by default): paths are compared, and history keys made, case-folded.
 #if defined(_WIN32) || defined(__APPLE__)

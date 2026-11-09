@@ -41,6 +41,12 @@ public:
     static nlohmann::json restore(int group);
     // Opens the pre-restore snapshot of the last restore (while nothing was recorded since).
     static nlohmann::json undo_restore();
+    // Shows a row's setting in the settings sidebar (the page's "reveal", fire and forget: the pane sends no result):
+    // Sidebar::jump_to_option for the row's key in the print, filament or printer tab, as OrcaSlicer's own "Jump to"
+    // links do. Only rows mcp_row_revealable() accepts (setting rows of those three presets). Changes nothing; does
+    // nothing (status failed, reason for the log and the test hook) while busy (busy check of the other actions), for
+    // a row that is gone or not revealable, or when the key is no longer in that preset or its tab is missing.
+    static nlohmann::json reveal(int row);
 
     // A restore is running: the API answers 409 {"error":"busy","detail":"the user is restoring"}. Any thread.
     static bool restoring() { return s_restoring.load(); }

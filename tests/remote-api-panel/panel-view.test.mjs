@@ -27,7 +27,8 @@ function page() {
     setTimeout: (fn, ms) => { const id = nextId++; timers.set(id, { at: now + ms, fn }); return id; },
     clearTimeout: (id) => { timers.delete(id); },
   };
-  const document = { getElementById: (id) => els[id], addEventListener: () => {} };
+  let onClick = null;
+  const document = { getElementById: (id) => els[id], addEventListener: (type, fn) => { if (type === 'click') onClick = fn; } };
   const ctx = vm.createContext({ window, document });
   vm.runInContext(core, ctx);
   vm.runInContext(view, ctx);
@@ -43,7 +44,14 @@ function page() {
     }
     now = end;
   }
-  return { sent, receive: (m) => window.__mcpPanelReceive(m), list: () => els.list.innerHTML, gearTip: () => els.gear.attrs['data-tip'], tick };
+  // A click on a row (anywhere but its detail line), as the page's click handler sees it.
+  function clickRow(id) {
+    const row = { getAttribute: (k) => (k === 'data-row' ? String(id) : null) };
+    const target = { getAttribute: () => null, hasAttribute: () => false, closest: (sel) => (sel === '.row' ? row : null) };
+    onClick({ target, stopPropagation() {} });
+  }
+  return { sent, receive: (m) => window.__mcpPanelReceive(m), list: () => els.list.innerHTML, gearTip: () => els.gear.attrs['data-tip'],
+           foldTip: () => els.fold.attrs['data-tip'], clickRow, tick };
 }
 
 const readies = (sent) => sent.filter((m) => m.action === 'ready').length;
@@ -191,4 +199,113 @@ test('settings_label_supplied', () => {
   assert.equal(p.gearTip(), 'Assistant settings');
   assert.match(p.list(), /Assistant access is off\. <a data-settings="1">Open the assistant settings<\/a>/);
   assert.doesNotMatch(p.list(), /Remote API/);
+});
+
+// ---- the newest group stands out; the start point is not listed
+const twoGroups = (o) => historyOf({ rows: [rowOf({ id: 1, group: 1, ts: 100 }), rowOf({ id: 2, group: 2, ts: 200, time: '10:05', label: 'Infill' })],
+  groups: [{ id: 0, ts: 50, time: '09:50', restore: { available: true, why: '' } }, { id: 1, ts: 100, time: '10:00', restore: { available: true, why: '' } },
+    { id: 2, ts: 200, time: '10:05', restore: null }], ...o });
+
+test('newest_group_has_newest_class_older_have_older', () => {
+  const p = page();
+  p.receive(twoGroups({}));
+  assert.match(p.list(), /<div class="group open newest" data-g="2">/);
+  assert.match(p.list(), /<div class="group older" data-g="1">/);
+  assert.equal((p.list().match(/ newest"/g) || []).length, 1);
+});
+
+test('start_point_not_listed', () => {
+  const p = page();
+  p.receive(twoGroups({}));
+  assert.doesNotMatch(p.list(), /data-g="0"/);
+  assert.doesNotMatch(p.list(), /Before the assistant started/);
+});
+
+test('restored_line_is_not_the_newest_group', () => {
+  const p = page();
+  p.receive(twoGroups({ restored_to: 1, can_undo_restore: true }));
+  assert.match(p.list(), /<div class="group restored">/, 'the restored line keeps its own classes');
+  assert.match(p.list(), /<div class="group undone newest" data-g="2">/, 'the first real group is the newest, struck out');
+  assert.match(p.list(), /<div class="group older" data-g="1">/);
+});
+
+test('restored_to_start_point_names_its_time', () => {
+  const p = page();
+  p.receive(twoGroups({ restored_to: 0, can_undo_restore: false }));
+  assert.match(p.list(), /Restored to 09:50/);
+  assert.doesNotMatch(p.list(), /data-g="0"/);
+  assert.match(p.list(), /group undone newest" data-g="2"/);
+  assert.match(p.list(), /group undone older" data-g="1"/);
+});
+
+test('only_the_start_point_shows_the_empty_text', () => {
+  const p = page();
+  p.receive(historyOf({ rows: [], groups: [{ id: 0, ts: 50, time: '09:50', restore: { available: true, why: '' } }] }));
+  assert.match(p.list(), /When an assistant changes something/);
+  assert.doesNotMatch(p.list(), /data-g=/);
+});
+
+test('fold_ignores_the_start_point', () => {
+  const p = page();
+  p.receive(historyOf({})); // group 1 (open, the newest) and the start point
+  assert.equal(p.foldTip(), 'Collapse all', 'every listed group is open');
+});
+
+// ---- reveal: opening a setting row asks the host to show the setting in its sidebar
+const revealHistory = (caps, row) => historyOf({ rows: [rowOf(row)],
+  capabilities: { restore: true, open_settings: true, settings_hint: '', ...caps } });
+const reveals = (sent) => sent.filter((m) => m.action === 'reveal');
+
+test('reveal_sent_when_a_revealable_row_opens', () => {
+  const p = page();
+  p.receive(revealHistory({ reveal: true }, { reveal: true }));
+  p.clickRow(1);
+  assert.deepEqual(reveals(p.sent), [{ action: 'reveal', row: 1 }]);
+  assert.match(p.list(), /class="row open" data-row="1"/, 'the click still opens the detail line');
+});
+
+test('reveal_not_sent_when_the_row_closes', () => {
+  const p = page();
+  p.receive(revealHistory({ reveal: true }, { reveal: true }));
+  p.clickRow(1);
+  p.clickRow(1);
+  assert.equal(reveals(p.sent).length, 1);
+  assert.match(p.list(), /class="row" data-row="1"/);
+});
+
+test('reveal_needs_the_capability', () => {
+  const p = page();
+  p.receive(revealHistory({}, { reveal: true }));
+  p.clickRow(1);
+  assert.equal(reveals(p.sent).length, 0);
+  assert.match(p.list(), /class="row open" data-row="1"/);
+  const q = page();
+  q.receive(revealHistory({ reveal: false }, { reveal: true }));
+  q.clickRow(1);
+  assert.equal(reveals(q.sent).length, 0);
+});
+
+test('reveal_needs_a_revealable_row', () => {
+  const p = page();
+  p.receive(revealHistory({ reveal: true }, {}));
+  p.clickRow(1);
+  assert.equal(reveals(p.sent).length, 0);
+  const q = page();
+  q.receive(revealHistory({ reveal: true }, { kind: 'model', label: 'Rotated', reveal: false }));
+  q.clickRow(1);
+  assert.equal(reveals(q.sent).length, 0);
+});
+
+test('reveal_hover_tag', () => {
+  const p = page();
+  p.receive(revealHistory({ reveal: true }, { reveal: true }));
+  assert.match(p.list(), /<span class="l" data-tip="Show in settings"><span class="lt">Wall loops<\/span>/);
+  p.clickRow(1);
+  assert.doesNotMatch(p.list(), /Show in settings/, 'an open row closes on click: no tag');
+  const q = page();
+  q.receive(revealHistory({}, { reveal: true }));
+  assert.doesNotMatch(q.list(), /Show in settings/);
+  const r = page();
+  r.receive(revealHistory({ reveal: true }, {}));
+  assert.doesNotMatch(r.list(), /Show in settings/);
 });
