@@ -203,16 +203,42 @@ McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group)
 {
     McpTracking out;
     std::set<std::string> later; // subjects seen in a later, not undone row (walking from the newest)
+    // The assistant's later preset switches (not undone): {preset type, before, after}. A config row written to a
+    // preset the assistant switched away from is superseded: its preset is no longer the one edited, so its live
+    // value ("4 in 0.28mm Draft") is the assistant's doing, never "changed by you" (I3). A switch the user made has
+    // no row, and keeps reading "changed by you" (M14).
+    struct Switch { std::string type, before, after; };
+    std::vector<Switch> switches;
+    auto str = [](const nlohmann::json &t, const char *k) {
+        auto it = t.find(k);
+        return it != t.end() && it->is_string() ? it->get<std::string>() : std::string();
+    };
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
         const McpRow &r = *it;
         if (!r.undone_at.empty()) continue;
+        if (r.target.is_object() && str(r.target, "type") == "preset")
+            switches.push_back({str(r.target, "preset_type"), str(r.target, "before"), str(r.target, "after")});
         const std::string subj = mcp_row_subject(r);
         if (subj.empty()) {
             if (!r.undo_verb.empty() || r.group == newest_group) out.tracked.insert(r.id);
             continue;
         }
-        if (later.insert(subj).second) out.tracked.insert(r.id);
-        else                           out.superseded.insert(r.id);
+        bool switched_away = false;
+        if (r.target.is_object() && str(r.target, "type") == "config") {
+            const std::string scope = str(r.target, "scope"), preset = str(r.target, "preset");
+            // The newest later switch that concerns this preset decides (newest first): print and printer have one
+            // preset, so their newest switch; a filament slot switch only concerns the preset it replaced or chose.
+            for (const Switch &w : switches) {
+                if (w.type != scope || preset.empty()) continue;
+                if (scope == "filament" && w.before != preset && w.after != preset) continue;
+                switched_away = w.after != preset;
+                break;
+            }
+        }
+        // Walking from the newest, `switches` holds only switches later than this row (pushed above when reached),
+        // except the row itself, which is a preset row and has no config subject.
+        if (later.insert(subj).second && !switched_away) out.tracked.insert(r.id);
+        else                                             out.superseded.insert(r.id);
     }
     return out;
 }

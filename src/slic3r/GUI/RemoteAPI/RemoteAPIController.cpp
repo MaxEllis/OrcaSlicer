@@ -538,6 +538,7 @@ static void mcp_record_instances(const char *op, const std::vector<McpInstanceSt
 
 static void mcp_slice_finished(const nlohmann::json &stats, bool ok, const std::string &error)
 {
+    if (s_ui_trial) return; // a trial's slice that did not start records nothing either (the completion event checks m_api_slice)
     try {
         McpRecorder::get().slice_finished(stats, ok, error);
     } catch (const std::exception &e) {
@@ -821,6 +822,21 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
 // ConfigOptionDef min / max (and validate()'s stricter minimums: a layer height above 0) with ConfigRange.hpp and
 // refuses the whole
 // request with out_of_range, applying nothing.
+// The lowest layer height the printer allows: Printer Settings > Layer height limits > Min, never below
+// kMinLayerHeight (also when the profile leaves it at 0). GUI thread.
+static constexpr double kMinLayerHeight = 0.01;
+static double printer_min_layer_height()
+{
+    double m = 0;
+    try {
+        if (auto *b = wxGetApp().preset_bundle) {
+            const DynamicPrintConfig &pc = b->printers.get_edited_preset().config;
+            if (pc.has("min_layer_height")) m = pc.opt_float("min_layer_height", 0);
+        }
+    } catch (const std::exception &) {}
+    return std::isfinite(m) ? std::max(m, kMinLayerHeight) : kMinLayerHeight;
+}
+
 static std::string range_unit(const ConfigOptionDef &def, bool percent)
 {
     if (percent) return "%";
@@ -921,8 +937,20 @@ bool Controller::config_value_in_range(const std::string &key, const ConfigOptio
     l.min           = def->min;
     l.max           = def->max;
     l.nullable      = def->nullable;
-    // validate()'s own positivity rules (PrintConfig.cpp), stricter than these options' min.
-    if (key == "layer_height" || key == "initial_layer_print_height") { l.min = std::max(l.min, 0.); l.min_exclusive = true; }
+    // A layer height is held to the printer's lowest (Printer Settings > Layer height limits), never below
+    // kMinLayerHeight: validate() only refuses <= 0, and a layer height of 0.0001 mm on a 50 mm part is 500 000 layers,
+    // the out-of-memory reslice a layer height of -1 caused (the GUI asks in a dialog; the API cannot).
+    bool layer_limit = false;
+    if (key == "layer_height" || key == "initial_layer_print_height") {
+        l.min       = std::max(l.min, printer_min_layer_height());
+        layer_limit = true;
+    }
+    // validate()'s other rules (PrintConfig.cpp validate), stricter than these options' min.
+    else if (key == "bridge_flow" || key == "internal_bridge_flow" || key == "filament_flow_ratio" ||
+             key == "extruder_clearance_radius" || key == "extruder_clearance_height_to_rod" ||
+             key == "extruder_clearance_height_to_lid" || key == "nozzle_height") {
+        l.min = std::max(l.min, 0.); l.min_exclusive = true;
+    }
     else if (key == "filament_diameter") l.min = std::max(l.min, 1.);
     else if (key == "nozzle_diameter")   l.min = std::max(l.min, 0.005);
     const McpRangeHit hit = mcp_first_out_of_range(l, elems);
@@ -946,6 +974,7 @@ bool Controller::config_value_in_range(const std::string &key, const ConfigOptio
     else if (lo)  allowed = "at least " + mn;
     else          allowed = "at most " + mx;
     text = label + " must be " + allowed + " (got " + got + ")";
+    if (layer_limit) text += "; the lowest the printer allows is set in Printer Settings > Layer height limits";
     detail["detail"] = text;
     return false;
 }
@@ -1984,20 +2013,27 @@ Response Controller::handle_slice_status()
         auto promise = std::make_shared<std::promise<bool>>();
         auto fut     = promise->get_future();
         wxGetApp().CallAfter([promise] {
+            // No answer while the plate list is being rebuilt (a project load or a panel restore).
+            Plater *p = wxGetApp().plater();
+            if (p == nullptr || p->is_loading_project() || McpActions::restoring()) return; // the io side times out
             bool valid = false;
             try {
-                Plater *p = wxGetApp().plater();
-                valid = p != nullptr && p->get_partplate_list().get_curr_plate() != nullptr &&
-                        p->get_partplate_list().get_curr_plate()->is_slice_result_valid();
+                PartPlateList &pl = p->get_partplate_list();
+                if (pl.get_curr_plate_index() < 0 || pl.get_curr_plate_index() >= pl.get_plate_count()) return;
+                valid = pl.get_curr_plate() != nullptr && pl.get_curr_plate()->is_slice_result_valid();
             } catch (...) {}
             promise->set_value(valid);
         });
         if (fut.wait_for(std::chrono::milliseconds(300)) == std::future_status::ready) {
-            const bool valid = fut.get();
-            j["valid"] = valid;
-            j["stale"] = !valid;
-            if (!valid && s.message.empty())
-                j["message"] = "out of date: something changed since this slice; slice again for current numbers";
+            try {
+                const bool valid = fut.get();
+                j["valid"] = valid;
+                j["stale"] = !valid;
+                if (!valid && s.message.empty())
+                    j["message"] = "out of date: something changed since this slice; slice again for current numbers";
+            } catch (const std::future_error &) {
+                // The GUI declined to answer (a project load or restore): no field.
+            }
         }
     }
     return { 200, j };
@@ -2533,7 +2569,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         }
         // Printer limits, same rules as ObjectList's get_min/max_layer_height.
         const DynamicPrintConfig &pcfg = wxGetApp().preset_bundle->printers.get_edited_preset().config;
-        double minh = pcfg.opt_float("min_layer_height", 0);
+        double minh = std::max(pcfg.opt_float("min_layer_height", 0), kMinLayerHeight); // never 0 (B1 / I4)
         double maxh = pcfg.opt_float("max_layer_height", 0);
         if (maxh < EPSILON) maxh = 0.75 * pcfg.opt_float("nozzle_diameter", 0);
         if (lh < minh || lh > maxh)
@@ -5273,6 +5309,19 @@ Response Controller::handle_user_changes(const std::string &target)
     return { 200, run_on_ui([since]() -> nlohmann::json { return McpJournal::get().since(since); }) };
 }
 
+// R45: X-Orca-Mcp-Trial is honoured only on settings writes and slicing (what compare_slices sends it on). Any other
+// route records as usual with it, so a client cannot hide other changes from the panel.
+static bool trial_route(const Request &req)
+{
+    const std::string path = req.target.substr(0, req.target.find('?'));
+    if (req.method == "PUT" && path == "/api/v1/config") return true;
+    if (req.method == "POST" && (path == "/api/v1/slice" || path == "/api/v1/slice/cancel")) return true;
+    static const std::string obj = "/api/v1/objects/", cfg = "/config";
+    return req.method == "PUT" && path.size() > obj.size() + cfg.size() && path.compare(0, obj.size(), obj) == 0 &&
+           path.compare(path.size() - cfg.size(), cfg.size(), cfg) == 0 &&
+           path.find('/', obj.size()) == path.size() - cfg.size();
+}
+
 Response Controller::dispatch(const Request &req)
 {
     // The trial flag of this request, for every run_on_ui it makes (M4).
@@ -5280,7 +5329,7 @@ Response Controller::dispatch(const Request &req)
         bool prev;
         explicit TrialScope(bool t) : prev(t_io_trial) { t_io_trial = t; }
         ~TrialScope() { t_io_trial = prev; }
-    } trial_scope(req.trial);
+    } trial_scope(req.trial && trial_route(req));
     // A restore replaces the whole project: nothing, the journal included, may run in between.
     if (McpActions::restoring())
         return { 409, {{"error", "busy"}, {"detail", "the user is restoring"}} };
@@ -5340,8 +5389,28 @@ Response Controller::dispatch_route(const Request &req)
             auto text_of = [&in](const char *k, size_t max) -> std::string {
                 auto it = in.find(k);
                 if (it == in.end() || !it->is_string()) return {};
-                std::string t = boost::algorithm::trim_copy(it->get<std::string>());
-                for (char &c : t) if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+                // Control and format characters out (Cc, and the Cf marks that reorder or hide text: bidi
+                // overrides and isolates, zero-width joiners, the BOM); line breaks and tabs become spaces.
+                const std::string raw = it->get<std::string>();
+                std::string       t;
+                for (size_t i = 0; i < raw.size();) {
+                    const unsigned char c = static_cast<unsigned char>(raw[i]);
+                    if (c == '\n' || c == '\r' || c == '\t') { t += ' '; ++i; continue; }
+                    if (c < 0x20 || c == 0x7F) { ++i; continue; }
+                    if (c == 0xC2 && i + 1 < raw.size() && static_cast<unsigned char>(raw[i + 1]) >= 0x80 &&
+                        static_cast<unsigned char>(raw[i + 1]) <= 0x9F) { i += 2; continue; } // C1 controls
+                    if (c == 0xC2 && i + 1 < raw.size() && static_cast<unsigned char>(raw[i + 1]) == 0xAD) { i += 2; continue; } // soft hyphen
+                    if (c == 0xE2 && i + 2 < raw.size()) {
+                        const unsigned char b1 = static_cast<unsigned char>(raw[i + 1]), b2 = static_cast<unsigned char>(raw[i + 2]);
+                        // U+200B..U+200F, U+202A..U+202E, U+2060..U+2064, U+2066..U+206F
+                        if ((b1 == 0x80 && ((b2 >= 0x8B && b2 <= 0x8F) || (b2 >= 0xAA && b2 <= 0xAE))) ||
+                            (b1 == 0x81 && b2 >= 0xA0 && b2 <= 0xAF && b2 != 0xA5)) { i += 3; continue; }
+                    }
+                    if (c == 0xEF && i + 2 < raw.size() && static_cast<unsigned char>(raw[i + 1]) == 0xBB &&
+                        static_cast<unsigned char>(raw[i + 2]) == 0xBF) { i += 3; continue; } // U+FEFF
+                    t += raw[i++];
+                }
+                boost::algorithm::trim(t);
                 if (t.size() > max) {
                     size_t cut = max;
                     while (cut > 0 && (static_cast<unsigned char>(t[cut]) & 0xC0) == 0x80) --cut; // UTF-8 boundary

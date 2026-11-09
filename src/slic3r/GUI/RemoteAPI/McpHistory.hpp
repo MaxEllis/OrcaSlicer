@@ -138,7 +138,9 @@ struct McpTracking
     std::set<int> superseded; // rows a later (not undone) row of the same subject changed again: no live entry, no undo
 };
 // tracked: for each subject its latest row that is not undone; rows without a subject that are not undone and have
-// an undo or sit in newest_group. superseded: rows not undone with a later not-undone row of the same subject.
+// an undo or sit in newest_group. superseded: rows not undone with a later not-undone row of the same subject, and
+// config rows written to a preset the assistant later switched away from (a later preset row of that type whose
+// "after" is another preset; for a filament slot, whose "before" was the row's preset).
 McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group);
 
 // Windows and macOS file systems ignore case (by default): paths are compared, and history keys made, case-folded.
