@@ -134,7 +134,8 @@ json capabilities()
               {"kinds", {"setting", "preset", "model", "plate", "slice", "file", "refused"}},
               {"open_settings", true},
               {"settings_hint", ""},
-              {"reveal", true}}; // a click on a setting row shows the setting in the sidebar (McpActions::reveal)
+              {"reveal", true},        // a click on a setting row shows the setting in the sidebar (McpActions::reveal)
+              {"tracked_live", true}}; // live entries only for the latest row of each setting (R43, McpActions::live_values)
     // The page's default off line ("The Remote API is off.") fits a switched-off API; an enabled one that failed to
     // bind its port says so.
     if (api_enabled() && !api_listening()) c["off_text"] = "The Remote API couldn't start. Check its port.";
@@ -306,6 +307,13 @@ private:
             const std::string status = text_field(res, "status");
             if (status != "ok") BOOST_LOG_TRIVIAL(debug) << "MCP panel: reveal of row " << id << " not shown: " << text_field(res, "reason");
             if (s_test_record) s_test_last_reveal = {{"row", id}, {"status", status}, {"reason", text_field(res, "reason")}};
+            // m3: the sidebar field shows and blinks, but the keyboard stays in the panel (a stray key would
+            // otherwise type into the field). After the jump's own deferred focus work.
+            if (status == "ok")
+                wxGetApp().CallAfter([]() {
+                    if (s_pane != nullptr && closing_reason().empty())
+                        if (wxWebView *b = s_pane->browser()) b->SetFocus();
+                });
         });
     }
 

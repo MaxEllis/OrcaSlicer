@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -94,7 +95,8 @@ public:
     const std::vector<McpGroup> &groups() const { return m_groups; } // real groups only (not the start point)
 
     // {"rows":[...],"groups":[...]} for the page's history message. A row's "error" is text there:
-    // "" when none, else its where (or value, or "Failed"). "reveal" is mcp_row_revealable().
+    // "" when none, else its where (or value, or "Failed"). "reveal" is mcp_row_revealable(); "superseded" is
+    // mcp_tracking()'s (the assistant changed the same setting again later).
     nlohmann::json page_history() const;
 
     nlohmann::json to_json() const;
@@ -115,6 +117,29 @@ private:
 // the print, filament or printer preset (target type "config", scope print|filament|printer). Per-object settings,
 // project-scope keys (filament colours, wipe tower position) and every other kind are not revealable.
 bool mcp_row_revealable(const McpRow &row);
+
+// ---- Which rows the panel tracks live (ruling R43) -----------------------------------------------------------------
+// The panel shows a row's live value (and "changed by you") only for the latest row of each setting, whichever group
+// it is in. A row's subject names what it changed: rows with the same subject changed the same setting (or copy,
+// layer profile, height range, preset slot). "" when the row has none (a slice, a refusal, a file, an added object):
+// such a row keeps the earlier rule.
+//   config         "config|<scope>|<key>|<index>|<preset>"   (index and preset as recorded, "" when none)
+//   object_config  "object_config|<object_id>|<key>"
+//   preset         "preset|<preset_type>|<slot>"
+//   slot_mapping   "slot_mapping|<filament>"
+//   layer_profile  "layer_profile|<object_id>"
+//   height_range   "height_range|<object_id>|<min_z>|<max_z>"
+//   transform, instance_plate  "instance|<object_id>|<instance>"
+std::string mcp_row_subject(const McpRow &row);
+
+struct McpTracking
+{
+    std::set<int> tracked;    // rows that get a live entry
+    std::set<int> superseded; // rows a later (not undone) row of the same subject changed again: no live entry, no undo
+};
+// tracked: for each subject its latest row that is not undone; rows without a subject that are not undone and have
+// an undo or sit in newest_group. superseded: rows not undone with a later not-undone row of the same subject.
+McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group);
 
 // Windows and macOS file systems ignore case (by default): paths are compared, and history keys made, case-folded.
 #if defined(_WIN32) || defined(__APPLE__)

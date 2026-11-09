@@ -114,9 +114,11 @@ private:
         } else if (!m_server.handler()) {
             r = { 503, {{"error", "no_handler"}} };
         } else {
+            auto    trial_sv = req["X-Orca-Mcp-Trial"];
             Request rq { std::string(req.method_string()),
                          std::string(req.target()),
-                         req.body() };
+                         req.body(),
+                         std::string(trial_sv.begin(), trial_sv.end()) == "1" };
             try {
                 r = m_server.handler()(rq);
             } catch (const std::exception &e) {
@@ -187,8 +189,10 @@ void Server::start(const Config &cfg)
                                  << ": " << e.what();
         m_ioc.reset();
         m_acceptor.reset();
+        m_start_failed = true;
         return; // disabled for this run; the Preferences page shows "failed" via running()
     }
+    m_start_failed = false;
     m_running = true;
     do_accept();
     m_thread = create_thread([this] {

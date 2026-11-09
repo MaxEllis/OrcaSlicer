@@ -90,6 +90,12 @@ public:
     // from the slicing-completed event, outside any API task.
     // stats = the GET /slice/status stats (estimated_time_seconds, filament_used_g).
     void slice_finished(const nlohmann::json &stats, bool ok, const std::string &error);
+    // A note from the assistant's connector (POST /activity/note, M4): kind "slice" adds one slice-kind row (label =
+    // text, title_hint "note": it names its group when the group holds no change) and closes the group like a slice
+    // result ("Compared 3 options · nothing kept" after a comparison whose trial requests recorded nothing); kind
+    // "refused" adds a refusal the connector made itself (label = text, value, where = detail), as record_refusal.
+    // Changes nothing in the project; no checkpoint.
+    void record_note(const std::string &kind, const std::string &text, const std::string &value, const std::string &where);
 
     // Does nothing while a project is loading (Plater::is_loading_project). Follows the open project: loads its history on an open, rekeys untitled/ on the first save of an
     // Untitled project, starts an empty history on a Save As. Called by the members above and by the pane.

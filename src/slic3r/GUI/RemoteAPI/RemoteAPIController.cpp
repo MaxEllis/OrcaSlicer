@@ -5,6 +5,7 @@
 #include "McpRecorder.hpp"
 #include "McpPanel.hpp"
 #include "UiTaskGate.hpp"
+#include "ConfigRange.hpp"
 
 #include "libslic3r/Preset.hpp"
 #include "libslic3r/PresetBundle.hpp"
@@ -13,6 +14,7 @@
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
 #include "slic3r/GUI/Plater.hpp"
+#include "slic3r/GUI/SettingsIndex.hpp" // the sidebar's line labels and groups for the panel's setting labels
 #include "slic3r/GUI/PresetComboBoxes.hpp" // PlaterPresetComboBox::update() for the filament slot combos
 #include "libslic3r/Model.hpp"    // M4b: ModelObject/ModelInstance for GET /objects
 #include "slic3r/GUI/NotificationManager.hpp" // in-app change notifications
@@ -66,8 +68,20 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/log/trivial.hpp>
+#include <boost/nowide/convert.hpp>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
+
+ServerStatus server_status()
+{
+    ServerStatus st;
+    Server &srv     = wxGetApp().remote_api_server();
+    st.listening    = srv.running();
+    st.start_failed = srv.start_failed();
+    st.port         = srv.port();
+    st.bind_lan     = srv.bind_lan();
+    return st;
+}
 
 static Controller *g_controller = nullptr; // set in ctor, cleared in dtor
 
@@ -161,8 +175,15 @@ static const std::string k_needs_sensitive =
 static const std::string k_needs_file_changes =
     "Needs Preferences \xE2\x80\xBA Remote API \xE2\x80\xBA Allow deleting and replacing project files";
 
+// M4: a request with X-Orca-Mcp-Trial: 1 (Request::trial) is a trial run: no rows, no refusals, no restore points.
+// t_io_trial: the request the io thread is dispatching; s_ui_trial: the API task running on the GUI thread came from
+// such a request (run_on_ui carries the flag over, UiTask::run sets it around the task).
+static thread_local bool t_io_trial = false;
+static bool              s_ui_trial = false;
+
 static void mcp_before_change()
 {
+    if (s_ui_trial) return;
     try {
         McpRecorder::get().before_change();
     } catch (const std::exception &e) {
@@ -196,6 +217,7 @@ static void mcp_stamp_objects(McpRow &row)
 
 static void mcp_record(McpRow row)
 {
+    if (s_ui_trial) return;
     try {
         mcp_stamp_objects(row);
         McpRecorder::get().record(std::move(row));
@@ -309,6 +331,7 @@ static nlohmann::json mcp_history_refusal(const std::string &path)
 static void mcp_refused(const std::string &label, const std::string &value, const std::string &where,
                         const std::string &action)
 {
+    if (s_ui_trial) return;
     try {
         McpRecorder::get().record_refusal(label, where, value, {{"type", "refused"}, {"action", action}});
     } catch (const std::exception &e) {
@@ -376,6 +399,41 @@ static std::string mcp_edited_filament_suffix()
 }
 
 // A setting row: value/before as config_value_text, undo "Revert" (raws in target).
+// The panel's label for a setting (m1). McpRecorder::config_label gives OrcaSlicer's full label ("Nozzle
+// temperature", "Top solid layers"); the sidebar's own line label is added when it says more ("Nozzle temperature
+// - Other layers", the sidebar's en dash) or something else ("Top solid layers (Top shell layers)"), and the
+// settings group when other settings share the label ("Outer wall (Acceleration)" next to "Outer wall (Speed)").
+// preset_type: Preset::Type of the preset the key was written to, -1 = any. GUI thread.
+static std::string mcp_setting_label(const std::string &key, int preset_type = -1)
+{
+    std::string            label = McpRecorder::config_label(key);
+    const ConfigOptionDef *def   = print_config_def.get(key);
+    if (def == nullptr) return label;
+    std::string line, group;
+    try {
+        if (wxGetApp().plater() != nullptr)
+            for (const Search::Option &o : wxGetApp().sidebar().settings_index().all_options()) {
+                if (preset_type >= 0 && int(o.type) != preset_type) continue;
+                const std::string k = o.opt_key();
+                if (k != key && !(k.size() > key.size() && k.compare(0, key.size(), key) == 0 && k[key.size()] == '#')) continue;
+                line  = o.display_label_en;
+                group = boost::nowide::narrow(o.group);
+                break;
+            }
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP panel: no sidebar label for " << key << ": " << e.what();
+    }
+    if (!line.empty() && line != label && label.find(line) == std::string::npos)
+        label = line.compare(0, label.size(), label) == 0 ? line : label + " (" + line + ")";
+    if (def->full_label.empty() && !group.empty() && group != label) {
+        int same = 0;
+        for (const auto &kv : print_config_def.options)
+            if (kv.second.full_label.empty() && kv.second.label == def->label && ++same > 1) break;
+        if (same > 1) label += " (" + group + ")";
+    }
+    return label;
+}
+
 static McpRow mcp_config_row(const std::string &key, const std::string &label, const std::string &before_raw,
                              const std::string &after_raw, nlohmann::json target, const std::string &where)
 {
@@ -430,8 +488,14 @@ static bool mcp_same_matrix(const nlohmann::json &a, const nlohmann::json &b)
 
 // After an arrange / orient job: one row with every instance that moved (or changed plate). Runs on the GUI
 // thread from the job queue, after the job's own finalize.
-static void mcp_record_instances(const char *op, const std::vector<McpInstanceState> &before, int plates_before)
+static void mcp_record_instances(const char *op, const std::vector<McpInstanceState> &before, int plates_before,
+                                 bool trial = false)
 {
+    if (trial) {
+        // A trial's job: no row, but the new places are still the API's.
+        mcp_journal_api_objects_moved();
+        return;
+    }
     Plater *plater = wxGetApp().plater();
     if (plater == nullptr) return;
     const std::vector<McpInstanceState> after = mcp_instance_states(plater);
@@ -568,6 +632,7 @@ UiTaskGate &ui_gate()
 
 struct UiTask : std::enable_shared_from_this<UiTask>
 {
+    bool                                          trial { false }; // from a X-Orca-Mcp-Trial request (M4)
     std::shared_ptr<std::promise<nlohmann::json>> promise;
     std::shared_ptr<std::atomic<bool>>            cancelled;
     std::function<nlohmann::json()>               fn;
@@ -590,11 +655,14 @@ void UiTask::run()
     // Push the next periodic backup out of the mutation window so it doesn't
     // fire between the calls of an API burst.
     Slic3r::backup_defer(3);
+    const bool trial_before = s_ui_trial;
+    s_ui_trial = trial;
     try {
         promise->set_value(fn());
     } catch (...) {
         promise->set_exception(std::current_exception());
     }
+    s_ui_trial = trial_before;
 }
 
 } // namespace
@@ -614,6 +682,7 @@ nlohmann::json Controller::run_on_ui(std::function<nlohmann::json()> fn, int tim
     // its side effects (PUT config / reslice) on the GUI thread afterwards.
     task->cancelled = std::make_shared<std::atomic<bool>>(false);
     task->fn        = std::move(fn);
+    task->trial     = t_io_trial;
     auto future     = task->promise->get_future();
     task->schedule();
     if (future.wait_for(std::chrono::seconds(timeout_s)) != std::future_status::ready) {
@@ -740,6 +809,141 @@ static std::string json_value_to_config_string(const nlohmann::json &v)
         return ss.str();
     }
     throw std::runtime_error("unsupported value type");
+}
+
+// ---------------------------------------------------------------------------
+// Value ranges (B1)
+//
+// The sidebar never lets a value outside its option's range through (Field::get_value_by_opt_type clamps it), and
+// PrintConfig's validate() refuses to slice one; the API applied them as given, and a layer height of -1 crashed
+// OrcaSlicer's reslice (out of memory) before validate() could say no. Every write path (PUT /config, object
+// settings, the panel's undo and restore edits) now checks each changed element against the option's
+// ConfigOptionDef min / max (and the "mm or %" fields' literal limit) with ConfigRange.hpp and refuses the whole
+// request with out_of_range, applying nothing.
+static std::string range_unit(const ConfigOptionDef &def, bool percent)
+{
+    if (percent) return "%";
+    const std::string &s = def.sidetext;
+    if (s.empty() || s.find('%') == 0) return {};
+    const size_t sp = s.find(' ');
+    return " " + (sp == std::string::npos ? s : s.substr(0, sp));
+}
+
+static void range_elems(const ConfigOption &opt, const ConfigOption *before, std::vector<McpRangeElem> &out, bool &ok)
+{
+    ok = true;
+    switch (opt.type()) {
+    case coFloat:
+    case coPercent: {
+        McpRangeElem e;
+        e.value   = static_cast<const ConfigOptionFloat &>(opt).value;
+        e.percent = opt.type() == coPercent;
+        e.changed = before == nullptr || before->type() != opt.type() ||
+                    !(static_cast<const ConfigOptionFloat *>(before)->value == e.value);
+        out.push_back(e);
+        break;
+    }
+    case coFloatOrPercent: {
+        const auto  &o = static_cast<const ConfigOptionFloatOrPercent &>(opt);
+        McpRangeElem e;
+        e.value   = o.value;
+        e.percent = o.percent;
+        const auto *b = before != nullptr && before->type() == coFloatOrPercent ? static_cast<const ConfigOptionFloatOrPercent *>(before) : nullptr;
+        e.changed = b == nullptr || !(b->value == o.value && b->percent == o.percent);
+        out.push_back(e);
+        break;
+    }
+    case coFloats:
+    case coPercents: {
+        const auto &v  = static_cast<const ConfigOptionVector<double> &>(opt).values;
+        const auto *bv = before != nullptr && before->type() == opt.type() ? &static_cast<const ConfigOptionVector<double> *>(before)->values : nullptr;
+        for (size_t i = 0; i < v.size(); ++i) {
+            McpRangeElem e;
+            e.value   = v[i];
+            e.nil     = std::isnan(v[i]);
+            e.percent = opt.type() == coPercents;
+            const bool same = bv != nullptr && i < bv->size() &&
+                              ((*bv)[i] == v[i] || (std::isnan((*bv)[i]) && std::isnan(v[i])));
+            e.changed = !same;
+            out.push_back(e);
+        }
+        break;
+    }
+    case coFloatsOrPercents: {
+        const auto &v  = static_cast<const ConfigOptionVector<FloatOrPercent> &>(opt).values;
+        const auto *bv = before != nullptr && before->type() == coFloatsOrPercents ? &static_cast<const ConfigOptionVector<FloatOrPercent> *>(before)->values : nullptr;
+        for (size_t i = 0; i < v.size(); ++i) {
+            McpRangeElem e;
+            e.value   = v[i].value;
+            e.percent = v[i].percent;
+            e.nil     = std::isnan(v[i].value);
+            const bool same = bv != nullptr && i < bv->size() && (*bv)[i].percent == v[i].percent &&
+                              ((*bv)[i].value == v[i].value || (std::isnan((*bv)[i].value) && std::isnan(v[i].value)));
+            e.changed = !same;
+            out.push_back(e);
+        }
+        break;
+    }
+    case coInt: {
+        McpRangeElem e;
+        e.value   = static_cast<const ConfigOptionInt &>(opt).value;
+        e.changed = before == nullptr || before->type() != coInt || static_cast<const ConfigOptionInt *>(before)->value != static_cast<const ConfigOptionInt &>(opt).value;
+        out.push_back(e);
+        break;
+    }
+    case coInts: {
+        const auto &v  = static_cast<const ConfigOptionVector<int> &>(opt).values;
+        const auto *bv = before != nullptr && before->type() == coInts ? &static_cast<const ConfigOptionVector<int> *>(before)->values : nullptr;
+        for (size_t i = 0; i < v.size(); ++i) {
+            McpRangeElem e;
+            e.value   = v[i];
+            e.nil     = opt.nullable() && v[i] == ConfigOptionIntsNullable::nil_value();
+            e.changed = !(bv != nullptr && i < bv->size() && (*bv)[i] == v[i]);
+            out.push_back(e);
+        }
+        break;
+    }
+    default: ok = false; // not a number: no range
+    }
+}
+
+bool Controller::config_value_in_range(const std::string &key, const ConfigOption *before, const ConfigOption &after,
+                                       nlohmann::json &detail, std::string &text)
+{
+    const ConfigOptionDef *def = print_config_def.get(key);
+    if (def == nullptr) return true;
+    std::vector<McpRangeElem> elems;
+    bool                      numeric = false;
+    range_elems(after, before, elems, numeric);
+    if (!numeric) return true;
+    McpRangeLimits l;
+    l.min           = def->min;
+    l.max           = def->max;
+    l.nullable      = def->nullable;
+    l.literal_limit = (after.type() == coFloatOrPercent || after.type() == coFloatsOrPercents) &&
+                      def->sidetext.rfind("mm ") != std::string::npos;
+    l.max_literal   = def->max_literal;
+    const McpRangeHit hit = mcp_first_out_of_range(l, elems);
+    if (!hit.found) return true;
+    const bool        pct_bounds = after.type() == coPercent || after.type() == coPercents || hit.percent;
+    const std::string unit       = range_unit(*def, pct_bounds);
+    const std::string got        = std::isfinite(hit.value) ? McpRecorder::num_text(hit.value) + (hit.percent ? std::string("%") : unit)
+                                                            : std::string("not a number");
+    const bool lo = mcp_range_bounded(hit.min), hi = mcp_range_bounded(hit.max);
+    detail = {{"error", "out_of_range"}, {"key", key},
+              {"value", std::isfinite(hit.value) ? McpRecorder::num_text(hit.value) + (hit.percent ? "%" : "") : std::string("nan")},
+              {"min", lo ? nlohmann::json(double(hit.min)) : nlohmann::json(nullptr)},
+              {"max", hi ? nlohmann::json(double(hit.max)) : nlohmann::json(nullptr)}};
+    if (elems.size() > 1) detail["index"] = hit.index;
+    const std::string label = McpRecorder::config_label(key);
+    const std::string mn = McpRecorder::num_text(hit.min) + unit, mx = McpRecorder::num_text(hit.max) + unit;
+    std::string allowed;
+    if (lo && hi) allowed = "between " + mn + " and " + mx;
+    else if (lo)  allowed = "at least " + mn;
+    else          allowed = "at most " + mx;
+    text = label + " must be " + allowed + " (got " + got + ")";
+    detail["detail"] = text;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,8 +1366,11 @@ Response Controller::handle_put_config(const std::string &body)
             { Preset::TYPE_PRINTER,  bundle->printers.get_edited_preset().config,  false },
         }};
 
+        // What the three presets hold now, for the range check (it judges only what changes).
+        const std::array<DynamicPrintConfig, 3> targets_before{{targets[0].cfg, targets[1].cfg, targets[2].cfg}};
         nlohmann::json applied = nlohmann::json::array();
         nlohmann::json errors  = nlohmann::json::object();
+        nlohmann::json out_of_range = nullptr; // the first out_of_range refusal, for the reply's top level
         std::vector<std::array<std::string, 3>> changes; // key, old, new -> notification
         // MCP panel: every applied key with its raw old and new value, in request order. type -1 = project.
         struct Staged { int type; std::string key, oldv, newv; };
@@ -1277,6 +1484,17 @@ Response Controller::handle_put_config(const std::string &body)
                         continue;
                     }
                 }
+                {
+                    // B1: OrcaSlicer's own range, judged on what changes (the staged copy is thrown away on a refusal).
+                    const ConfigOption *was = targets_before[size_t(tgt - targets.data())].option(key);
+                    nlohmann::json       rd;
+                    std::string          rtext;
+                    if (!config_value_in_range(key, was, *tgt->cfg.option(key), rd, rtext)) {
+                        errors[key] = "out_of_range: " + rtext;
+                        if (out_of_range.is_null()) out_of_range = rd;
+                        continue;
+                    }
+                }
                 std::string newv = tgt->cfg.opt_serialize(key);
                 if (sensitive && !allow_sensitive && newv != oldv) {
                     // Judged on the re-serialized value, so writing back the current value
@@ -1323,12 +1541,18 @@ Response Controller::handle_put_config(const std::string &body)
             for (auto it2 = errors.begin(); it2 != errors.end(); ++it2) {
                 const std::string why = it2.value().is_string() ? it2.value().get<std::string>() : std::string("error");
                 if (why == "blocked_by_remote_api_policy")
-                    mcp_refused(McpRecorder::config_label(it2.key()), "Not allowed", k_needs_sensitive, "PUT /config");
+                    mcp_refused(mcp_setting_label(it2.key()), "Not allowed", k_needs_sensitive, "PUT /config");
+                else if (why.rfind("out_of_range: ", 0) == 0)
+                    mcp_refused(mcp_setting_label(it2.key()), "Out of range", why.substr(14), "PUT /config");
                 else
-                    mcp_refused(McpRecorder::config_label(it2.key()), mcp_reason(why, "Invalid value"),
+                    mcp_refused(mcp_setting_label(it2.key()), mcp_reason(why, "Invalid value"),
                                 it2.key() + ": " + why, "PUT /config");
             }
-            return {{"applied", nlohmann::json::array()}, {"errors", errors}};
+            nlohmann::json reply = {{"applied", nlohmann::json::array()}, {"errors", errors}};
+            // The first out-of-range key at the top level too: {"error":"out_of_range","key","value","min","max"}.
+            if (!out_of_range.is_null())
+                for (auto it3 = out_of_range.begin(); it3 != out_of_range.end(); ++it3) reply[it3.key()] = it3.value();
+            return reply;
         }
 
         // MCP panel rows, built from the state before anything is applied (preset names, colours). A key
@@ -1363,7 +1587,7 @@ Response Controller::handle_put_config(const std::string &body)
                                                       "plate " + std::to_string(plate_idx + 1)));
                 } else {
                     if (c.oldv == c.newv) continue;
-                    mcp_rows.push_back(mcp_config_row(c.key, McpRecorder::config_label(c.key), c.oldv, c.newv,
+                    mcp_rows.push_back(mcp_config_row(c.key, mcp_setting_label(c.key), c.oldv, c.newv,
                                                       {{"type", "config"}, {"key", c.key}, {"scope", "project"}},
                                                       std::string()));
                 }
@@ -1374,7 +1598,7 @@ Response Controller::handle_put_config(const std::string &body)
             const PresetCollection &coll = type == Preset::TYPE_PRINT    ? bundle->prints :
                                            type == Preset::TYPE_FILAMENT ? bundle->filaments : bundle->printers;
             const std::string preset = coll.get_selected_preset_name();
-            const std::string label  = McpRecorder::config_label(c.key) +
+            const std::string label  = mcp_setting_label(c.key, int(type)) +
                                       (type == Preset::TYPE_FILAMENT ? mcp_edited_filament_suffix() : std::string());
             const std::string where  = preset + " (unsaved)";
             nlohmann::json    target = {{"type", "config"}, {"key", c.key}, {"scope", mcp_preset_type_name(type)},
@@ -1682,7 +1906,7 @@ Response Controller::handle_slice()
             s.state = "slicing"; s.percent = 0; s.message = "starting";
             s.stats = nullptr; s.warnings = nlohmann::json::array();
         }, "slice.started");
-        m_api_slice = true; // the completion event records the MCP panel's slice row
+        m_api_slice = !s_ui_trial; // the completion event records the MCP panel's slice row (not a trial's)
         plater->reslice();
         // F2: reslice() bails out synchronously - with NO completion event -
         // when the plate can't be sliced (update_background_process() INVALID,
@@ -1706,13 +1930,27 @@ Response Controller::handle_slice()
                 }, "slice.done");
                 return {{"started", false}, {"already_valid", true}};
             }
-            set_slice_state([](SliceState &s) {
+            // M15: OrcaSlicer's own reason (Print::validate(), the message its ValidateError notification shows: a
+            // layer height above the nozzle's limit, say), else the generic one.
+            std::string why, why_key;
+            try {
+                StringObjectException err = plater->get_partplate_list().get_current_fff_print().validate();
+                plater->post_process_string_object_exception(err);
+                why     = boost::algorithm::trim_copy(err.string);
+                why_key = err.opt_key;
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(warning) << "Remote API: validate after slice_not_started threw: " << e.what();
+            }
+            const std::string msg = why.empty() ? std::string("plate cannot be sliced (object outside bed or invalid state)") : why;
+            set_slice_state([&msg](SliceState &s) {
                 s.state = "error"; s.percent = -1;
-                s.message = "plate cannot be sliced (object outside bed or invalid state)";
+                s.message = msg;
                 s.stats = nullptr; s.warnings = nlohmann::json::array();
             }, "slice.error");
-            mcp_slice_finished(nullptr, false, "plate cannot be sliced (object outside bed or invalid state)");
-            return {{"error", "slice_not_started"}};
+            mcp_slice_finished(nullptr, false, msg);
+            nlohmann::json reply = {{"error", "slice_not_started"}, {"detail", msg}};
+            if (!why_key.empty()) reply["key"] = why_key;
+            return reply;
         }
         return {{"started", true}};
     });
@@ -1736,6 +1974,28 @@ Response Controller::handle_slice_status()
             j["breakdown"] = s.stats["breakdown"];
     }
     j["warnings"] = s.warnings;
+    // M3: a done slice may be out of date (a setting or an object changed since). The plate knows; ask the GUI
+    // thread, but never wait on it for long (wait loops poll this route): without an answer in 300 ms, no field.
+    if (s.state == "done") {
+        auto promise = std::make_shared<std::promise<bool>>();
+        auto fut     = promise->get_future();
+        wxGetApp().CallAfter([promise] {
+            bool valid = false;
+            try {
+                Plater *p = wxGetApp().plater();
+                valid = p != nullptr && p->get_partplate_list().get_curr_plate() != nullptr &&
+                        p->get_partplate_list().get_curr_plate()->is_slice_result_valid();
+            } catch (...) {}
+            promise->set_value(valid);
+        });
+        if (fut.wait_for(std::chrono::milliseconds(300)) == std::future_status::ready) {
+            const bool valid = fut.get();
+            j["valid"] = valid;
+            j["stale"] = !valid;
+            if (!valid && s.message.empty())
+                j["message"] = "out of date: something changed since this slice; slice again for current numbers";
+        }
+    }
     return { 200, j };
 }
 
@@ -2273,7 +2533,7 @@ Response Controller::handle_put_height_range(uint64_t id, const std::string &bod
         double maxh = pcfg.opt_float("max_layer_height", 0);
         if (maxh < EPSILON) maxh = 0.75 * pcfg.opt_float("nozzle_diameter", 0);
         if (lh < minh || lh > maxh)
-            return refuse({{"error", "layer_height_out_of_range"}, {"min", minh}, {"max", maxh},
+            return refuse({{"error", "layer_height_out_of_range"}, {"key", "layer_height"}, {"value", lh}, {"min", minh}, {"max", maxh},
                            {"detail", "layer height must be within " + McpRecorder::num_text(minh) + " to " +
                                           McpRecorder::num_text(maxh) + " mm"}});
         t_layer_height_range key{ min_z, max_z };
@@ -2873,6 +3133,10 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         nlohmann::json applied = nlohmann::json::array();
         nlohmann::json errors  = nlohmann::json::object();
         const bool allow_sensitive = sensitive_writes_allowed();
+        // For the range check: the object's own value of a key, else the one it prints with now.
+        const DynamicPrintConfig obj_before = cfg;
+        const DynamicPrintConfig merged_now = wxGetApp().preset_bundle->full_config();
+        nlohmann::json           out_of_range = nullptr;
         for (auto it = in.begin(); it != in.end(); ++it) {
             const std::string &key = it.key();
             if (print_config_def.get(key) == nullptr) { errors[key] = "unknown_key"; continue; }
@@ -2884,6 +3148,14 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
             }
             try {
                 cfg.set_deserialize_strict(key, json_value_to_config_string(it.value()));
+                const ConfigOption *was = obj_before.has(key) ? obj_before.option(key) : merged_now.option(key);
+                nlohmann::json      rd;
+                std::string         rtext;
+                if (!config_value_in_range(key, was, *cfg.option(key), rd, rtext)) {
+                    errors[key] = "out_of_range: " + rtext;
+                    if (out_of_range.is_null()) out_of_range = rd;
+                    continue;
+                }
                 applied.push_back(key);
             } catch (const std::exception &e) { errors[key] = e.what(); }
         }
@@ -2892,13 +3164,19 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
             for (auto it2 = errors.begin(); it2 != errors.end(); ++it2) {
                 const std::string why = it2.value().is_string() ? it2.value().get<std::string>() : std::string("error");
                 if (why == "blocked_by_remote_api_policy")
-                    mcp_refused(McpRecorder::config_label(it2.key()), "Not allowed",
+                    mcp_refused(mcp_setting_label(it2.key()), "Not allowed",
                                 k_needs_sensitive + " " + k_dot + " " + mo->name, "PUT /objects/{id}/config");
+                else if (why.rfind("out_of_range: ", 0) == 0)
+                    mcp_refused(mcp_setting_label(it2.key()), "Out of range", mo->name + ": " + why.substr(14),
+                                "PUT /objects/{id}/config");
                 else
-                    mcp_refused(McpRecorder::config_label(it2.key()), mcp_reason(why, "Invalid value"),
+                    mcp_refused(mcp_setting_label(it2.key()), mcp_reason(why, "Invalid value"),
                                 mo->name + ": " + it2.key() + ": " + why, "PUT /objects/{id}/config");
             }
-            return {{"applied", nlohmann::json::array()}, {"errors", errors}};
+            nlohmann::json reply = {{"applied", nlohmann::json::array()}, {"errors", errors}};
+            if (!out_of_range.is_null())
+                for (auto it3 = out_of_range.begin(); it3 != out_of_range.end(); ++it3) reply[it3.key()] = it3.value();
+            return reply;
         }
         // MCP panel rows: per applied key, the old override (or the value the object used without one).
         std::vector<McpRow> mcp_rows;
@@ -2912,7 +3190,7 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
                                                    : (merged.has(key) ? merged.opt_serialize(key) : std::string());
                 const std::string after_raw  = cfg.opt_serialize(key);
                 if (had && before_raw == after_raw) continue;
-                const std::string label = McpRecorder::config_label(key);
+                const std::string label = mcp_setting_label(key);
                 McpRow row = mcp_config_row(key, label, before_raw, after_raw,
                                             {{"type", "object_config"}, {"object_id", id}, {"key", key}, {"had_override", had}},
                                             had ? mo->name + " only" : mo->name + " only " + k_dot + " from the print preset");
@@ -2950,7 +3228,7 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
         for (McpRow &row : mcp_rows) mcp_record(std::move(row));
         return {{"applied", applied}, {"errors", errors}, {"object", mo->name}};
     }, /*timeout_s=*/120);
-    if (r.contains("error")) return { 404, r };
+    if (r.contains("error") && r["error"] != "out_of_range") return { 404, r };
     return { r["errors"].empty() ? 200 : 422, r };
 }
 
@@ -2963,12 +3241,13 @@ static void mcp_queue_instances_row(Plater *plater, const char *op, std::vector<
     // The job moves objects after this request's baseline. It keeps the journal's token: when OrcaSlicer drops the
     // queued job unfinished (cancel_all on a delete or a project change), the token dies with it.
     std::shared_ptr<int> token  = mcp_journal_api_job_queued();
+    const bool trial = s_ui_trial;
     const bool queued = queue_job(plater->get_ui_job_worker(), [](Job::Ctl &) {},
-                                  [opname, before, plates_before, token](bool, std::exception_ptr &) {
+                                  [opname, before, plates_before, token, trial](bool, std::exception_ptr &) {
                                       (void) token;
-                                      mcp_record_instances(opname.c_str(), before, plates_before);
+                                      mcp_record_instances(opname.c_str(), before, plates_before, trial);
                                   });
-    if (!queued) mcp_record_instances(op, before, plates_before); // records what has moved so far
+    if (!queued) mcp_record_instances(op, before, plates_before, trial); // records what has moved so far
 }
 
 Response Controller::handle_arrange()
@@ -3130,11 +3409,13 @@ Response Controller::handle_create_plate(const std::string &body)
             mcp_undo(row, "Delete plate", "Delete Plate " + std::to_string(idx + 1) + " (only while it is empty)");
             // The panel's undo deletes this very plate, found by its ObjectID (indexes and origins shift when
             // plates before it are deleted).
-            try {
-                const int rid = McpRecorder::get().record(std::move(row));
-                McpRecorder::get().note_created_plate(rid, (uint64_t) plates.get_plate(idx)->id().id);
-            } catch (const std::exception &e) {
-                BOOST_LOG_TRIVIAL(error) << "MCP panel: row not recorded: " << e.what();
+            if (!s_ui_trial) { // M4: no row for a trial's plate
+                try {
+                    const int rid = McpRecorder::get().record(std::move(row));
+                    McpRecorder::get().note_created_plate(rid, (uint64_t) plates.get_plate(idx)->id().id);
+                } catch (const std::exception &e) {
+                    BOOST_LOG_TRIVIAL(error) << "MCP panel: row not recorded: " << e.what();
+                }
             }
         }
         return {{"created", true}, {"index", idx},
@@ -4990,6 +5271,12 @@ Response Controller::handle_user_changes(const std::string &target)
 
 Response Controller::dispatch(const Request &req)
 {
+    // The trial flag of this request, for every run_on_ui it makes (M4).
+    struct TrialScope {
+        bool prev;
+        explicit TrialScope(bool t) : prev(t_io_trial) { t_io_trial = t; }
+        ~TrialScope() { t_io_trial = prev; }
+    } trial_scope(req.trial);
     // A restore replaces the whole project: nothing, the journal included, may run in between.
     if (McpActions::restoring())
         return { 409, {{"error", "busy"}, {"detail", "the user is restoring"}} };
@@ -5034,6 +5321,42 @@ Response Controller::dispatch_route(const Request &req)
         // The MCP panel's timeline, in the shape the panel gets (read-only: records nothing).
         if (is("GET", "/api/v1/activity"))
             return { 200, run_on_ui([]() -> nlohmann::json { return McpActions::activity(); }) };
+        // M4 / m12: one row the connector adds itself (a comparison's summary, its own refusals).
+        if (is("POST", "/api/v1/activity/note")) {
+            nlohmann::json in;
+            try {
+                in = nlohmann::json::parse(req.body);
+            } catch (const nlohmann::json::parse_error &) {
+                return { 400, {{"error", "invalid_json"}} };
+            }
+            if (!in.is_object()) return { 400, {{"error", "body_must_be_object"}} };
+            const std::string kind = in.value("kind", std::string());
+            if (kind != "slice" && kind != "refused")
+                return { 400, {{"error", "bad_kind"}, {"detail", "kind is slice or refused"}} };
+            auto text_of = [&in](const char *k, size_t max) -> std::string {
+                auto it = in.find(k);
+                if (it == in.end() || !it->is_string()) return {};
+                std::string t = boost::algorithm::trim_copy(it->get<std::string>());
+                for (char &c : t) if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+                if (t.size() > max) {
+                    size_t cut = max;
+                    while (cut > 0 && (static_cast<unsigned char>(t[cut]) & 0xC0) == 0x80) --cut; // UTF-8 boundary
+                    t = t.substr(0, cut);
+                }
+                return t;
+            };
+            const std::string text = text_of("text", 160), value = text_of("value", 80), detail = text_of("detail", 400);
+            if (text.empty()) return { 400, {{"error", "missing_text"}} };
+            run_on_ui([kind, text, value, detail]() -> nlohmann::json {
+                try {
+                    McpRecorder::get().record_note(kind, text, value, detail);
+                } catch (const std::exception &e) {
+                    BOOST_LOG_TRIVIAL(error) << "MCP panel: note not recorded: " << e.what();
+                }
+                return nullptr;
+            });
+            return { 200, {{"recorded", true}} };
+        }
         {
             static const std::string tpfx = "/api/v1/activity/test/";
             if (req.method == "POST" && t.compare(0, tpfx.size(), tpfx) == 0) {

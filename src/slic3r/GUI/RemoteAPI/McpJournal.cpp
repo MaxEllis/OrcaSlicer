@@ -128,13 +128,33 @@ McpJournalEntry object_entry(uint64_t id, const std::string &name, const char *o
     return e;
 }
 
+// The unsaved edits of `a` that `b` no longer has (a switch with Discard), as "<label> <value>".
+std::vector<std::string> dropped_edits(const McpTextFns &f, const McpConfigSnap &a, const McpConfigSnap *b)
+{
+    std::vector<std::string> out;
+    for (const auto &kv : a.saved) {
+        if (skipped_key(kv.first)) continue;
+        auto av = a.values.find(kv.first);
+        if (av == a.values.end() || av->second == kv.second) continue; // not edited after all
+        if (b != nullptr) {
+            auto bv = b->values.find(kv.first);
+            if (b->saved.count(kv.first) && bv != b->values.end() && bv->second == av->second) continue; // carried over
+        }
+        out.push_back(sensitive(f, kv.first) ? label_of(f, kv.first) : label_of(f, kv.first) + " " + value_of(f, kv.first, av->second));
+    }
+    return out;
+}
+
 // Settings of one config: a switch (by name) is one entry plus the values edited on top of the new preset;
 // otherwise each changed value.
 void diff_config(const McpTextFns &f, const char *group, const std::string &scope, const std::string &type_word,
                  const McpConfigSnap &a, const McpConfigSnap &b, std::vector<McpJournalEntry> &out)
 {
     if (a.preset != b.preset) {
-        out.push_back(switch_entry(group, type_word, "preset:" + scope, a.preset, b.preset));
+        McpJournalEntry sw = switch_entry(group, type_word, "preset:" + scope, a.preset, b.preset);
+        sw.dropped         = dropped_edits(f, a, &b);
+        mcp_entry_text(sw);
+        out.push_back(std::move(sw));
         for (const auto &kv : b.saved) {
             if (skipped_key(kv.first)) continue;
             auto it = b.values.find(kv.first);
@@ -157,9 +177,19 @@ void diff_filaments(const McpTextFns &f, const McpBaseline &a, const McpBaseline
     const bool   many = nb > 1;
     // Switches, slot by slot.
     for (size_t i = 0; i < std::min(na, nb); ++i)
-        if (a.filament_slots[i] != b.filament_slots[i])
-            out.push_back(switch_entry("Filament", "Filament", "preset:filament:" + std::to_string(i + 1),
-                                       a.filament_slots[i], b.filament_slots[i], {int(i + 1)}, many));
+        if (a.filament_slots[i] != b.filament_slots[i]) {
+            McpJournalEntry sw = switch_entry("Filament", "Filament", "preset:filament:" + std::to_string(i + 1),
+                                              a.filament_slots[i], b.filament_slots[i], {int(i + 1)}, many);
+            // The old preset's unsaved edits are gone once no slot uses it any more.
+            const std::string &old_name = a.filament_slots[i];
+            const bool still_used = std::find(b.filament_slots.begin(), b.filament_slots.end(), old_name) != b.filament_slots.end();
+            auto       ait        = a.filaments.find(old_name);
+            if (!still_used && ait != a.filaments.end()) {
+                sw.dropped = dropped_edits(f, ait->second, nullptr);
+                mcp_entry_text(sw);
+            }
+            out.push_back(std::move(sw));
+        }
     // Values, per preset: the slots that kept it compare with before, the slots switched to it list the values
     // edited on top of it.
     std::set<std::string> done;
@@ -316,7 +346,12 @@ void mcp_entry_text(McpJournalEntry &e)
         auto shown = [](const std::string &v) { return v.empty() ? std::string("(empty)") : v; };
         e.text = e.label + " " + shown(e.old_text) + " " + kArrow + " " + shown(e.new_text) + suffix;
     } else if (e.form == "switch") {
-        e.text = e.label + " preset switched to " + e.new_text + (e.slot_suffix ? slot_suffix(e.slots) : std::string());
+        e.text = e.label + " preset switched to " + e.new_text + (e.old_cmp == e.new_cmp ? " and back" : "") +
+                 (e.slot_suffix ? slot_suffix(e.slots) : std::string());
+        if (!e.dropped.empty()) {
+            e.text += "; dropped the unsaved changes: ";
+            for (size_t i = 0; i < e.dropped.size(); ++i) e.text += (i ? ", " : "") + e.dropped[i];
+        }
     } else if (e.form == "count") {
         const int before = std::atoi(e.old_cmp.c_str()), after = std::atoi(e.new_cmp.c_str());
         const int d      = after - before;
@@ -419,6 +454,7 @@ json mcp_journal_reply(const std::deque<McpJournalEntry> &entries, int64_t since
             cur.new_cmp  = e.new_cmp;
             cur.new_text = e.new_text;
             cur.label    = e.label;
+            cur.dropped.insert(cur.dropped.end(), e.dropped.begin(), e.dropped.end()); // every switch's lost edits
         } else {
             cur = e; // changed by the API in between: what the assistant knows is the later old value
         }
@@ -430,7 +466,7 @@ json mcp_journal_reply(const std::deque<McpJournalEntry> &entries, int64_t since
 
     json changes = json::array();
     for (const McpJournalEntry &e : out) {
-        if (e.form != "fixed" && e.form != "object" && e.old_cmp == e.new_cmp) continue; // changed back
+        if (e.form != "fixed" && e.form != "object" && e.old_cmp == e.new_cmp && e.dropped.empty()) continue; // changed back
         json c = {{"seq", e.seq}, {"time", e.time}, {"kind", e.kind}, {"group", e.group}, {"text", e.text}};
         if (!e.key.empty()) c["key"] = e.key;
         changes.push_back(std::move(c));

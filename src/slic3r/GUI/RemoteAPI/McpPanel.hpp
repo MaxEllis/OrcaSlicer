@@ -12,8 +12,10 @@
 // and history (the page's ready can be lost while the bridge registers; the page repeats it too).
 // Page -> host: ready, live, undo {row}, restore {group}, undo_restore, open_settings (Preferences > Remote API;
 // GUI_App::open_preferences ignores a request while Preferences is already up), reveal {row} (McpActions::reveal from
-// the app's queue; no result). capabilities.reveal is true: the history marks setting rows of the print, filament and
-// printer presets "reveal": true (McpHistory::page_history).
+// the app's queue; no result; an ok reveal gives the keyboard focus back to the pane). capabilities.reveal is true: the
+// history marks setting rows of the print, filament and printer presets "reveal": true (McpHistory::page_history).
+// capabilities.tracked_live is true: live values come only for the latest row of each setting (ruling R43,
+// McpActions::live_values), and the history marks the earlier rows "superseded".
 //
 // It opens at start (and after the GUI is rebuilt) when the Remote API is enabled and the user has not closed it:
 // app_config "remote_api_panel" is "0" after a close from the pane's own button, "1" after View > OrcaSlicer MCP

@@ -75,11 +75,14 @@ struct McpJournalEntry {
     std::vector<int> slots;      // filament slots (1-based) a filament setting applies to
     bool             slot_suffix = false; // more than one filament: the text names the slots
     std::string      op;         // object entries: added | removed | moved | scaled | rotated
+    std::vector<std::string> dropped; // switch entries: "<label> <value>" of the unsaved edits the switch dropped
 };
 
 // The differences between two baselines, as entries without seq and time. Bulk rules: a new project
 // generation is one project entry and nothing else; a preset switch is one entry plus the values edited on
-// top of the new preset (compared with its saved values). Project settings are group "Project" (filament colours
+// top of the new preset (compared with its saved values). A switch that dropped unsaved edits of the old preset
+// (OrcaSlicer's "Discard") names them: "Print preset switched to X; dropped the unsaved changes: Top solid
+// layers 6, Wall loops 3" (a sensitive key by its label only). Project settings are group "Project" (filament colours
 // per slot, and not while the filament count changed; flush volumes neither; the wipe tower not while the plate
 // count changed); an object's own settings are group "Model", "<label> of <object>", "default" when not set.
 std::vector<McpJournalEntry> mcp_diff(const McpBaseline &before, const McpBaseline &after, const McpTextFns &fns);

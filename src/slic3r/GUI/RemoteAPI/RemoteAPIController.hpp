@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace Slic3r { namespace ElegooCanvas { struct Info; } }
-namespace Slic3r { class DynamicPrintConfig; }
+namespace Slic3r { class DynamicPrintConfig; class ConfigOption; }
 namespace Slic3r { namespace GUI { class Plater; } }
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
@@ -60,6 +60,14 @@ public:
     // The project-scope keys PUT /config writes (curr_bed_type, filament_colour, flush volumes and multipliers,
     // prime_volume_mode, wipe_tower_x/y). The user-change journal compares them too.
     static std::vector<std::string> writable_project_keys();
+
+    // OrcaSlicer's own range for a setting (ConfigRange.hpp: ConfigOptionDef min / max, the "mm or %" fields' literal
+    // limit, every element of a vector). after = the value about to be written, before = the value there now
+    // (nullptr: every element is judged; elements equal to it are not, so writing a value back never fails). false
+    // when out of range, with detail = {"error":"out_of_range","key","value","min","max","index"?,"detail"} (min /
+    // max null when that side has no limit) and text = "<label> must be between A and B (got C)". Any thread.
+    static bool config_value_in_range(const std::string &key, const ConfigOption *before, const ConfigOption &after,
+                                      nlohmann::json &detail, std::string &text);
 
     SliceState slice_state() const { std::lock_guard<std::mutex> lk(m_mutex); return m_slice; }
 

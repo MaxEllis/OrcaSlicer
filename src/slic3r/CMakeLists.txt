@@ -286,6 +286,7 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteAPI/RemoteAPIServer.cpp
     GUI/RemoteAPI/RemoteAPIServer.hpp
     GUI/RemoteAPI/UiTaskGate.hpp
+    GUI/RemoteAPI/ConfigRange.hpp
     GUI/RemoteAPI/RemoteAPIController.cpp
     GUI/RemoteAPI/RemoteAPIController.hpp
     GUI/RemoteAPI/McpActions.cpp

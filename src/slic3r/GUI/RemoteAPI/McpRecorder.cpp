@@ -675,6 +675,33 @@ void McpRecorder::record_refusal(std::string label, std::string why, std::string
     record(std::move(r));
 }
 
+void McpRecorder::record_note(const std::string &kind, const std::string &text, const std::string &value,
+                              const std::string &where)
+{
+    if (!wxThread::IsMain()) return;
+    if (kind == "refused") {
+        record_refusal(text, where, value.empty() ? std::string("Not allowed") : value, {{"type", "refused"}, {"action", "note"}});
+        return;
+    }
+    sync_project();
+    if (!m_open) open_change(false);
+    McpRow r;
+    r.kind       = "slice";
+    r.label      = text;
+    r.value      = value;
+    r.where      = where;
+    r.title_hint = "note";
+    r.target     = {{"type", "note"}};
+    r.ts         = now_s();
+    r.time       = hhmm(r.ts);
+    m_history.add_row(std::move(r));
+    // Like a slice result, the note ends its group.
+    m_history.close_group();
+    m_open = false;
+    save();
+    notify();
+}
+
 void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &error)
 {
     if (!wxThread::IsMain()) return;

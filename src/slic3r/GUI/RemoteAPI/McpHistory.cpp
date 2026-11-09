@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <exception>
 #include <filesystem>
+#include <set>
 #include <system_error>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
@@ -178,8 +179,47 @@ bool mcp_row_revealable(const McpRow &row)
            (scope == "print" || scope == "filament" || scope == "printer");
 }
 
+std::string mcp_row_subject(const McpRow &row)
+{
+    if (!row.target.is_object()) return {};
+    const json &t = row.target;
+    auto part = [&t](const char *k) -> std::string {
+        auto it = t.find(k);
+        if (it == t.end() || it->is_null()) return {};
+        return it->is_string() ? it->get<std::string>() : it->dump();
+    };
+    const std::string type = part("type");
+    if (type == "config")         return "config|" + part("scope") + "|" + part("key") + "|" + part("index") + "|" + part("preset");
+    if (type == "object_config")  return "object_config|" + part("object_id") + "|" + part("key");
+    if (type == "preset")         return "preset|" + part("preset_type") + "|" + part("slot");
+    if (type == "slot_mapping")   return "slot_mapping|" + part("filament");
+    if (type == "layer_profile")  return "layer_profile|" + part("object_id");
+    if (type == "height_range")   return "height_range|" + part("object_id") + "|" + part("min_z") + "|" + part("max_z");
+    if (type == "transform" || type == "instance_plate") return "instance|" + part("object_id") + "|" + part("instance");
+    return {};
+}
+
+McpTracking mcp_tracking(const std::vector<McpRow> &rows, int newest_group)
+{
+    McpTracking out;
+    std::set<std::string> later; // subjects seen in a later, not undone row (walking from the newest)
+    for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+        const McpRow &r = *it;
+        if (!r.undone_at.empty()) continue;
+        const std::string subj = mcp_row_subject(r);
+        if (subj.empty()) {
+            if (!r.undo_verb.empty() || r.group == newest_group) out.tracked.insert(r.id);
+            continue;
+        }
+        if (later.insert(subj).second) out.tracked.insert(r.id);
+        else                           out.superseded.insert(r.id);
+    }
+    return out;
+}
+
 json McpHistory::page_history() const
 {
+    const McpTracking tracking = mcp_tracking(m_rows, m_groups.empty() ? -1 : m_groups.back().id);
     json rows = json::array();
     for (const McpRow &r : m_rows) {
         json undo = nullptr;
@@ -192,7 +232,8 @@ json McpHistory::page_history() const
                         {"undo", undo}, {"undone_at", r.undone_at},
                         {"title_hint", r.title_hint.empty() ? json(nullptr) : json(r.title_hint)},
                         {"result", r.result.is_null() ? json(nullptr) : r.result}, {"error", page_error(r)},
-                        {"on_disk", r.on_disk}, {"reveal", mcp_row_revealable(r)}});
+                        {"on_disk", r.on_disk}, {"reveal", mcp_row_revealable(r)},
+                        {"superseded", tracking.superseded.count(r.id) > 0}});
     }
     json groups = json::array();
     if (m_has_start && !m_groups.empty()) {

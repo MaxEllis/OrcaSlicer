@@ -22,6 +22,16 @@ struct Config
     static std::string generate_token();
 };
 
+// The server as it runs now, for the Preferences page's status line (M5). GUI thread. Defined with the controller.
+struct ServerStatus
+{
+    bool listening    { false }; // bound and serving
+    bool start_failed { false }; // the last start could not bind its port
+    int  port         { 0 };     // the port it listens on (or last tried)
+    bool bind_lan     { false };
+};
+ServerStatus server_status();
+
 }}} // namespace
 
 #endif

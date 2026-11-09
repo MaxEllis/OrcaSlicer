@@ -27,8 +27,9 @@ public:
     // nothing was recorded since). Records nothing (it follows the open project, like every recorder call).
     static nlohmann::json activity();
 
-    // {"<row id>": {"value": <text in the row's display form>, "present": bool}} for every row with an undo that
-    // is not undone, and every row of the newest group whose value can be read now. Matrices (transform,
+    // {"<row id>": {"value": <text in the row's display form>, "present": bool}} for every tracked row whose value
+    // can be read now (R43, McpHistory.hpp mcp_tracking: the latest row of each setting, whichever group; rows with
+    // no subject keep the old rule: with an undo, or in the newest group). Matrices (transform,
     // duplicate, arrange, orient, move to plate) are compared here, 1e-6 relative per element: value is the row's
     // own value when nothing moved, "moved since" otherwise. present=false: the object is gone.
     static nlohmann::json live_values();

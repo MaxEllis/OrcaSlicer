@@ -30,6 +30,7 @@
 #include <cmath>
 #include <exception>
 #include <map>
+#include <memory>
 #include <optional>
 #include <regex>
 #include <set>
@@ -418,6 +419,8 @@ std::string apply_preset_edits(const json &changes)
         for (T &x : ts)
             if (x.cfg.option(it.key()) != nullptr) { tgt = &x; break; }
         if (tgt == nullptr) return it.key() + ": not a print, filament or printer setting";
+        // A copy of the value there now, for the range check (set_deserialize_strict replaces it).
+        std::unique_ptr<ConfigOption> was(tgt->cfg.option(it.key())->clone());
         std::string raw;
         const json &v = it.value();
         if (v.is_string()) raw = v.get<std::string>();
@@ -429,6 +432,9 @@ std::string apply_preset_edits(const json &changes)
         } catch (const std::exception &e) {
             return it.key() + ": " + e.what();
         }
+        json        rd;
+        std::string rtext;
+        if (!Controller::config_value_in_range(it.key(), was.get(), *tgt->cfg.option(it.key()), rd, rtext)) return rtext;
         tgt->touched = true;
     }
     for (T &x : ts) {
@@ -518,6 +524,14 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             cfg.set_deserialize_strict(key, before);
         } catch (const std::exception &) {
             return "Can't set it back";
+        }
+        {
+            // Never put back a value OrcaSlicer's own fields would refuse.
+            const ConfigOption *now = c->get_edited_preset().config.option(key);
+            json                rd;
+            std::string         rtext;
+            if (cfg.option(key) != nullptr && !Controller::config_value_in_range(key, now, *cfg.option(key), rd, rtext))
+                return "Can't set it back: " + rtext;
         }
         Tab *tab = wxGetApp().get_tab(preset_type(scope));
         if (tab == nullptr) return "The settings tab is not ready";
@@ -694,6 +708,12 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             else cfg.erase(key);
         } catch (const std::exception &) {
             return "Can't set it back";
+        }
+        if (cfg.has(key)) {
+            json        rd;
+            std::string rtext;
+            if (!Controller::config_value_in_range(key, mo->config.get().option(key), *cfg.option(key), rd, rtext))
+                return "Can't set it back: " + rtext;
         }
         Plater::TakeSnapshot snapshot(p, "Change Object Settings");
         mo->config.assign_config(std::move(cfg));
@@ -1021,9 +1041,11 @@ json McpActions::live_values()
     json        out = json::object();
     const auto &gs  = rec.history().groups();
     const int   newest = gs.empty() ? -1 : gs.back().id;
+    // R43: only the tracked rows (the latest row of each setting, McpHistory.hpp mcp_tracking) get a live entry; the
+    // page shows "changed by you" only for those.
+    const McpTracking tracking = mcp_tracking(rec.history().rows(), newest);
     for (const McpRow &r : rec.history().rows()) {
-        if (!r.undone_at.empty()) continue;
-        if (r.undo_verb.empty() && r.group != newest) continue;
+        if (tracking.tracked.count(r.id) == 0) continue;
         try {
             const Live l = live_of(r);
             if (!l.known) continue;
@@ -1048,13 +1070,14 @@ json McpActions::undo(int row_id)
     if (r.undo_verb.empty()) return result_failed("Nothing to undo");
     if (!r.undone_at.empty()) return result_failed("Reverted at " + r.undone_at);
     const auto &gs     = rec.history().groups();
-    const bool  newest = !gs.empty() && gs.back().id == r.group;
+    // R43: the assistant changed the same setting again later: undoing this row would overwrite that change.
+    if (mcp_tracking(rec.history().rows(), gs.empty() ? -1 : gs.back().id).superseded.count(r.id) > 0)
+        return result_failed("Changed again since; restore an earlier point instead");
     // Never overwrite a later change: the row's value must still be what is there.
     try {
         const Live l = live_of(r);
         if (l.known && !l.present) return result_failed(object_name_of(r) + " is no longer on the plate");
-        if (l.known && !same_text(l.value, r.value))
-            return result_failed(newest ? "You changed it since" : "Changed again since; restore an earlier point instead");
+        if (l.known && !same_text(l.value, r.value)) return result_failed("You changed it since");
     } catch (const std::exception &e) {
         return result_failed(std::string("Can't check it now: ") + e.what());
     }
@@ -1197,9 +1220,12 @@ json McpActions::undo_restore()
         return result_failed("The snapshot before the restore was changed on disk, so it is not used");
     }
 
+    // m6: the note names the point the undone restore had gone back to.
+    const std::string undone_time = s_restore.restored_to >= 0 ? point_time(rec.history(), s_restore.restored_to) : std::string();
+    const std::string undone_what = undone_time.empty() ? std::string("the restore") : "the restore to " + undone_time;
     const std::string err = open_point(path);
     if (!err.empty()) {
-        tell("Tried to undo the restore in the panel; it failed");
+        tell("Tried to undo " + undone_what + " in the panel; it failed");
         return result_failed(err);
     }
 
@@ -1219,7 +1245,7 @@ json McpActions::undo_restore()
     rec.close_group();
     rec.changed();
     publish({{"event", "panel.restored"}, {"group", nullptr}, {"undone", true}});
-    tell("Undid the restore in the panel");
+    tell("Undid " + undone_what + " in the panel; the project is back as it was before that restore");
     return result_ok();
 }
 

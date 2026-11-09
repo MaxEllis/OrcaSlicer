@@ -26,6 +26,9 @@ struct Request
     std::string method;
     std::string target; // path incl. query, e.g. "/api/v1/config?keys=layer_height"
     std::string body;
+    // The header X-Orca-Mcp-Trial: 1 (M4): a trial run (orcaslicer-mcp's compare_slices tries settings, slices and
+    // puts them back). The MCP panel records nothing for it; the user-change journal treats it as any API request.
+    bool        trial { false };
 };
 
 struct Response
@@ -53,7 +56,9 @@ public:
     void start(const Config &cfg);
     void stop();
     bool running() const { return m_running; }
-    int  port() const { return m_cfg.port; }
+    int  port() const { return m_cfg.port; }          // the port it listens on (or last tried)
+    bool bind_lan() const { return m_cfg.bind_lan; }  // listening on the local network, not only this computer
+    bool start_failed() const { return m_start_failed; } // the last start could not bind its port
 
     // Thread-safe: called from the GUI thread, writes go out on the io thread.
     void broadcast(const nlohmann::json &event);
@@ -71,6 +76,7 @@ private:
     Config                                     m_cfg;
     Handler                                    m_handler;
     std::atomic<bool>                          m_running { false };
+    bool                                       m_start_failed { false };
     std::unique_ptr<boost::asio::io_context>   m_ioc;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> m_acceptor;
     boost::thread                              m_thread;
