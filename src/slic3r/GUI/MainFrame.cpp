@@ -52,8 +52,8 @@
 #include "slic3r/GUI/UnsavedChangesDialog.hpp"
 #include "slic3r/GUI/Widgets/SideButton.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp" // F8: backup/API mutual exclusion
-#include "RemoteAPI/McpPanel.hpp"
-#include "RemoteAPI/McpRecorder.hpp"            // View > OrcaSlicer MCP panel
+#include "RemoteAPI/McpPanel.hpp"            // View > OrcaSlicer MCP panel
+#include "RemoteAPI/McpRecorder.hpp"         // flush the panel history on close
 
 #include <wx/panel.h>
 #include <wx/settings.h>
