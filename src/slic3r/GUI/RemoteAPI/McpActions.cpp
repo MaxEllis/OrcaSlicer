@@ -1249,11 +1249,16 @@ json McpActions::reveal(int row_id)
     // As the sidebar's search does: the index entry gives the key as the page lists it (a vector option per element,
     // "nozzle_temperature#0") and its page, so the field is found and blinks. Without an entry (hidden in the current
     // mode) the bare key, as the notifications' "Jump to" links pass it.
-    int                   variant = -1;
-    const Search::Option &opt     = sidebar.settings_index().get_option(key, type, variant);
-    const std::string     found   = variant != -2 ? opt.opt_key() : std::string();
-    if (!found.empty())
-        sidebar.jump_to_option(found, type, opt.category);
+    // A linear scan: the index is kept sorted by label for the search box, and get_option() binary-searches by key
+    // (its other callers re-sort by key first, which would break the search box's positions).
+    const Search::Option *hit = nullptr;
+    for (const Search::Option &o : sidebar.settings_index().options()) {
+        if (o.type != type) continue;
+        const std::string k = o.opt_key();
+        if (k == key || (k.size() > key.size() && k.compare(0, key.size(), key) == 0 && k[key.size()] == '#')) { hit = &o; break; }
+    }
+    if (hit != nullptr)
+        sidebar.jump_to_option(hit->opt_key(), type, hit->category);
     else
         sidebar.jump_to_option(key, type, L"");
     return result_ok();

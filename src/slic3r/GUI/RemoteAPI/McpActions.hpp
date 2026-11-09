@@ -44,7 +44,7 @@ public:
     // Shows a row's setting in the settings sidebar (the page's "reveal", fire and forget: the pane sends no result):
     // Sidebar::jump_to_option for the row's key in the print, filament or printer tab, as OrcaSlicer's own "Jump to"
     // links do. Only rows mcp_row_revealable() accepts (setting rows of those three presets). Changes nothing; does
-    // nothing (status failed, reason for the log and the test hook) while busy (busy check of the other actions), for
+    // nothing (status failed, reason for the log and the test hook) during a restore or a project load (not a slice or a job), for
     // a row that is gone or not revealable, or when the key is no longer in that preset or its tab is missing.
     static nlohmann::json reveal(int row);
 

@@ -736,7 +736,7 @@ today.
 | `{"action": "undo", "row": <id>}` | The user clicked a row's undo link | exactly one `result` |
 | `{"action": "restore", "group": <id>}` | The user confirmed "Restore to HH:MM?" (a listed group; the page does not list `0`, the start point) | exactly one `result` |
 | `{"action": "undo_restore"}` | The user clicked Undo on the "Restored to" line | exactly one `result` |
-| `{"action": "reveal", "row": <id>}` | The user opened the detail line of a row with `reveal: true`, only when `capabilities.reveal` is `true` (closing it sends nothing) | nothing; show that setting in the host's settings (this fork: `Sidebar::jump_to_option`, as OrcaSlicer's own "Jump to" links, which switches to the setting's tab and page and highlights it). Ignore it while busy (a restore, a project load, an assistant request in progress), or when the setting is gone |
+| `{"action": "reveal", "row": <id>}` | The user opened the detail line of a row with `reveal: true`, only when `capabilities.reveal` is `true` (closing it sends nothing) | nothing; show that setting in the host's settings (this fork: `Sidebar::jump_to_option`, as OrcaSlicer's own "Jump to" links, which switches to the setting's tab and page and highlights it). Ignore it during a restore or a project load, or when the setting is gone (a slice or job running does not stop it) |
 | `{"action": "open_settings"}` | The settings icon, or the link in the off line (both only when `capabilities.open_settings` is not `false`) | nothing; open the host's settings (Preferences > Remote API here, the plugin's own settings page in the plugin) |
 
 Ids arrive as JavaScript numbers. `reveal` never gets a `result` (fire and forget). Every `undo`, `restore` and
