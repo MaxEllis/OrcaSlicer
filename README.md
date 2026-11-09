@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="doc/images/readme/logo-dark.svg">
-    <img alt="OrcaSlicer MCP" src="doc/images/readme/logo-light.svg" width="150">
+    <source media="(prefers-color-scheme: dark)" srcset="doc/images/readme/logo-horizontal-dark.svg">
+    <img alt="OrcaSlicer MCP" src="doc/images/readme/logo-horizontal-light.svg" width="320">
   </picture>
 </p>
 
