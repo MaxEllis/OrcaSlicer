@@ -85,6 +85,9 @@ static void api_notify(const std::string &text, bool warning = false)
         auto *ac = wxGetApp().app_config;
         bool enabled = (ac && ac->has("remote_api_notify")) ? ac->get_bool("remote_api_notify") : true;
         if (!enabled) return;
+        // The MCP panel lists every change with its undo, so while it is open the
+        // plain change toasts would only repeat it. Warnings (refusals) still show.
+        if (!warning && McpPanel::is_open()) return;
         Plater *plater = wxGetApp().plater();
         if (plater == nullptr) return;
         NotificationManager *nm = plater->get_notification_manager();

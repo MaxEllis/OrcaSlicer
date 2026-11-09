@@ -2597,7 +2597,8 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
         _L("Notify on API changes"),
         _L("Show a notification in OrcaSlicer when an external tool changes settings, "
            "loads or edits objects, or switches presets. Slicing and arrange/orient use "
-           "OrcaSlicer's own feedback."),
+           "OrcaSlicer's own feedback. While the MCP panel is open it lists these changes "
+           "instead, and only refusals show here."),
         "remote_api_notify");
     g_sizer->Add(item_notify);
 
