@@ -3,6 +3,7 @@
 #include "McpActions.hpp"
 #include "McpJournal.hpp"
 #include "McpRecorder.hpp"
+#include "McpPanel.hpp"
 #include "UiTaskGate.hpp"
 
 #include "libslic3r/Preset.hpp"
@@ -440,6 +441,8 @@ static bool project_has_unsaved_changes(Plater *plater); // defined with the pro
 
 void Controller::notify_config_changed(int preset_type)
 {
+    // The MCP panel's live values (also while the API is off: the pane stays).
+    McpPanel::config_changed();
     if (g_controller) g_controller->on_config_changed(preset_type);
 }
 
@@ -451,6 +454,7 @@ void Controller::notify_project_opened()
     // MCP panel: the next history sync takes a path change for an open, not a save. Also while the API
     // is off, so a project opened then has its timeline back once the API is turned on.
     McpRecorder::note_project_opened();
+    McpPanel::project_changed();
     // The user-change journal: one "Opened project" entry replaces everything before it (an API open is
     // absorbed by the baseline at the end of its request).
     mcp_journal_project_opened();
@@ -465,6 +469,7 @@ void Controller::notify_project_new()
     // A restore may start a new project on its way to opening the checkpoint: not the user's new project.
     if (McpActions::restoring()) return;
     mcp_journal_project_new();
+    McpPanel::project_changed();
 }
 
 void Controller::on_config_changed(int preset_type)
@@ -4784,6 +4789,28 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
                          if (!out) return {{"status", "failed"}, {"reason", "write failed"}};
                      }
                      return {{"status", "ok"}, {"file", file}};
+                 }) };
+    }
+    if (name == "pane") {
+        // The dock pane as the page sees it: {"clear": true} starts recording what it sends, {"post": message or
+        // [messages]} hands it page messages (an undo/restore runs after this reply, from the app's queue, as a
+        // click does). Answers {"open", "messages": [sent since the clear], "posted"?}.
+        if (in.contains("clear") && !in["clear"].is_boolean()) return { 400, {{"error", "clear_must_be_bool"}} };
+        const bool     clear = in.value("clear", false);
+        nlohmann::json posts = nlohmann::json::array();
+        if (in.contains("post")) {
+            if (in["post"].is_array()) posts = in["post"];
+            else posts.push_back(in["post"]);
+            for (const auto &m : posts)
+                if (!m.is_object()) return { 400, {{"error", "post_must_be_object"}} };
+        }
+        return { 200, run_on_ui([clear, posts]() -> nlohmann::json {
+                     if (clear) McpPanel::test_clear();
+                     bool posted = !posts.empty();
+                     for (const auto &m : posts) posted = McpPanel::test_post(m) && posted;
+                     nlohmann::json out = McpPanel::test_state();
+                     if (!posts.empty()) out["posted"] = posted;
+                     return out;
                  }) };
     }
     if (name == "as_user") {

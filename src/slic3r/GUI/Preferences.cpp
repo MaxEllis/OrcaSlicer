@@ -2568,7 +2568,7 @@ wxBoxSizer* PreferencesDialog::create_debug_page()
 
 void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap)
 {
-    m_pref_tabs->AppendItem(_L("Remote API"));
+    m_tab_index[PreferencesTab::RemoteAPI] = m_pref_tabs->AppendItem(_L("Remote API"));
     f_sizers.push_back(new wxFlexGridSizer(1, 1, v_gap, 0));
     auto g_sizer = f_sizers.back();
     g_sizer->AddGrowableCol(0, 1);

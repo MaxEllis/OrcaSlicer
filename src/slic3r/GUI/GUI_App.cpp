@@ -11,6 +11,7 @@
 // forward-declared in GUI_App.hpp).
 #include "RemoteAPI/RemoteAPIServer.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp"
+#include "RemoteAPI/McpPanel.hpp"
 #include "GUI_App.hpp"
 #include "BBLTopbar.hpp"
 #include "Shortcuts.hpp"
@@ -1242,6 +1243,8 @@ void GUI_App::post_init()
         std::exchange(m_startup_cloud_report, nullptr)();
 
     this->start_remote_api();
+    // The OrcaSlicer MCP dock pane, when the Remote API is on and the user has not closed it.
+    RemoteAPI::McpPanel::open_when_ready();
     BOOST_LOG_TRIVIAL(info) << "finished post_init";
 //BBS: remove the single instance currently
 #ifdef _WIN32
@@ -5079,6 +5082,8 @@ void GUI_App::recreate_GUI(const wxString &msg_name)
     // recreate (shutdown() skips stop when m_is_recreating_gui), so WS clients
     // are preserved.
     if (m_remote_api_controller) m_remote_api_controller->bind_plater_events();
+    // mainframe->shutdown() removed the OrcaSlicer MCP dock pane with the old plater: open it on the new one.
+    RemoteAPI::McpPanel::open_when_ready();
 
     m_is_recreating_gui = false;
 
@@ -9318,6 +9323,8 @@ void GUI_App::open_preferences(PreferencesTab tab, const std::string& highlight_
         // idempotent even if nothing Remote-API-related changed.
         stop_remote_api();
         start_remote_api(); // no-op if remote_api_enabled is false
+        // The OrcaSlicer MCP pane shows the API on/off (or opens, once the API is turned on).
+        RemoteAPI::McpPanel::settings_changed();
         need_recreate_gui = dlg.recreate_GUI();
         pending_language = dlg.pending_language();
         if (!need_recreate_gui) {

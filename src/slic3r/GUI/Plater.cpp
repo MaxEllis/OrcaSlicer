@@ -4,6 +4,7 @@
 #include "CalibUtils.hpp"
 #include "Flashforge.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp"
+#include "RemoteAPI/McpPanel.hpp"
 #include "libslic3r/Config.hpp"
 #include "libslic3r_version.h"
 
@@ -8634,6 +8635,8 @@ void Plater::priv::update(unsigned int flags)
 #endif
 
     update_sidebar();
+    // The OrcaSlicer MCP pane compares its rows with what is on the plate now.
+    RemoteAPI::McpPanel::model_changed();
 }
 
 void Plater::priv::select_view(const std::string& direction)
@@ -10877,6 +10880,7 @@ void Plater::priv::object_list_changed()
     wxGetApp().params_panel()->notify_object_config_changed();
 
     q->mark_plate_toolbar_image_dirty();
+    RemoteAPI::McpPanel::model_changed();
 }
 
 void Plater::priv::select_curr_plate_all()
@@ -14695,6 +14699,8 @@ void Plater::priv::set_project_filename(const wxString& filename)
 
     if (!m_project_folder.empty() && !q->m_only_gcode)
         wxGetApp().mainframe->add_to_recent_projects(filename);
+    // The OrcaSlicer MCP pane's timeline follows the project (a Save As starts another one).
+    RemoteAPI::McpPanel::project_changed();
 }
 
 void Plater::priv::init_notification_manager()

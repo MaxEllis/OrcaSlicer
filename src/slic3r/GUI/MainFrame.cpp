@@ -52,6 +52,7 @@
 #include "slic3r/GUI/UnsavedChangesDialog.hpp"
 #include "slic3r/GUI/Widgets/SideButton.hpp"
 #include "RemoteAPI/RemoteAPIController.hpp" // F8: backup/API mutual exclusion
+#include "RemoteAPI/McpPanel.hpp"            // View > OrcaSlicer MCP panel
 
 #include <wx/panel.h>
 #include <wx/settings.h>
@@ -3546,6 +3547,12 @@ void MainFrame::init_menubar_as_editor()
                 return is_prepare_or_preview_tab() && m_plater->is_sidebar_enabled();
             },
             this);
+
+        // Brings back the OrcaSlicer MCP dock pane after the user closed it (it then opens at start again).
+        append_menu_item(
+            viewMenu, wxID_ANY, _L("OrcaSlicer MCP panel"), _L("Show the OrcaSlicer MCP panel"),
+            [](wxCommandEvent&) { RemoteAPI::McpPanel::show(); }, "", this,
+            [this]() { return is_prepare_or_preview_tab(); }, this);
 
         viewMenu->AppendSeparator();
         wxMenuItem* mouse3d_settings = append_menu_check_item(viewMenu, wxID_ANY, shortcut_label(_L("Show 3Dconnexion Settings"), Shortcut::Mouse3DSettings, true),
