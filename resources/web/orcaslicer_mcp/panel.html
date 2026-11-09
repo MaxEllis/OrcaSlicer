@@ -6,9 +6,11 @@
 <meta charset="utf-8">
 <title>OrcaSlicer MCP</title>
 <style>
-  /* Colours: the host's theme variables where it sends them. The link, faint, warning and focus colours follow the
-     background's lightness (data-theme on the root, set by the view script), so actions reach 4.5:1 in both themes:
-     dark #5ad1c4 on #2b2b2f 7.6:1 (5.7:1 on a hovered row), light #00695c on #f5f5f5 6.1:1 (5.1:1 hovered). */
+  /* Colours: the host's theme variables where it sends them. The link, faint, warning, focus and type colours below
+     are the starting points for each side (data-theme on the root): the view script measures the background the host
+     really gives (and the row tints over it) and moves each colour's lightness until text reaches 4.5:1 and icons and
+     the focus ring 3:1 there (McpPanelCore.themeColours), setting the result on the root. These values apply until
+     then, or where the script cannot measure. */
   :root { --bg: var(--orca-bg, #2b2b2f); --fg: var(--orca-fg, #e8e8e8); --muted: var(--orca-muted, #a3a3a8);
           --border: var(--orca-border, #3c3c42); --accent: var(--orca-accent, #009688);
           --link: #5ad1c4; --faint: #9a9aa0; --warn: #f28b82; --focus: #5ad1c4;
@@ -22,6 +24,10 @@
   html, body { margin: 0; height: 100%; }
   body { background: var(--bg); color: var(--fg); font: 13px/1.4 var(--font); display: flex; flex-direction: column; overflow: hidden; }
   button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; text-align: inherit; }
+  /* The host injects element defaults after this sheet (WebViewHostDialog: every button on the accent colour, with a
+     border, padding and a hover filter). These win over that by specificity; any class rule below still wins. */
+  html body button { background: none; border: 0; border-radius: 0; padding: 0; margin: 0; color: inherit; font: inherit; text-align: inherit; filter: none; }
+  html body button:hover { filter: none; }
   /* Keyboard focus: a ring in the theme's focus colour on every control (rows are role=button). Rules that name
      :focus-visible stand alone: an engine without it drops only them (and keeps its default focus outline). */
   :focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; border-radius: 3px; }
@@ -35,7 +41,6 @@
   .ibtn:focus-visible { background: var(--hover); color: var(--fg); }
   .ibtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
   .title [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
-  .title [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
 
   svg.i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
   .k-setting { color: var(--t-set); } .k-preset { color: var(--t-preset); } .k-model { color: var(--t-model); }
@@ -49,6 +54,7 @@
   .lnk { color: var(--link); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; border-radius: 2px; }
   .lnk.off { color: var(--faint); text-decoration: none; cursor: default; }
   .lnk.no { color: var(--muted); }
+  .lnk:focus-visible { outline-offset: 1px; }
 
   .group { border-bottom: 1px solid var(--border); }
   .ghead { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; column-gap: 7px; min-height: 34px; padding: 0 10px; cursor: pointer; }
@@ -83,7 +89,8 @@
   .row { display: grid; grid-template-columns: 14px minmax(4em, 1fr) fit-content(60%); gap: 8px; align-items: center; min-height: 26px; padding: 3px 10px 3px 51px; cursor: pointer; }
   .row:hover { background: var(--hover-soft); }
   .row .l { color: var(--muted); min-width: 0; display: block; }
-  .row .l .lt { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A long label wraps to a second line (and is cut after it), never truncated on one line. */
+  .row .l .lt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
   .row .v { color: var(--fg); text-align: right; overflow-wrap: anywhere; min-width: 0; }
   .row .v .sw { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--border); border-radius: 2px; }
   .row .v .old { color: var(--faint); text-decoration: line-through; margin-right: 6px; }
@@ -95,6 +102,7 @@
   .row .l .chg .old { color: var(--muted); }
   .row.refused .v { color: var(--warn); }
   .row.stale .v, .row.stale .l .lt { color: var(--faint); }
+  .row.dropped .v { color: var(--faint); }
   .more { display: none; padding: 0 10px 6px 73px; color: var(--muted); font-size: 12px; justify-content: space-between; gap: 8px; }
   .row.open, .row.open + .more { background: var(--hover-soft); }
   .row.open + .more { display: flex; }
@@ -113,25 +121,20 @@
   .ghead .rl .name { min-width: 0; }
   .ghead .rl .sep { color: var(--muted); flex: none; }
   .group.restored [data-tip]:hover::after { top: calc(100% + 6px); bottom: auto; }
-  .group.restored [data-tip]:focus-visible::after { top: calc(100% + 6px); bottom: auto; }
   [data-tip] { position: relative; }
   [data-tip]:hover::after {
     content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
     white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
-  button[data-tip]:focus-visible::after {
-    content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-    white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
-  .row:focus-visible .l[data-tip]::after {
-    content: attr(data-tip); position: absolute; z-index: 5; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-    white-space: nowrap; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg); border: 1px solid var(--tip-border); font-size: 11.5px; pointer-events: none; font-weight: 400; text-decoration: none; }
+  /* A tag for the control the keyboard focused (P5): one element the view script places above the control, or below
+     it, inside the pane and never over the control (McpPanelCore.placeTip). */
+  .ftip { position: fixed; z-index: 6; left: 0; top: 0; max-width: 240px; padding: 3px 7px; border-radius: 3px; background: var(--tip-bg); color: var(--tip-fg);
+          border: 1px solid var(--tip-border); font-size: 11.5px; line-height: 1.35; pointer-events: none; overflow-wrap: anywhere; }
+  .ftip[hidden] { display: none; }
   .tip-left:hover::after { left: auto; right: 0; transform: none; }
-  .tip-left:focus-visible::after { left: auto; right: 0; transform: none; }
   .row .ic { display: inline-flex; }
   /* After the general tag rule: a row's tag and the restore icon's long tag wrap inside the pane. */
   .row .l[data-tip]:hover::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
-  .row:focus-visible .l[data-tip]::after { left: 0; transform: none; white-space: normal; width: max-content; max-width: 200px; }
   .ghead .act[data-tip]:hover::after { white-space: normal; width: max-content; max-width: 220px; }
-  .ghead .act[data-tip]:focus-visible::after { white-space: normal; width: max-content; max-width: 220px; }
 </style>
 </head>
 <body>
@@ -149,6 +152,7 @@
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></symbol>
 </svg>
 <div id="app">
+  <div class="ftip" id="ftip" role="tooltip" hidden></div>
   <div class="title">Assistant<span class="sp"></span><button type="button" class="ibtn tip-left" id="fold"></button><button type="button" class="ibtn tip-left" id="gear"></button></div>
   <div class="list" id="list"></div>
 </div>
@@ -347,8 +351,11 @@
   // The value a row shows. tracked (the host's capabilities.tracked_live): the host sends live entries only for the
   // rows it tracks (the latest row of each setting, ruling R43), so any row with an entry shows it; without it, only
   // the newest group's rows do (isNewest).
+  // A row the host marks dropped (the assistant's own preset switch dropped its edit) shows the value it set with a
+  // note, never a live value and never "changed by you".
   function liveDisplay(row, live, isNewest, tracked) {
     var shown = has(row.value) ? String(row.value) : '';
+    if (row.dropped === true) return { value: shown, note: 'dropped by a preset switch' };
     var e = (tracked || isNewest) ? liveEntry(row, live) : null;
     if (!e) return { value: shown, note: '' };
     if (!e.present) return { value: shown, note: 'removed since' };
@@ -362,6 +369,10 @@
     var again = canRestore === false ? 'Changed again since' : 'Changed again since; restore an earlier point instead';
     if (!row.undo) return { available: false, why: '' };
     if (has(row.undone_at)) return { available: false, why: 'Reverted at ' + row.undone_at };
+    // The assistant's own preset switch dropped the edit (the host's dropped flag): nothing of it is left to undo.
+    if (row.dropped === true) {
+      return { available: false, why: canRestore === false ? 'Dropped by a preset switch' : 'Dropped by a preset switch; restore an earlier point instead' };
+    }
     // The assistant changed the same setting again later (the host's superseded flag): undoing this row would
     // overwrite that change.
     if (row.superseded === true) return { available: false, why: again };
@@ -381,6 +392,125 @@
     return { available: true, why: '' };
   }
 
+  // ---- Colours (polish P2): measured against the backgrounds the host really gives -------------------------------
+  // A CSS colour ("#rgb", "#rrggbb", "#rrggbbaa", "rgb(...)", "rgba(...)") as [r, g, b, a], or null.
+  function parseColour(s) {
+    var t = String(s === null || s === undefined ? '' : s).trim(), m;
+    if ((m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(t))) return [parseInt(m[1] + m[1], 16), parseInt(m[2] + m[2], 16), parseInt(m[3] + m[3], 16), 1];
+    if ((m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(t)))
+      return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), m[4] ? parseInt(m[4], 16) / 255 : 1];
+    if ((m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/i.exec(t))) {
+      var a = m[4] === undefined ? 1 : (/%$/.test(m[4]) ? parseFloat(m[4]) / 100 : parseFloat(m[4]));
+      return [Number(m[1]), Number(m[2]), Number(m[3]), a];
+    }
+    return null;
+  }
+  function hexOf(c) {
+    return '#' + c.slice(0, 3).map(function (v) { var h = Math.max(0, Math.min(255, Math.round(v))).toString(16); return h.length < 2 ? '0' + h : h; }).join('');
+  }
+  // fg (with its alpha) laid over an opaque bg.
+  function over(fg, bg) {
+    var a = fg.length > 3 ? fg[3] : 1;
+    return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a), 1];
+  }
+  function channel(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  // WCAG 2 relative luminance and contrast ratio.
+  function luminance(c) { return 0.2126 * channel(c[0]) + 0.7152 * channel(c[1]) + 0.0722 * channel(c[2]); }
+  function contrast(a, b) {
+    var x = luminance(a), y = luminance(b);
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+  }
+  // The backgrounds a colour of the page sits on: the host's, and the same under the hover and open-row tints
+  // (--hover-soft and --hover: mid grey at 8 % and 12 %).
+  var TINTS = [0.08, 0.12];
+  function backgroundsOf(bg) {
+    return [bg.slice(0, 3)].concat(TINTS.map(function (a) { return over([127, 127, 127, a], bg).slice(0, 3); }));
+  }
+  function minContrast(c, bgs) {
+    var m = Infinity;
+    bgs.forEach(function (b) { m = Math.min(m, contrast(c, b)); });
+    return m;
+  }
+  function toHsl(c) {
+    var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+    var mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, h = 0, sat = 0, d = mx - mn;
+    if (d > 0) {
+      sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      h /= 6;
+    }
+    return [h, sat, l];
+  }
+  function fromHsl(h, sat, l) {
+    function f(p, q, t) {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    }
+    if (sat === 0) return [Math.round(l * 255), Math.round(l * 255), Math.round(l * 255)];
+    var q = l < 0.5 ? l * (1 + sat) : l + sat - l * sat, p = 2 * l - q;
+    return [Math.round(f(p, q, h + 1 / 3) * 255), Math.round(f(p, q, h) * 255), Math.round(f(p, q, h - 1 / 3) * 255)];
+  }
+  // base as it is when it reaches target on every background, else its lightness moved away from them (darker on a
+  // light background, lighter on a dark one) until it does.
+  function readable(base, bgs, target) {
+    var c = base.slice(0, 3).map(Math.round);
+    if (minContrast(c, bgs) >= target) return c;
+    var light = contrast([0, 0, 0], bgs[0]) >= contrast([255, 255, 255], bgs[0]);
+    var hsl = toHsl(c);
+    for (var i = 1; i <= 100; i++) {
+      var l = light ? hsl[2] - i / 100 : hsl[2] + i / 100;
+      if (l < 0 || l > 1) break;
+      var cand = fromHsl(hsl[0], hsl[1], l);
+      if (minContrast(cand, bgs) >= target) return cand;
+    }
+    return light ? [0, 0, 0] : [255, 255, 255];
+  }
+  // The starting points per side (the CSS defaults) and the ratio each must reach: text 4.5:1 (4.6 kept, for the
+  // engine's own rounding of the tints), icons and the focus ring 3:1 (WCAG 1.4.3, 1.4.11).
+  var THEME_BASE = {
+    dark:  { link: '#5ad1c4', faint: '#9a9aa0', warn: '#f28b82', focus: '#5ad1c4',
+             't-set': '#5fa8e8', 't-preset': '#b28be8', 't-model': '#e8a95a', 't-plate': '#74c29a', 't-slice': '#00a991' },
+    light: { link: '#00695c', faint: '#5f5f64', warn: '#b3261e', focus: '#00695c',
+             't-set': '#1f6fb8', 't-preset': '#7a4fc4', 't-model': '#a8650f', 't-plate': '#2e7d55', 't-slice': '#00796b' }
+  };
+  var TEXT_RATIO = 4.6, ICON_RATIO = 3.1;
+  // bg: the background the host gives (any CSS colour). Returns {theme: 'light'|'dark', vars: {name: '#rrggbb'}}, or
+  // null when bg is not an opaque colour.
+  function themeColours(bg) {
+    var b = parseColour(bg);
+    if (!b || b[3] < 0.99) return null;
+    var bgs = backgroundsOf(b);
+    var theme = contrast([0, 0, 0], b) >= contrast([255, 255, 255], b) ? 'light' : 'dark';
+    var base = THEME_BASE[theme], vars = {};
+    Object.keys(base).forEach(function (k) {
+      var ratio = k === 'link' || k === 'faint' || k === 'warn' ? TEXT_RATIO : ICON_RATIO;
+      vars[k] = hexOf(readable(parseColour(base[k]), bgs, ratio));
+    });
+    return { theme: theme, vars: vars };
+  }
+
+  // ---- Keyboard tooltips (polish P5) ------------------------------------------------------------------------------
+  // Where the tag of a focused control goes: above it when that fits inside the view, else below, else on the side
+  // with more room; never over the control. Horizontally centred on it and kept inside the view. ctrl = {left, top,
+  // right, bottom}, size = {w, h} of the tag, view = {w, h}. Returns {left, top, width, place}.
+  function placeTip(ctrl, size, view, gap, margin) {
+    gap = typeof gap === 'number' ? gap : 6;
+    margin = typeof margin === 'number' ? margin : 4;
+    var w = Math.min(size.w, Math.max(0, view.w - 2 * margin));
+    var left = (ctrl.left + ctrl.right) / 2 - w / 2;
+    left = Math.max(margin, Math.min(left, view.w - margin - w));
+    var above = ctrl.top - gap - size.h, below = ctrl.bottom + gap, top, place;
+    if (above >= margin) { top = above; place = 'above'; }
+    else if (below + size.h <= view.h - margin) { top = below; place = 'below'; }
+    else if (ctrl.top >= view.h - ctrl.bottom) { top = above; place = 'above'; }
+    else { top = below; place = 'below'; }
+    return { left: Math.round(left), top: Math.round(top), width: Math.round(w), place: place };
+  }
+
   root.McpPanelCore = {
     PROTOCOL_VERSION: PROTOCOL_VERSION,
     groupRows: groupRows,
@@ -395,7 +525,12 @@
     colourOf: colourOf,
     offText: offText,
     settingsLabel: settingsLabel,
-    settingsLink: settingsLink
+    settingsLink: settingsLink,
+    parseColour: parseColour,
+    contrast: contrast,
+    backgroundsOf: backgroundsOf,
+    themeColours: themeColours,
+    placeTip: placeTip
   };
 })(window);
 </script>
@@ -420,7 +555,10 @@
   var restoreError = {};        // group id | 'undo' -> reason
   var staleUpTo = null;         // slice rows up to this id are out of date (the user reverted or restored since)
   var restoreUndoneAt = null;   // newest row id when the user undid a restore: "Restore undone" until a newer row
-  var focusNext = null;         // data-fk of the control to focus after the next render
+  var focusNext = null;         // data-fk of the control to focus: kept until a render finds it (or 5 renders pass)
+  var focusTries = 0;
+  var kbFocus = false;          // the last focus came from the keyboard (a key was pressed since the last click)
+  var themeBg = null;           // the background the colours were last measured on
   var groups = [];
   var READY_RETRY_MS = 500, READY_RETRIES = 20;
   var gotHistory = false, readyTries = 0, readyTimer = null;
@@ -433,15 +571,21 @@
   // The page never prints itself (a web view's Ctrl+P would open a print sheet over the panel).
   try { window.print = function () {}; } catch (e) {}
 
-  // Link, faint, warning and focus colours follow the background's lightness: the host's --orca-bg can be light.
+  // Link, faint, warning, focus and type colours follow the background the host really gives (its --orca-bg can be
+  // light or dark, and any shade): the side (data-theme), then each colour measured against it and its row tints
+  // (Core.themeColours), set on the root. Measured again only when the background changes (a theme switch).
   function applyTheme() {
     try {
       if (!window.getComputedStyle || !document.body || !document.documentElement) return;
-      var m = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(window.getComputedStyle(document.body).backgroundColor || '');
-      if (!m) return;
-      var light = 0.299 * Number(m[1]) + 0.587 * Number(m[2]) + 0.114 * Number(m[3]) > 140;
-      var want = light ? 'light' : 'dark';
-      if (document.documentElement.getAttribute('data-theme') !== want) document.documentElement.setAttribute('data-theme', want);
+      var bg = window.getComputedStyle(document.body).backgroundColor || '';
+      if (bg === themeBg) return;
+      var t = Core.themeColours(bg);
+      if (!t) return;
+      themeBg = bg;
+      var rootEl = document.documentElement;
+      if (rootEl.getAttribute('data-theme') !== t.theme) rootEl.setAttribute('data-theme', t.theme);
+      if (rootEl.style && rootEl.style.setProperty)
+        Object.keys(t.vars).forEach(function (k) { rootEl.style.setProperty('--' + k, t.vars[k]); });
     } catch (e) {}
   }
 
@@ -514,14 +658,16 @@
   }
 
   function rowHtml(r, g, newest) {
-    var disp = Core.liveDisplay(r, live, newest, caps.tracked_live);
+    var reverted = has(r.undone_at) || !!revertedHere[r.id];
+    // A reverted row shows what it undid, whatever the live value says: right after Revert the live message (the
+    // earlier value) can come before the history that marks the row undone, and must not read "changed by you".
+    var disp = reverted ? { value: has(r.value) ? String(r.value) : '', note: '' } : Core.liveDisplay(r, live, newest, caps.tracked_live);
     var detail = detailText(r, disp);
     var kind = r.kind === 'refused' || (r.kind === 'slice' && has(r.error)) ? 'refused' : r.kind;
-    var reverted = has(r.undone_at) || !!revertedHere[r.id];
     var stale = Core.sliceStale(r, history.rows, staleUpTo);
     var latest = stale ? Core.latestSlice(history.rows) : null;
     var staleNote = stale && latest && latest.id === r.id;
-    var rc = (kind === 'refused' ? ' refused' : '') + (stale ? ' stale' : '') + (reverted ? ' reverted' : '');
+    var rc = (kind === 'refused' ? ' refused' : '') + (stale ? ' stale' : '') + (reverted ? ' reverted' : '') + (r.dropped === true && !reverted ? ' dropped' : '');
     var isOpen = !!openRows[r.id];
     var open = isOpen ? ' open' : '';
     var tail = '';
@@ -554,10 +700,10 @@
       value = has(r.before) ? swatch(r, r.before) + esc(r.before) : '';
       shownText = has(r.before) ? r.before : '';
     } else value = swatch(r, disp.value) + value;
-    var note = disp.note || (staleNote ? 'out of date' : '');
+    var note = reverted ? '' : (disp.note || (staleNote ? 'out of date' : ''));
     if (note) noteHtml = '<span class="chg">' + esc(note) + '</span>';
     if (String(shownText || '').length > 18) rc += ' long';
-    var label = r.label + (has(disp.value) ? ' ' + disp.value : '') + (note ? ', ' + note : '') + (reverted ? ', reverted' : '');
+    var label = r.label + (has(shownText) ? ' ' + shownText : '') + (note ? ', ' + note : '') + (reverted ? ', reverted' : '');
     return '<div class="row' + rc + open + '" data-row="' + r.id + '" data-fk="r:' + r.id + '" role="button" tabindex="0" aria-expanded="' + isOpen + '" aria-label="' + esc(label) + '">' +
       '<span class="ic" data-tip="' + esc(TIP[kind] || '') + '">' + icon(kind) + '</span>' +
       '<span class="l"' + (!isOpen ? ' data-tip="' + esc(rowTip(r)) + '"' : '') + '><span class="lt">' + esc(r.label) + '</span>' +
@@ -644,6 +790,42 @@
     g.innerHTML = '<svg aria-hidden="true"><use href="#i-gear"/></svg>';
   }
 
+  // ---- The keyboard focus's tag (P5): placed by Core.placeTip inside the pane, never over the control.
+  var ftip = document.getElementById('ftip') || null;
+  function hideTip() {
+    if (!ftip) return;
+    ftip.hidden = true;
+    ftip.textContent = '';
+  }
+  // The control's tag: its own data-tip, or a row's (on its label while closed).
+  function tipText(el) {
+    if (!el || !el.getAttribute) return '';
+    var t = el.getAttribute('data-tip');
+    if (!t && el.querySelector) {
+      var l = el.querySelector('.l[data-tip]');
+      if (l) t = l.getAttribute('data-tip');
+    }
+    return t || '';
+  }
+  function showTip(el) {
+    if (!ftip || !el || !el.getBoundingClientRect) return;
+    var text = tipText(el);
+    if (!text) { hideTip(); return; }
+    var de = document.documentElement || {};
+    var vw = de.clientWidth || window.innerWidth || 0, vh = de.clientHeight || window.innerHeight || 0;
+    if (!vw || !vh) return;
+    ftip.textContent = text;
+    ftip.style.maxWidth = Math.max(60, Math.min(240, vw - 8)) + 'px';
+    ftip.style.left = '0px';
+    ftip.style.top = '0px';
+    ftip.hidden = false;
+    var r = el.getBoundingClientRect();
+    var pos = Core.placeTip({ left: r.left, top: r.top, right: r.right, bottom: r.bottom }, { w: ftip.offsetWidth, h: ftip.offsetHeight },
+                            { w: vw, h: vh }, 6, 4);
+    ftip.style.left = pos.left + 'px';
+    ftip.style.top = pos.top + 'px';
+  }
+
   // Keyboard focus survives a render (the list is rebuilt): the control with the same data-fk gets it back, or the
   // one an action asked for (focusNext).
   function focusedKey() {
@@ -652,22 +834,31 @@
       return a && a.getAttribute ? a.getAttribute('data-fk') : null;
     } catch (e) { return null; }
   }
+  // true when the control was found and focused.
   function refocus(key) {
-    if (!key) return;
+    if (!key) return false;
     try {
       // Never take the keyboard from OrcaSlicer: only while the page itself has it (a live update after the user
       // clicked into the sidebar must not pull focus back).
-      if (document.hasFocus && !document.hasFocus()) return;
-      if (!document.querySelector) return;
+      if (document.hasFocus && !document.hasFocus()) return false;
+      if (!document.querySelector) return false;
       var el = document.querySelector('[data-fk="' + key + '"]');
-      if (el && el.focus) el.focus();
+      if (el && el.focus) { el.focus(); return true; }
     } catch (e) {}
+    return false;
+  }
+  // An action's focus target (focusNext) waits for the render that has it: after Yes on a restore, the "Restored to
+  // ... · Undo" line comes with the next history, and the host may hold the focus meanwhile (m15).
+  function placeFocus(keep, pending) {
+    if (refocus(keep)) { if (pending) { focusNext = null; focusTries = 0; } return; }
+    if (pending && ++focusTries > 5) { focusNext = null; focusTries = 0; }
   }
 
   function render() {
     applyTheme();
-    var keep = focusNext || focusedKey();
-    focusNext = null;
+    hideTip();
+    var pending = focusNext;
+    var keep = pending || focusedKey();
     groups = Core.groupRows(history);
     var html = '';
     if (api === 'off') {
@@ -688,7 +879,7 @@
     list.scrollTop = top;
     updateFold();
     updateGear();
-    refocus(keep);
+    placeFocus(keep, pending);
   }
 
   function applyHistory(m) {
@@ -727,6 +918,9 @@
       var key = m.action === 'undo_restore' ? 'undo' : m.group;
       if (restoreBusy === key) restoreBusy = null;
       if (m.status === 'failed') restoreError[key === undefined ? 'undo' : key] = m.reason || 'Could not restore';
+      // Where the keyboard goes: the restore's Undo line (it comes with the next history), or the error's OK.
+      if (m.action === 'restore' && m.status === 'ok') { focusNext = 'ur'; focusTries = 0; }
+      else if (m.action === 'restore' && m.status === 'failed' && key !== undefined) { focusNext = 'd:' + key; focusTries = 0; }
       if (m.status === 'ok') staleUpTo = Math.max(staleUpTo || 0, maxRowId());
       if (m.status === 'ok' && m.action === 'undo_restore') restoreUndoneAt = maxRowId();
     }
@@ -821,16 +1015,28 @@
     if (ancestor(e.target, 'data-undo')) e.stopPropagation();
     activate(e.target);
   });
+  // A click is not the keyboard: no focus tag, and an action's pending focus gives way to where the user went.
+  document.addEventListener('mousedown', function () { kbFocus = false; focusNext = null; focusTries = 0; hideTip(); });
+  document.addEventListener('focusin', function (e) { if (kbFocus) showTip(e.target); else hideTip(); });
+  document.addEventListener('focusout', function () { hideTip(); });
+  try {
+    var listEl = document.getElementById('list');
+    if (listEl && listEl.addEventListener) listEl.addEventListener('scroll', hideTip);
+    // Back from a dialog the host showed (a restore pumps one): the focus an action asked for.
+    if (window.addEventListener) window.addEventListener('focus', function () { if (focusNext && refocus(focusNext)) { focusNext = null; focusTries = 0; } });
+  } catch (e) {}
   // Keyboard: Enter / Space on a row (role=button) opens it (buttons do that themselves); Esc answers No to the
   // restore question, else closes the open row the focus is in; Ctrl+P / Ctrl+S never print or save the page.
   document.addEventListener('keydown', function (e) {
     var k = e.key;
+    if (k !== 'Shift' && k !== 'Control' && k !== 'Alt' && k !== 'Meta') kbFocus = true;
     if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'p' || k === 'P' || k === 's' || k === 'S')) {
       if (e.preventDefault) e.preventDefault();
       return;
     }
     var t = e.target || {};
     if (k === 'Escape' || k === 'Esc') {
+      hideTip();
       if (asking !== null) {
         var gid = asking;
         asking = null; focusNext = 'a:' + gid; render();
