@@ -17,7 +17,12 @@ Preferences → **Remote API**:
 | **Enable** | Start the server (applied immediately on closing Preferences). |
 | **Bind LAN** | Off = listen on `127.0.0.1` only. On = listen on `0.0.0.0` (reachable from other machines on your network). |
 | **Port** | Default `13130`. |
-| **Token** | 32 hex chars, auto-generated on first run. **Regenerate** invalidates existing clients. |
+| **Token** | 32 hex chars, auto-generated on first run. **Copy** puts the whole token on the clipboard. **Regenerate** invalidates existing clients. |
+
+A status line under **Enable** says what the server is doing while Preferences is open: "On: listening on this
+computer, port 13130." (or "on your local network"), "Off.", "Starts when you close Preferences." for a tick not yet
+applied, and "Couldn't start: port N may be in use by another program. ..." when it was enabled but could not bind
+its port. Changes to the port or LAN setting while it runs say they apply when Preferences closes.
 
 > Binding to the LAN exposes live control of your slicer to every machine on the
 > network. Keep the token secret and prefer localhost unless you need remote access.
@@ -27,6 +32,11 @@ Preferences → **Remote API**:
 - **HTTP:** send the header `X-Api-Token: <token>` on every request. Missing/wrong
   token → `401 {"error":"unauthorized"}`.
 - **WebSocket:** pass `?token=<token>` in the URL (browsers can't set WS headers).
+- **Trial requests:** a request with the header `X-Orca-Mcp-Trial: 1` is a trial run (orcaslicer-mcp's
+  `compare_slices` sends it on its trial writes, slices and the final restore). It works as any request, but the
+  MCP panel records nothing for it: no rows, no refusals, no restore points. The user-change journal treats it as
+  an API change, so its changes are never reported as the user's. Add one row for the whole trial afterwards with
+  `POST /activity/note`.
 
 ## Endpoints
 
@@ -77,6 +87,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/project/move` | Move or rename a project file (`{"from", "to", "overwrite"}`); the window follows for the open project |
 | DELETE | `/project/file` | Delete a project file from disk (never the open project's) |
 | GET | `/activity` | The MCP panel's timeline of this project: the API's changes, what was undone, restore points |
+| POST | `/activity/note` | One row the connector adds to the MCP panel (`{"kind": "slice" \| "refused", "text", "value"?, "detail"?}`) |
 | GET | `/user_changes?since=` | What the user changed outside the API since a journal seq (hand edits, preset switches, objects, plates, projects, panel undos) |
 
 ### GET /status
@@ -122,9 +133,26 @@ Applied through the GUI's own edit path (dirty markers + live refresh + slice
 invalidation). **All-or-nothing:** if any key is unknown or invalid, nothing is
 applied and you get `422` with per-key reasons:
 ```json
-{ "applied": [], "errors": { "layer_height": "value out of range", "nope": "unknown_key" } }
+{ "applied": [], "errors": { "wall_loops": "invalid value", "nope": "unknown_key" } }
 ```
 Other errors: `400 body_must_be_object`, `400 invalid_json`, `504 ui_timeout`.
+
+**Ranges.** Every numeric value is checked against its setting's own range before anything is applied, with the
+rule OrcaSlicer's settings fields use (`ConfigOptionDef` min and max, `is_value_valid`: with a minimum of 0 any
+negative value is out, a value within 0.0001 of a bound is in). Percentages are checked as numbers ("250%" against
+0 to 100 for `sparse_infill_density`), a "mm or %" setting given in mm also against its literal limit (an outer wall
+line width of 40 mm), and a list setting element by element. Only what changes is checked, so writing a value back
+never fails. One value out of range refuses the whole request:
+```json
+{ "applied": [], "error": "out_of_range", "key": "sparse_infill_density", "value": "250%", "min": 0, "max": 100,
+  "detail": "Sparse infill density must be between 0% and 100% (got 250%)",
+  "errors": { "sparse_infill_density": "out_of_range: Sparse infill density must be between 0% and 100% (got 250%)" } }
+```
+`min` or `max` is `null` when that side has no limit (`layer_height` has a minimum of 0 and no maximum); `index`
+names the element of a list setting. With several keys out of range, the top level names the first and `errors`
+has each. `PUT /objects/{id}/config` answers the same way (`422`), and the MCP panel's undo and restore never write
+a value out of range. `PUT /objects/{id}/height_range` keeps its stricter printer limits
+(`422 layer_height_out_of_range` with `key`, `value`, `min`, `max`).
 
 #### Per-filament keys
 
@@ -218,6 +246,10 @@ curl -X POST -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/slice
 - `200 {"started":false,"already_valid":true}` — plate already sliced.
 - `409 {"error":"already_slicing"}` — a slice is in progress.
 - `422 {"error":"nothing_to_slice"}` — no objects on the plate.
+- `422 {"error":"slice_not_started","detail","key"?}` — OrcaSlicer would not start it. `detail` is OrcaSlicer's own
+  reason (`Print::validate()`, the text its error notification shows: a layer height above what the nozzle allows,
+  say), or "plate cannot be sliced (object outside bed or invalid state)" when it gives none; `key` is the setting
+  it names, when it names one. `/slice/status` then says `error` with the same message.
 
 ### GET /slice/status
 
@@ -229,7 +261,11 @@ curl -X POST -H "X-Api-Token: $TOK" http://localhost:13130/api/v1/slice
   "warnings": [ { "level": 3, "message": "bed temp too high…", "code": "1000C001" } ]
 }
 ```
-`state` is one of `idle | slicing | done | error`. `stats` appears once done.
+`state` is one of `idle | slicing | done | error`. `stats` appears once done. While `done`, `valid` says whether
+that result still matches the plate: after a later change (a setting, an object, the user's own edit) it is
+`false`, with `"stale": true` and the message "out of date: something changed since this slice; slice again for
+current numbers"; `stats` are then the old slice's. The route asks OrcaSlicer's GUI thread for this but never waits
+long: without an answer within 300 ms (a dialog open, say) the two fields are left out.
 
 ### WS /events
 
@@ -585,7 +621,9 @@ The same shape the panel shows. `kind` is `setting`, `preset`, `model`, `plate`,
 `before` is the previous value in the same form as `value`; `undone_at` is the time (HH:MM) the user undid the
 row in the panel (or the time of a restore that undid its group), else `""`. `error` is `""` or the text of a
 refusal or failure. `on_disk` marks changes written to disk (saved or moved projects, saved or deleted presets),
-which a restore does not undo. `reveal` is `true` on a setting row of the print, filament or printer preset: the
+which a restore does not undo. `superseded` is `true` on a row the assistant changed again later (a later row, not
+undone, changed the same setting, object copy, height range or preset slot): its undo is unavailable ("Changed again
+since; restore an earlier point instead"). `reveal` is `true` on a setting row of the print, filament or printer preset: the
 panel can show that setting in the settings sidebar (not per-object settings, project keys such as filament
 colours, or other kinds). Group `0` is the point before the assistant's first change (the panel does not list it
 as a group of its own; it stays here, and a "Restored to" line for it names its time); a group's `restore`
@@ -616,6 +654,29 @@ nothing.
 Object rows name their object by its id, which OrcaSlicer renews whenever a project is loaded (opened, restored,
 or after a restart). After a load the panel finds the object by its name when exactly one object has it;
 otherwise the row's undo says "Can't track this object after the project was reloaded".
+
+### POST /activity/note
+
+One row the connector adds to the panel itself: a summary for requests it marked as a trial
+(`X-Orca-Mcp-Trial: 1`, which record nothing), or a refusal it made before reaching OrcaSlicer (its own
+sensitive-key guard, say).
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"kind":"slice","text":"Compared 3 options","value":"nothing kept","detail":"layer height 0.2, 0.24, 0.28 mm"}' \
+  http://localhost:13130/api/v1/activity/note
+```
+```json
+{"recorded": true}
+```
+- `kind` `"slice"`: a slice-kind row (`label` = `text`, `value`, `where` = `detail`, `title_hint: "note"`, no undo).
+  It names its group when the group holds no change ("Compared 3 options · nothing kept"), and ends the group the
+  way a slice result does. No restore point is taken.
+- `kind` `"refused"`: a refused row (`label` = `text`, `value` default "Not allowed", `where` = `detail`), as for a
+  request OrcaSlicer refused.
+
+`text` is required (at most 160 bytes), `value` at most 80, `detail` at most 400; line breaks become spaces.
+`400 bad_kind`, `400 missing_text`, `400 body_must_be_object`, `400 invalid_json`. The note changes nothing in the
+project, and it is recorded even when the request carries the trial header.
 
 ### GET /user_changes?since=
 
@@ -662,7 +723,10 @@ The answer is kept small:
   An object keeps its strongest change (rotated over scaled over moved); added and then removed is nothing.
 - A preset switch is one entry, `"<Print|Printer|Filament> preset switched to <name>"`, followed only by the
   values edited on top of the new preset; earlier setting entries of that preset are dropped (for a filament,
-  only for that slot).
+  only for that slot). A switch that dropped unsaved edits (OrcaSlicer's "Discard"; for a filament, once no slot
+  uses the old preset) names them: `"Print preset switched to 0.30mm Draft; dropped the unsaved changes: Top solid
+  layers 6, Wall loops 3"` (a script, G-code or connection setting by its label only). A switch away and back that
+  dropped edits stays as `"... switched to <name> and back; dropped the unsaved changes: ..."`.
 - Opening a project (`"Opened project <name>"`) or starting a new one (`"New project"`) is one entry and drops
   every entry before it.
 - Project settings are group `Project` (`"Plate type Cool Plate → Textured PEI Plate"`, a filament colour with
@@ -755,7 +819,7 @@ another.
  "restored_to": null, "restore_failed": false, "can_undo_restore": false,
  "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused"],
                   "open_settings": true, "settings_hint": "", "settings_label": "Remote API settings",
-                  "off_text": "The Remote API is off.", "reveal": true}}
+                  "off_text": "The Remote API is off.", "reveal": true, "tracked_live": true}}
 ```
 - `rows`, `groups`, `restored_to`, `restore_failed` and `can_undo_restore` are the shape of `GET /activity`
   above (this fork sends exactly that object plus `type`, `version` and `capabilities`).
@@ -778,6 +842,11 @@ another.
   - `reveal` (bool, optional, default `false`): the host can show a setting in its settings sidebar. With `true`
     the page sends `reveal` when the user opens a row whose `reveal` is `true`, and gives such a row the hover tag
     "Show in settings" on its label. This fork sends `true`; the plugin sends nothing (no such sidebar call).
+  - `tracked_live` (bool, optional, default `false`): the host sends `live` entries only for the rows it tracks:
+    the latest row of each setting, whichever group it is in (ruling R43; see `live` below). With `true` the page
+    shows a row's live state ("changed by you", the user's value, "removed since") whenever the row has an entry;
+    without it, only for the rows of the newest group (the earlier rule). This fork sends `true`. A host that turns
+    it on must send entries for its tracked rows only, and should mark the earlier rows `superseded`.
   - `off_text` (string, optional): the line shown while `state.api` is `"off"`. Default "The Remote API is
     off."; the plugin sends "Assistant access is off.", this fork sends "The Remote API couldn't start. Check its
     port." when it is enabled but not listening, and nothing otherwise.
@@ -788,15 +857,24 @@ another.
 ```
 Each `live` replaces the previous set (it is not merged), so always send every entry. Keys are row ids as strings.
 `value` is in the row's own display form (`value` of the row, unit included);
-`present: false` means the thing the row changed is gone (an object deleted since). Send an entry for every row
-that has an undo and is not undone, and for every row of the newest group whose value can be read now; leave out
-rows you cannot read. The page compares numbers with the same unit text within 1e-6 (relative) and anything else
+`present: false` means the thing the row changed is gone (an object deleted since). Which rows get an entry:
+- With `capabilities.tracked_live` (this fork): the tracked rows only. A row is tracked when it is the latest row
+  (not undone) of its setting: rows that changed the same thing share a subject (a preset setting: scope, key,
+  element and preset; an object's setting: object and key; a copy's place: object and copy; a height range; a
+  preset slot; a CANVAS slot). A row with no such subject (a slice, a refusal, an added object) is tracked as before:
+  when it has an undo or sits in the newest group. Earlier rows of a subject are `superseded` in `history` and get
+  no entry. This fork's rule is `mcp_tracking` in `src/slic3r/GUI/RemoteAPI/McpHistory.cpp`.
+- Without it: every row that has an undo and is not undone, and every row of the newest group.
+Leave out rows you cannot read. The page compares numbers with the same unit text within 1e-6 (relative) and anything else
 exactly and case-sensitively, so send the same form the row was recorded in (a colour recorded as `#F2754E` must
 come back as `#F2754E`, not `#f2754e`). For geometry (moves, rotations, arranges) the host
 compares and sends the row's own `value` when nothing moved, else another text such as `"moved since"`.
-In the newest group a different live value is shown with "changed by you", a missing one with "removed since";
-in any group an undo is then unavailable ("You changed it since", "Changed again since; restore an earlier point
-instead", "<name> is no longer on the plate").
+A different live value is shown with "changed by you" and the user's value, a missing one with "removed since"
+(with `tracked_live`: on any row with an entry; without it: in the newest group). An undo is then unavailable:
+"You changed it since" (with `tracked_live` in any group; without it in the newest group, "Changed again since;
+restore an earlier point instead" in older ones), "<name> is no longer on the plate". A `superseded` row's undo
+is always unavailable with "Changed again since; restore an earlier point instead", and it never says "changed by
+you".
 
 **`state`**: `{"type": "state", "api": "on" | "off"}`, after `ready` and whenever it changes. `on` means the
 assistant can reach OrcaSlicer now (this fork: the Remote API server is listening, not only enabled in
@@ -836,7 +914,11 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
 - `undo`: `null`, or `{"verb": "Revert", "tip"?: "<hover text>"}`. Without `tip` the hover tag is
   "<verb>: <label> back to <before>" (or "<verb> <value>" with no `before`).
 - `undone_at`: `""`, or the `"HH:MM"` the user undid it (also set on the rows a restore undid).
-- `title_hint`: `null`, `"added"` or `"opened"`: such a row names its group ("Added bracket.stl and 2 more").
+- `title_hint`: `null`, `"added"` or `"opened"`: such a row names its group ("Added bracket.stl and 2 more");
+  `"note"` (a connector's note, `POST /activity/note`): it names a group that holds no change ("Compared 3 options
+  · nothing kept").
+- `superseded` (bool, optional, default `false`): a later row (not undone) changed the same thing; the page offers
+  no undo ("Changed again since; restore an earlier point instead") and shows no live state for it.
 - `result`: `null`, or `{"seconds": n, "grams": n}` on a slice row; the group shows the time of its last slice.
 - `error`: `""` or the text of a refusal or failure (any non-empty text marks the group with a warning).
 - `on_disk` (bool): the change wrote to disk (a saved or moved project, a saved or deleted preset); the restore
@@ -845,6 +927,31 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
   (read only with `capabilities.reveal`). This fork marks setting rows of the print, filament and printer presets;
   per-object settings, project keys (filament colours, wipe tower position), presets, models and plates are not
   marked.
+
+### What the page shows (for hosts and testers)
+
+- **Keyboard.** Every control is a focus stop with a visible ring in the theme's focus colour: the fold and
+  settings icons, each group's title (a button: Enter or Space opens and closes it), the restore icon of an older
+  group, each row (role button: Enter or Space opens its detail line), the undo link inside an open row, the restore
+  question's Yes and No, and the "Restored to" line's Undo. Esc answers No to the restore question (the focus goes
+  back to the restore icon) and closes the open row the focus is in. Focus stays on the same control when the list
+  is redrawn. Ctrl+P and Ctrl+S (Cmd on macOS) do nothing in the page, and `window.print` is a no-op: a web view
+  would otherwise open a print or save sheet over the panel. A host that wants its own shortcuts there has to catch
+  them before the web view.
+- **Colours.** The page reads the body's background and sets `data-theme` (`dark` or `light`) on the root: links
+  and actions are #5ad1c4 on dark (7.6:1 on #2b2b2f) and #00695c on light (6.1:1 on #f5f5f5), both 4.5:1 or more
+  on a hovered row too. An action is underlined in that colour; an unavailable one is faint and not underlined.
+- **Reverted rows** show what is there now: the undone value struck through, then the earlier value, and
+  "Reverted" at the right.
+- **Out-of-date slices.** A slice result with a later setting, preset, model or plate row after it (or a revert or
+  restore the user made since) is faint with "out of date", in its row and in its group's title line.
+- **Restore** is a dimmed icon on every older group (brighter on hover and focus), with the hover tag "Restore the
+  project to how it was at HH:MM (undoes later changes)". The question "Restore to HH:MM? Yes No" shows under the
+  group's title. After the user undoes a restore, a faint "Restore undone" line stays until the next change.
+- **Rows.** Refusals come after the changes of their group and never name it. A setting row's detail line reads
+  "Was X"; the preset it was written to ("0.20mm Standard @Printer (unsaved)") is in that line's hover tag. The
+  row's hover tag says what a click does ("Show what it was, undo it, and find it in settings" with `reveal`,
+  "Show what it was and undo it" without). Long values and reasons wrap; the panel never scrolls sideways.
 
 ### Groups
 
