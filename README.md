@@ -47,12 +47,13 @@ Then open **Preferences → Remote API**, tick **Enable Remote API**, copy the t
 
 <img align="right" src="doc/images/readme/panel-undo.gif" width="300" alt="Clicking a change in the panel, then Revert: the setting goes back in the sidebar">
 
-- **Every change, grouped** by round of work, with the print time of each slice.
-- **Undo any one** with the link beside it: Revert, Rotate back, Put back. An undo never overwrites something changed since.
-- **Go back to an earlier point** from an older group. It asks first, and can be undone.
-- **Your own edits count.** Change something yourself and the panel shows your value; the assistant is told with its next reply.
+- **Every change, grouped** by round of work, with the slice result.
+- **Undo any one change.** Each shows its old value and an undo named for what it does: Revert, Switch back, Rotate back, Remove, Put back.
+- **Restore to here** on an older group puts the whole project back to that point. A restore can be undone too.
+- **Your own edits count.** If you change a value by hand, the panel marks it "changed by you", and the assistant is told with its next reply.
+- **Kept with the project,** so the timeline is still there after a restart.
 
-Close it with its ✕ and bring it back from **View → OrcaSlicer MCP panel**.
+While the panel is open, OrcaSlicer's change notifications stay hidden; refusals still show. The gear opens **Preferences → Remote API**. Close the panel with its ✕ and bring it back from **View → OrcaSlicer MCP panel**.
 
 <br clear="right">
 
