@@ -53,6 +53,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 namespace Slic3r { class Model; class ModelObject; class ModelInstance; }
@@ -129,6 +130,13 @@ public:
     // Identifies this app run: stash ids are only meaningful within it.
     const std::string &stash_session() const { return m_stash_session; }
 
+    // POST /plates: which plate the API created for a row, by the plate's ObjectID (never reused in an app run,
+    // unlike an address). Memory only, like the stash: after a restart (or another project) the plate is unknown.
+    void note_created_plate(int row, uint64_t plate_object_id);
+    // Index of that plate in `plate_object_ids` (the plates' ObjectIDs in plate order), -1 when it is gone or unknown.
+    int  created_plate_index(int row, const std::vector<uint64_t> &plate_object_ids) const;
+    bool knows_created_plate(int row) const { return m_created_plates.count(row) > 0; }
+
     // Row text shared by the handlers and McpActions' live values.
     // ConfigOptionDef::full_label when set, else label, else the key.
     static std::string config_label(const std::string &key);
@@ -181,6 +189,7 @@ private:
     std::map<int, std::pair<ModelObject*, int>> m_stashed;      // id -> (copy, plate)
     int                                       m_next_stash = 1;
     std::string                               m_stash_session;
+    std::map<int, uint64_t>                   m_created_plates; // row id -> plate ObjectID (POST /plates)
 
     static std::atomic<bool>    s_project_opened;
     static std::atomic<int64_t> s_clock_offset;

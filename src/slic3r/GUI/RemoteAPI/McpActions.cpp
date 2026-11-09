@@ -212,6 +212,20 @@ std::string object_name_of(const McpRow &r)
 
 // ---- live values ------------------------------------------------------------------------------------------------
 
+// Current index of the plate a POST /plates row created: -1 when it is gone, -2 when it is not known (another app
+// run: the recorder keeps the plate's ObjectID in memory only).
+int created_plate_now(int row_id)
+{
+    PartPlateList        &plates = plater()->get_partplate_list();
+    std::vector<uint64_t> ids;
+    for (int i = 0; i < plates.get_plate_count(); ++i) {
+        PartPlate *pl = plates.get_plate(i);
+        ids.push_back(pl != nullptr ? (uint64_t) pl->id().id : 0);
+    }
+    if (!McpRecorder::get().knows_created_plate(row_id)) return -2;
+    return McpRecorder::get().created_plate_index(row_id, ids);
+}
+
 std::string project_element_raw(const DynamicPrintConfig &proj, const std::string &key, const json &index, bool &ok)
 {
     ok = true;
@@ -284,8 +298,9 @@ Live live_of(const McpRow &r)
 
     if (type == "plate_added") {
         PartPlateList &plates = p->get_partplate_list();
-        const int      idx    = t.value("index", -1);
-        if (idx < 0 || idx >= plates.get_plate_count()) return live_value("deleted since");
+        const int      idx    = created_plate_now(r.id);
+        if (idx == -2) return {}; // not known in this app run: the undo says so on click
+        if (idx < 0) return live_value("deleted since");
         PartPlate *plate = plates.get_plate(idx);
         return live_value(plate != nullptr && plate->empty() ? r.value : std::string("has objects now"));
     }
@@ -545,16 +560,18 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     }
 
     if (type == "plate_added") {
+        // The plate the row added, by its ObjectID: an index or an origin names whatever plate sits in that slot of
+        // the grid now (deleting an earlier plate moves every later one down a slot).
         PartPlateList &plates = p->get_partplate_list();
-        const int      idx    = t.value("index", -1);
-        if (idx < 0 || idx >= plates.get_plate_count()) return "Plate " + std::to_string(idx + 1) + " is gone";
+        const int      idx    = created_plate_now(r.id);
+        if (idx < 0) return "The plate has changed since; restore an earlier point instead";
         PartPlate *plate = plates.get_plate(idx);
-        // Still the plate the row added: at the same place in the plate grid (deleting an earlier plate moves the
-        // later ones down a slot), and empty.
+        // Extra guard: still in its recorded slot, it must also have the recorded origin.
         const json origin = t.value("origin", json());
-        if (origin.is_array() && origin.size() == 3) {
+        if (idx == t.value("index", -1) && origin.is_array() && origin.size() == 3) {
             const Vec3d o = plate->get_origin();
-            if (!same_matrix(json{o.x(), o.y(), o.z()}, origin)) return "The plate has changed since";
+            if (!same_matrix(json{o.x(), o.y(), o.z()}, origin))
+                return "The plate has changed since; restore an earlier point instead";
         }
         if (!plate->empty()) return "It has objects on it now";
         if (!p->can_delete_plate()) return "It is the last plate";

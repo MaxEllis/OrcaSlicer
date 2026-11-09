@@ -152,6 +152,20 @@ int McpRecorder::stashed_plate(int stash) const
     return it == m_stashed.end() ? -1 : it->second.second;
 }
 
+void McpRecorder::note_created_plate(int row, uint64_t plate_object_id)
+{
+    if (row > 0 && plate_object_id != 0) m_created_plates[row] = plate_object_id;
+}
+
+int McpRecorder::created_plate_index(int row, const std::vector<uint64_t> &plate_object_ids) const
+{
+    auto it = m_created_plates.find(row);
+    if (it == m_created_plates.end()) return -1;
+    for (size_t i = 0; i < plate_object_ids.size(); ++i)
+        if (plate_object_ids[i] == it->second) return int(i);
+    return -1;
+}
+
 std::string McpRecorder::num_text(double v)
 {
     if (!std::isfinite(v)) return "0";
@@ -280,6 +294,7 @@ void McpRecorder::load(const std::string &key, bool fresh)
     m_open   = false;
     m_deferred_point = -1;
     m_history = McpHistory();
+    m_created_plates.clear();
     const fs::path dir = history_root() / key;
     boost::system::error_code ec;
     if (fresh) {
@@ -381,6 +396,7 @@ void McpRecorder::sync_project()
         m_open    = false;
         m_deferred_point = -1;
         m_history = McpHistory();
+        m_created_plates.clear();
     }
     notify();
 }

@@ -3066,7 +3066,14 @@ Response Controller::handle_create_plate(const std::string &body)
             const Vec3d org = plates.get_plate(idx)->get_origin();
             row.target = {{"type", "plate_added"}, {"index", idx}, {"origin", {org.x(), org.y(), org.z()}}};
             mcp_undo(row, "Delete plate", "Delete Plate " + std::to_string(idx + 1) + " (only while it is empty)");
-            mcp_record(std::move(row));
+            // The panel's undo deletes this very plate, found by its ObjectID (indexes and origins shift when
+            // plates before it are deleted).
+            try {
+                const int rid = McpRecorder::get().record(std::move(row));
+                McpRecorder::get().note_created_plate(rid, (uint64_t) plates.get_plate(idx)->id().id);
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(error) << "MCP panel: row not recorded: " << e.what();
+            }
         }
         return {{"created", true}, {"index", idx},
                 {"count", plates.get_plate_count()},
