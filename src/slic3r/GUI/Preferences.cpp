@@ -2759,8 +2759,8 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     copy_btn->SetToolTip(_L("Copy the whole token, to paste into your AI app's OrcaSlicer MCP settings"));
     // "Copied" on the button for a moment (a status tick puts "Copy" back about 1.5 s later).
     auto copied_ticks = std::make_shared<int>(0);
-    // The label's width changes ("Copied" is wider): the row is laid out again each time, so the field and the
-    // Regenerate button make room instead of overlapping.
+    // The label's width changes ("Copied" is wider): the button line is laid out again each time, so
+    // Regenerate moves over instead of overlapping.
     copy_btn->Bind(wxEVT_BUTTON, [this, token_value, copy_btn, copied_ticks](wxCommandEvent &) {
         if (wxTheClipboard->Open()) {
             wxTheClipboard->SetData(new wxTextDataObject(token_value->GetValue()));
@@ -2778,13 +2778,21 @@ void PreferencesDialog::create_remote_api_page(wxBoxSizer* sizer_page, int v_gap
     };
 
     token_sizer->Add(token_label, 0, wxALIGN_CENTER_VERTICAL);
-    // Proportion 1: stretch to the row, so the field never pushes the Regenerate
-    // button past the dialog edge (a fixed 320 DIP overflowed and forced an hscroll).
+    // Proportion 1: stretch to the row (a fixed 320 DIP overflowed and forced an hscroll).
     token_sizer->Add(token_value, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
-    token_sizer->Add(copy_btn,    0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
-    token_sizer->Add(token_btn,   0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
     token_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
     g_sizer->Add(token_sizer, 0, wxEXPAND);
+
+    // Copy and Regenerate get a line of their own under the field: label + field + both buttons
+    // are wider than the dialog, which clipped Regenerate at the right edge (seen on the mcp.16
+    // release candidate). The spacer lines the buttons up with the field's left edge.
+    wxBoxSizer *token_btn_sizer = new wxBoxSizer(wxHORIZONTAL);
+    token_btn_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN) + token_label->GetMinSize().x + FromDIP(5));
+    token_btn_sizer->Add(copy_btn,  0, wxALIGN_CENTER_VERTICAL);
+    token_btn_sizer->Add(token_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(5));
+    token_btn_sizer->AddSpacer(FromDIP(DESIGN_LEFT_MARGIN));
+    g_sizer->AddSpacer(FromDIP(4));
+    g_sizer->Add(token_btn_sizer, 0, wxEXPAND);
 
     g_sizer->AddSpacer(FromDIP(10));
     sizer_page->Add(g_sizer, 0, wxEXPAND);
