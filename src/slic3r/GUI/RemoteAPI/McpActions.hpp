@@ -7,8 +7,9 @@
 // GUI thread only, except restoring(). Every action returns the result object the page gets:
 //   {"status": "ok" | "cancelled" | "failed", "reason": "<hover text>"}   (reason only when not ok)
 // An ok undo marks its row undone (McpHistory::mark_undone, HH:MM) and records nothing else in the timeline; an ok
-// action publishes panel.reverted {"group", "row"} / panel.restored {"group"} on the /events stream and calls the
-// panel-action listener (the user-change journal).
+// action publishes panel.reverted {"group", "row"} / panel.restored {"group"} on the /events stream, adds the action
+// to the user-change journal (McpJournal.hpp: the user's edits before it are diffed first, the baseline is taken
+// after it) and calls the panel-action listener.
 #include <atomic>
 #include <functional>
 #include <string>
@@ -44,7 +45,7 @@ public:
 
     // Called after each successful panel action with kind "panel" and a line for the assistant, e.g.
     // "Reverted in the panel: Wall loops back to 2", "Switched back in the panel: Filament 1 to PLA Fast",
-    // "Restored in the panel to 10:31". The user-change journal connects it.
+    // "Restored in the panel to 10:31". The same line goes into the user-change journal directly (mcp_journal_panel).
     using PanelActionListener = std::function<void(const std::string &kind, const std::string &text)>;
     static void set_panel_action_listener(PanelActionListener fn);
 

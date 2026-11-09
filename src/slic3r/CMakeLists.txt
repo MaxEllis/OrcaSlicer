@@ -291,6 +291,9 @@ set(SLIC3R_GUI_SOURCES
     GUI/RemoteAPI/McpActions.hpp
     GUI/RemoteAPI/McpHistory.cpp
     GUI/RemoteAPI/McpHistory.hpp
+    GUI/RemoteAPI/McpJournal.cpp
+    GUI/RemoteAPI/McpJournal.hpp
+    GUI/RemoteAPI/McpJournalCapture.cpp
     GUI/RemoteAPI/McpRecorder.cpp
     GUI/RemoteAPI/McpRecorder.hpp
     GUI/I18N.cpp

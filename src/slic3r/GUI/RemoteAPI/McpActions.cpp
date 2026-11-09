@@ -1,4 +1,5 @@
 #include "McpActions.hpp"
+#include "McpJournal.hpp"  // the user-change journal: panel actions are the user's
 #include "McpRecorder.hpp"
 #include "RemoteAPIController.hpp" // the shared apply paths, the F8 gate, open_project_from
 #include "RemoteAPIServer.hpp"     // broadcast
@@ -775,6 +776,8 @@ std::string journal_line(const McpRow &r)
 
 void tell(const std::string &text)
 {
+    // The journal entry, then a new baseline: the change is reported as this panel action, not again as an edit.
+    mcp_journal_panel(text);
     if (s_listener) {
         try {
             s_listener("panel", text);
@@ -978,6 +981,7 @@ json McpActions::undo(int row_id)
 {
     const std::string busy = busy_reason();
     if (!busy.empty()) return result_failed(busy);
+    mcp_journal_begin(); // the user's edits before this action stay theirs in the journal
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
     const McpRow *found = rec.history().row(row_id);
@@ -1017,6 +1021,7 @@ json McpActions::restore(int group)
 {
     const std::string busy = busy_reason();
     if (!busy.empty()) return result_failed(busy);
+    mcp_journal_begin(); // the user's edits before this action stay theirs in the journal
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
     McpHistory &h    = rec.history();
@@ -1098,6 +1103,7 @@ json McpActions::undo_restore()
 {
     const std::string busy = busy_reason();
     if (!busy.empty()) return result_failed(busy);
+    mcp_journal_begin(); // the user's edits before this action stay theirs in the journal
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
     if (!restore_state_current(rec) || s_restore.snapshot.empty()) return result_failed("Nothing to undo");

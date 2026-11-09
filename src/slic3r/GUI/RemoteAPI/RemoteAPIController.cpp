@@ -1,6 +1,7 @@
 // src/slic3r/GUI/RemoteAPI/RemoteAPIController.cpp
 #include "RemoteAPIController.hpp"
 #include "McpActions.hpp"
+#include "McpJournal.hpp"
 #include "McpRecorder.hpp"
 
 #include "libslic3r/Preset.hpp"
@@ -56,6 +57,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <vector>
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -416,6 +418,8 @@ static void mcp_record_instances(const char *op, const std::vector<McpInstanceSt
                                                           : "Put the " + std::to_string(n) +
                                                                 " objects back where they were");
     mcp_record(std::move(r));
+    // The job ran after the request's own baseline: these new places are the API's, not the user's.
+    mcp_journal_api_objects_moved();
 }
 
 static void mcp_slice_finished(const nlohmann::json &stats, bool ok, const std::string &error)
@@ -446,10 +450,20 @@ void Controller::notify_project_opened()
     // MCP panel: the next history sync takes a path change for an open, not a save. Also while the API
     // is off, so a project opened then has its timeline back once the API is turned on.
     McpRecorder::note_project_opened();
+    // The user-change journal: one "Opened project" entry replaces everything before it (an API open is
+    // absorbed by the baseline at the end of its request).
+    mcp_journal_project_opened();
     if (g_controller == nullptr) return;
     // On the GUI thread at the end of Plater::load_project.
     std::string name = wxGetApp().plater()->get_project_filename().ToUTF8().data();
     wxGetApp().remote_api_server().broadcast({{"event", "project.opened"}, {"project", name}});
+}
+
+void Controller::notify_project_new()
+{
+    // A restore may start a new project on its way to opening the checkpoint: not the user's new project.
+    if (McpActions::restoring()) return;
+    mcp_journal_project_new();
 }
 
 void Controller::on_config_changed(int preset_type)
@@ -730,6 +744,8 @@ static bool is_sensitive_config_key(const std::string &key)
     const std::vector<std::string> &pp = PhysicalPrinter::printer_options();
     return std::find(pp.begin(), pp.end(), key) != pp.end();
 }
+
+bool Controller::sensitive_config_key(const std::string &key) { return is_sensitive_config_key(key); }
 
 // GUI thread only (AppConfig).
 static bool sensitive_writes_allowed()
@@ -2902,6 +2918,7 @@ Response Controller::handle_put_object_config(uint64_t id, const std::string &bo
 static void mcp_queue_instances_row(Plater *plater, const char *op, std::vector<McpInstanceState> before, int plates_before)
 {
     const std::string opname = op;
+    mcp_journal_api_job_queued(); // the job moves objects after this request's baseline
     const bool queued = queue_job(plater->get_ui_job_worker(), [](Job::Ctl &) {},
                                   [opname, before, plates_before](bool, std::exception_ptr &) {
                                       mcp_record_instances(opname.c_str(), before, plates_before);
@@ -4800,7 +4817,85 @@ Response Controller::handle_activity_test(const std::string &name, const std::st
     return { 404, {{"error", "not_found"}} };
 }
 
+// The user-change journal: every request diffs the project against the baseline the previous one left (what
+// changed in between was the user's) and leaves a new baseline when it is done (its own changes are the API's).
+// Each step is a GUI task of its own; the end one is queued behind whatever the handler posted to the GUI thread.
+static std::atomic<bool> s_journal_stale{false};
+
+void Controller::journal_begin()
+{
+    try {
+        run_on_ui([]() -> nlohmann::json {
+            if (s_journal_stale.exchange(false)) McpJournal::get().invalidate();
+            mcp_journal_begin();
+            return nullptr;
+        });
+    } catch (const std::exception &e) {
+        BOOST_LOG_TRIVIAL(warning) << "MCP journal: no diff for this request: " << e.what();
+    }
+}
+
+void Controller::journal_end()
+{
+    try {
+        run_on_ui([]() -> nlohmann::json {
+            mcp_journal_end();
+            return nullptr;
+        });
+    } catch (const std::exception &e) {
+        // Without a baseline the next request would report this request's own change as the user's: it takes a
+        // fresh baseline instead (what the user changed meanwhile goes unreported).
+        s_journal_stale.store(true);
+        BOOST_LOG_TRIVIAL(warning) << "MCP journal: no baseline after this request: " << e.what();
+    }
+}
+
+// GET /api/v1/user_changes?since=<seq>: the journal entries newer than seq (see McpJournal::since).
+Response Controller::handle_user_changes(const std::string &target)
+{
+    int64_t     since = 0;
+    const auto  q     = target.find('?');
+    if (q != std::string::npos) {
+        const std::string query = target.substr(q + 1);
+        size_t            pos   = 0;
+        while (pos <= query.size()) {
+            size_t            amp = query.find('&', pos);
+            const std::string kv  = query.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+            if (kv.rfind("since=", 0) == 0) {
+                const std::string v = kv.substr(6);
+                try {
+                    size_t used = 0;
+                    since       = std::stoll(v, &used);
+                    if (used != v.size()) throw std::invalid_argument("since");
+                } catch (const std::exception &) {
+                    return { 400, {{"error", "bad_since"}, {"detail", "since must be an integer seq"}} };
+                }
+            }
+            if (amp == std::string::npos) break;
+            pos = amp + 1;
+        }
+    }
+    return { 200, run_on_ui([since]() -> nlohmann::json { return McpJournal::get().since(since); }) };
+}
+
 Response Controller::dispatch(const Request &req)
+{
+    // A restore replaces the whole project: nothing, the journal included, may run in between.
+    if (McpActions::restoring())
+        return { 409, {{"error", "busy"}, {"detail", "the user is restoring"}} };
+    const std::string path = req.target.substr(0, req.target.find('?'));
+    // GET /slice/status never waits for the GUI thread (wait loops poll it); the next request diffs instead.
+    const bool journal = !(req.method == "GET" && path == "/api/v1/slice/status");
+    // The panel's test hooks act as the user (a panel action takes its own baseline), and reading the journal
+    // changes nothing: neither leaves a baseline.
+    const bool leaves_baseline = path.rfind("/api/v1/activity/test/", 0) != 0 && path != "/api/v1/user_changes";
+    if (journal) journal_begin();
+    Response r = dispatch_route(req);
+    if (journal && leaves_baseline) journal_end();
+    return r;
+}
+
+Response Controller::dispatch_route(const Request &req)
 {
     try {
         const std::string &t = req.target;
@@ -4815,6 +4910,7 @@ Response Controller::dispatch(const Request &req)
         if (McpActions::restoring())
             return { 409, {{"error", "busy"}, {"detail", "the user is restoring"}} };
         if (is("GET", "/api/v1/status"))        return handle_status();
+        if (is("GET", "/api/v1/user_changes"))  return handle_user_changes(t);
         // The MCP panel's timeline, in the shape the panel gets (read-only: records nothing).
         if (is("GET", "/api/v1/activity"))
             return { 200, run_on_ui([]() -> nlohmann::json { return McpActions::activity(); }) };

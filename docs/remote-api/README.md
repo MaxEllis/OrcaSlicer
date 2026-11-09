@@ -77,6 +77,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/project/move` | Move or rename a project file (`{"from", "to", "overwrite"}`); the window follows for the open project |
 | DELETE | `/project/file` | Delete a project file from disk (never the open project's) |
 | GET | `/activity` | The MCP panel's timeline of this project: the API's changes, what was undone, restore points |
+| GET | `/user_changes?since=` | What the user changed outside the API since a journal seq (hand edits, preset switches, objects, plates, projects, panel undos) |
 
 ### GET /status
 
@@ -593,6 +594,55 @@ While the user restores the project in the panel, every API request gets
 
 The timeline is kept per project file in `<data dir>/mcp_history/`, with up to 20 restore points.
 
+### GET /user_changes?since=
+
+What changed in OrcaSlicer outside the API: settings edited by hand, presets switched, objects added, removed,
+moved, rotated or scaled, plates added or removed, a project opened or a new one started, and the panel's own
+undos and restores. Every API request compares the project with the state the previous request left (settings
+of the print, printer and every filament slot's preset, the objects and their copies' placement, the plate
+count), so a difference is something the user did in between; at the end of the request the project is taken as
+the new reference, so the API's own changes never show up here. An arrange or orient started by the API is the
+API's too, even though it finishes after its request.
+
+```bash
+curl -H "X-Api-Token: $TOK" "http://localhost:13130/api/v1/user_changes?since=12"
+```
+```json
+{
+  "seq": 16,
+  "changes": [
+    {"seq": 13, "time": "10:42", "kind": "preset", "group": "Print", "text": "Print preset switched to 0.30mm Draft"},
+    {"seq": 14, "time": "10:42", "kind": "setting", "group": "Print", "text": "Wall loops 2 → 4", "key": "wall_loops"},
+    {"seq": 15, "time": "10:43", "kind": "object", "group": "Model", "text": "Moved bracket.stl"},
+    {"seq": 16, "time": "10:44", "kind": "panel", "group": "Panel", "text": "Reverted in the panel: Sparse infill density back to 15%"}
+  ]
+}
+```
+`seq` is the newest entry's number (keep it and pass it as `since` next time; `since` defaults to 0, a value that
+is not an integer is `400 bad_since`). `changes` are the entries newer than `since`, oldest first. `kind` is
+`setting`, `preset`, `object`, `plate`, `project` or `panel`; `group` is `Print`, `Filament`, `Printer`,
+`Model`, `Plates`, `Project` or `Panel`; `key` is the config key of a `setting` entry. The text uses the
+timeline's words: the setting's label, the old and new value with their unit, and ` (filament 2)` /
+` (filaments 1, 3)` for a filament setting when more than one filament is loaded. Script, G-code and
+connection settings (the ones behind "Allow script, G-code and connection edits", passwords and API keys
+among them) say only `"<label> changed"`, never a value.
+
+The answer is kept small:
+- Net changes only. A setting changed several times appears once, from its first old to its last new value, and
+  disappears when it was changed back. When the API set it in between, the entry starts from the API's value.
+  An object keeps its strongest change (rotated over scaled over moved); added and then removed is nothing.
+- A preset switch is one entry, `"<Print|Printer|Filament> preset switched to <name>"`, followed only by the
+  values edited on top of the new preset; earlier setting entries of that preset are dropped (for a filament,
+  only for that slot).
+- Opening a project (`"Opened project <name>"`) or starting a new one (`"New project"`) is one entry and drops
+  every entry before it.
+- Camera and view, plate selection and the user's own slices are not reported.
+
+Reading it changes nothing, but like every request it first compares the project, so an edit made just before
+appears in the same answer. The journal keeps the latest 200 entries in memory (a restart starts it empty), and
+the first request after a start only takes the reference. `GET /slice/status` neither compares nor takes a
+reference, so polling it never loses an edit.
+
 ### Test hooks
 
 Only when OrcaSlicer was started with the environment variable `ORCA_MCP_PANEL_TEST=1` (otherwise `404`):
@@ -601,7 +651,7 @@ and answer what the panel gets, `{"status": "ok" | "cancelled" | "failed", "reas
 the restore as the panel does, outside any request, answers `202 {"status":"started"}`, and
 `/result {}` returns its result later); `/clock {"advance_s"}` moves the panel's clock forward;
 `/checkpoint_delay {"seconds"}` slows every restore-point save; `/as_user {"changes": {key: value}}` edits the
-print, filament or printer settings as the user would by hand (no row, no policy check). `/corrupt_point {"group", "from"?}`
+print, filament or printer settings as the user would by hand (no row, no policy check; `/user_changes` reports it). `/corrupt_point {"group", "from"?}`
 spoils a restore point (overwrites its file with `from`, or with bytes that are no 3MF) to test a failed restore.
 
 ## Notes & limits

@@ -40,6 +40,10 @@ public:
     // controller exists). preset_type is int to keep Tab.cpp include-light.
     static void notify_config_changed(int preset_type);
     static void notify_project_opened();
+    // End of Plater::new_project (the user-change journal's "New project"). GUI thread.
+    static void notify_project_new();
+    // The script, G-code and connection keys the policy guards (the journal never shows their values). Any thread.
+    static bool sensitive_config_key(const std::string &key);
 
     // F8 mutual-exclusion gates between API UI mutations and the periodic
     // auto-backup 3MF exporter (which pumps the event queue mid-export, so the
@@ -88,6 +92,11 @@ public:
     void bind_plater_events();
 
 private:
+    // dispatch() runs the user-change journal around this (diff before, baseline after).
+    Response dispatch_route(const Request &req);
+    void     journal_begin();
+    void     journal_end();
+    Response handle_user_changes(const std::string &target); // GET /user_changes?since=
     Response handle_status();
     Response handle_get_config(const std::string &target);
     Response handle_put_config(const std::string &body);

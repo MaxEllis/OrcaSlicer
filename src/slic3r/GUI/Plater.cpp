@@ -16331,6 +16331,7 @@ int Plater::new_project(bool skip_confirm, bool silent, const wxString& project_
     up_to_date(true, true);
     // clear_all() above also removed the missing-plugin notices; show them again for the current presets.
     refresh_missing_plugin_notifications();
+    Slic3r::GUI::RemoteAPI::Controller::notify_project_new();
     return wxID_YES;
 }
 
