@@ -1,266 +1,76 @@
-> [!NOTE]
-> **This is the OrcaSlicer MCP fork.** It adds a token-authenticated local Remote API so AI assistants can work the slicer: load models, edit settings, slice, read per-feature breakdowns, and render the plate. Download binaries from the [Releases page](https://github.com/MaxEllis/OrcaSlicer/releases) and pair them with the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. Issues are disabled on this repo; report problems on the [orcaslicer-mcp issue tracker](https://github.com/MaxEllis/orcaslicer-mcp/issues). Everything below this note is the upstream OrcaSlicer README.
->
-> Enable the API in **Preferences → Remote API** (Ctrl+P): tick **Enable Remote API**, copy the token, and tick **Allow LAN access** only if the MCP server runs on another machine. Leave **Allow script, G-code and connection edits** off. With it off, the API cannot change post-processing scripts, custom G-code, the printer connection or its credentials, so text an assistant reads cannot turn into a command on your computer or printer.
->
-> <img src="doc/images/remote-api-preferences.png" width="480" alt="Preferences, Remote API page: Enable Remote API, Allow LAN access, port and API token fields">
->
-> \*The token shown here is a dummy example. OrcaSlicer generates a unique token for you; keep yours private.
->
-> If the fork saves you time and you feel like saying thanks, you can buy me a coffee.
->
-> <a href="https://buymeacoffee.com/maxellis"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" height="50"></a>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="doc/images/readme/logo-horizontal-dark.svg">
+    <img alt="OrcaSlicer MCP" src="doc/images/readme/logo-horizontal-light.svg" width="320">
+  </picture>
+</p>
 
-<div align="center">
+<h3 align="center">OrcaSlicer 2.5, with a way in for an AI assistant.</h3>
 
-<picture>
-  <img alt="OrcaSlicer logo" src="resources/images/OrcaSlicer.png" width="15%" height="15%">
-</picture>
+<p align="center">
+  <a href="https://github.com/MaxEllis/OrcaSlicer/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/MaxEllis/OrcaSlicer?label=release&color=009789"></a>
+  <a href="https://github.com/OrcaSlicer/OrcaSlicer/releases/tag/v2.5.0"><img alt="Based on OrcaSlicer 2.5.0" src="https://img.shields.io/badge/based%20on-OrcaSlicer%202.5.0-555"></a>
+  <a href="LICENSE.txt"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-555"></a>
+</p>
 
-<a href="https://trendshift.io/repositories/15552" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15552" alt="OrcaSlicer%2FOrcaSlicer | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+**1. Say what the print needs**
 
-[![GitHub Repo stars](https://img.shields.io/github/stars/OrcaSlicer/OrcaSlicer)](https://github.com/OrcaSlicer/OrcaSlicer/stargazers) [![Build all](https://img.shields.io/github/actions/workflow/status/OrcaSlicer/OrcaSlicer/main_build_status.yml?label=Build%20all)](https://github.com/OrcaSlicer/OrcaSlicer/actions/workflows/build_all.yml)
+<p align="center"><img src="doc/images/readme/step1.png" alt="Your AI app: you write that you designed these brackets, want them as strong as possible, and ask to see the changes it would make. An arrow leads to OrcaSlicer, where the bracket stands on the plate as designed."></p>
 
-OrcaSlicer: an open source Next-Gen Slicing Software for Precision 3D Prints.  
-Optimize your prints with ultra-fast slicing, intelligent support generation, and seamless printer compatibility—engineered for perfection.
-
-# Official links and community
-
-#### Official Website:
-
-<a href="https://www.orcaslicer.com/" style="font-size:2em;">OrcaSlicer.com</a>
+**2. It changes what matters, and says why**
 
-#### Github Repository:
+<p align="center"><img src="doc/images/readme/step2.png" alt="Your AI app: the assistant says it made three changes: on its side, because standing up the layers run across the arm that takes the load; 7 walls instead of 4, which makes the arms solid; 215 °C instead of 200 so the layers fuse. A line runs from each reason to the OrcaSlicer MCP panel: Rotated 90° about X (Rotate back), Wall loops 7, was 4 (Revert), Nozzle temperature 215 °C, was 200 (Revert)."></p>
 
-<a href="https://github.com/OrcaSlicer/OrcaSlicer"><img src="https://img.shields.io/badge/OrcaSlicer-181717?style=flat&logo=github&logoColor=white" width="200" alt="GitHub Logo"/> </a>
+**3. See the trade-off before you print**
 
-#### Follow us:
+<p align="center"><img src="doc/images/readme/step3.png" alt="Your AI app: the assistant compares OrcaSlicer's two slices, 2h 57m and 33.7 g as designed against 2h 44m and 46.8 g stronger, and notes that lying flat saves 22 minutes, more than the extra walls cost. An arrow leads to OrcaSlicer's preview of the bracket sliced on its side."></p>
 
-<a href="https://twitter.com/real_OrcaSlicer"><img src="https://img.shields.io/badge/real__OrcaSlicer-000000?style=flat&logo=x&logoColor=white" width="200" alt="X Logo"/> </a>  
-<a href="https://www.youtube.com/@OfficialOrcaSlicer"><img src="https://img.shields.io/badge/OfficialOrcaSlicer-FF0000?style=flat&logo=youtube&logoColor=white" width="200" alt="YouTube Logo"/> </a>
+This is the **OrcaSlicer MCP build**: [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) 2.5.0 with two additions. A local API lets an AI assistant, which you talk to in your usual AI app, change settings, load and slice models, and read back the result, through the [orcaslicer-mcp](https://github.com/MaxEllis/orcaslicer-mcp) server. The OrcaSlicer MCP panel beside the 3D view lists every change it makes, with a way to undo each one. Everything else is OrcaSlicer, rebuilt from the upstream release, and it uses your existing printers and presets.
 
-#### Join our Discord community:
+Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslicer-mcp#orcaslicer-mcp-build-or-plugin) covers settings and presets.
 
-<a href="https://discord.gg/P4VE9UY9gJ"><img src="https://img.shields.io/badge/-Discord-5865F2?style=flat&logo=discord&logoColor=fff" width="200" alt="discord logo"/> </a>
+## Install
 
-<table border="2" style="border-color: #ffa500; background-color:rgb(232, 220, 180); color: #856404;">
-<tr>
-<td>
-<strong>⚠️ CAUTION:</strong><br>
-Several clickbait and malicious websites, such as <b>orca-slicer[.]com</b> and <b>orcaslicer[.]net</b>, are pretending to be the official OrcaSlicer site. These sites may redirect you to dangerous downloads or contain misleading information.<br>
-<b>Our only official website is <a href="https://www.orcaslicer.com/">www.orcaslicer.com</a>.</b><br><br>
-If you come across any of these in search results, please <b>report them</b> as unsafe or phishing to help keep the community secure with:<br>
- - <a href="https://safebrowsing.google.com/safebrowsing/report_phish/">Google Safe Browsing</a><br>
- - <a href="https://www.microsoft.com/en-us/wdsi/support/report-unsafe-site">Microsoft Security Intelligence</a><br>
- - <a href="https://ipthreat.net/tools/reportphishing">IPThreat</a>
-</td>
-</tr>
-</table>
+| Platform | File on the [latest release](https://github.com/MaxEllis/OrcaSlicer/releases/latest) |
+|---|---|
+| Windows 10/11 | `win64-installer.exe` (Arm: `winarm64-installer.exe`), or the portable `.zip` |
+| macOS 10.15 and later | `macos-universal.dmg`. It is signed but not notarized: the first launch needs **System Settings → Privacy & Security → Open Anyway**. |
+| Linux | `linux-x64.AppImage` or `linux-aarch64.AppImage`, or the `.flatpak` files |
 
-</div>
+The installer and the Mac app take the place of OrcaSlicer: same name, same place, same profile folder, so your printers and presets carry over. To keep stock OrcaSlicer as well, use the portable Windows zip or the Linux AppImage.
 
-# Main features
+Then open **Preferences → Remote API**, tick **Enable Remote API**, copy the token, and follow the [setup steps](https://github.com/MaxEllis/orcaslicer-mcp#get-started) to connect your assistant app.
 
-- **[Advanced Calibration Tools](https://www.orcaslicer.com/wiki/calibration_guide)**  
-  Comprehensive suite: temperature towers, flow rate, retraction & more for optimal performance.
-- **[Precise Wall](https://www.orcaslicer.com/wiki/quality_settings_precision#precise-wall) and [Seam Control](https://www.orcaslicer.com/wiki/quality_settings_seam)**  
-  Adjust outer wall spacing and apply scarf seams to enhance print accuracy.
-- **[Sandwich Mode](https://www.orcaslicer.com/wiki/quality_settings_wall_and_surfaces#innerouterinner) and [Polyholes](https://www.orcaslicer.com/wiki/quality_settings_precision#polyholes) Support**  
-  Use varied infill [patterns](https://www.orcaslicer.com/wiki/strength_settings_patterns) and accurate hole shapes for improved clarity.
-- **[Overhang](https://www.orcaslicer.com/wiki/quality_settings_overhangs) and [Support Optimization](https://www.orcaslicer.com/wiki#support-settings)**  
-  Modify geometry for printable overhangs with precise support placement.
-- **[Granular Controls and Customization](https://www.orcaslicer.com/wiki#process-settings)**  
-  Fine-tune print speed, layer height, pressure, and temperature with precision.
-- **Network Printer Support**  
-  Seamless integration with Klipper, PrusaLink, and OctoPrint for remote control.
-- **[Mouse Ear Brims](https://www.orcaslicer.com/wiki/others_settings_brim) & [Adaptive Bed Mesh](https://www.orcaslicer.com/wiki/printer_basic_information_adaptive_bed_mesh)**  
-  Automatic brims and adaptive mesh calibration ensure consistent adhesion.
-- **User-Friendly Interface**  
-  Intuitive drag-and-drop design with pre-made profiles for popular printers.
-- **[Open-Source](https://github.com/OrcaSlicer/OrcaSlicer) & [Community Driven](https://discord.gg/P4VE9UY9gJ)**  
-  Regular updates fueled by continuous community contributions.
-- **Wide Printer Compatibility**  
-  Supports a broad range of printers: Bambu Lab, Prusa, Creality, Voron, and more.
-- **[Belt Printer Support](https://www.orcaslicer.com/wiki/belt_printing)**  
-  Slice for belt / conveyor (infinite-Z) printers, with belt-aware supports and a tilted-bed preview. Contributed by [Joseph Robertson (@HarrierPigeon)](https://github.com/HarrierPigeon).
-- **[IDEX/IQEX Parallel Printing Support](https://www.orcaslicer.com/wiki/idex_iqex_parallel_printing)**  
-  Print copies or mirror images of a part on every carriage of an IDEX or IQEX printer at once, with the mode chosen per plate and nozzle clearance zones shown on the bed. Contributed by [Clifford (@cgarwood82)](https://github.com/cgarwood82).
-- Additional features can be found in the [change notes](https://github.com/OrcaSlicer/OrcaSlicer/releases/).
+<img src="doc/images/readme/preferences.png" width="520" alt="Preferences, Remote API page with Enable Remote API ticked, the port and an example token">
 
-# Wiki
+## The OrcaSlicer MCP panel
 
-The [wiki](https://www.orcaslicer.com/wiki) aims to provide a detailed explanation of the slicer settings, including how to maximize their use and how to calibrate and set up your printer.
+<img align="right" src="doc/images/readme/panel-undo.gif" width="300" alt="Clicking a change in the panel, then Revert: the setting goes back in the sidebar">
 
-- **[Access the wiki here](https://www.orcaslicer.com/wiki)**
-- **[Contribute to the wiki](https://www.orcaslicer.com/wiki/how_to_wiki)**
+- **Every change, grouped** by round of work, with the slice result.
+- **Undo any one change.** Each shows its old value and an undo named for what it does: Revert, Switch back, Rotate back, Remove, Put back.
+- **Restore to here** on an older group puts the whole project back to that point. A restore can be undone too.
+- **Your own edits count.** If you change a setting the assistant changed, its row says "changed by you". The assistant is told about every setting you change by hand, with its next reply.
+- **Kept with the project,** so the timeline is still there after a restart.
 
-# Download
+OrcaSlicer's own Ctrl+Z (⌘Z on a Mac) undoes model edits, not settings, so take a setting back from the panel. While the panel is open, OrcaSlicer's change notifications stay hidden; refusals still show. The gear opens **Preferences → Remote API**. Close the panel with its ✕ and bring it back from **View → OrcaSlicer MCP panel**.
 
-## Stable Release
+<br clear="right">
 
-📥 **[Download the Latest Stable Release](https://github.com/OrcaSlicer/OrcaSlicer/releases/latest)**  
-Visit our GitHub Releases page for the latest stable version of OrcaSlicer, recommended for most users.  
-Windows and macOS release and nightly builds are code signed.
+## Safety
 
-## Nightly Builds
+- **Off until you enable it**, and it listens on this computer only. **Allow LAN access** is a separate box.
+- **Every request needs the token.** Regenerate it to cut off every client at once.
+- **No scripts, G-code or printer connection changes** until you tick **Allow script, G-code and connection edits** in **Preferences → Remote API**. Only that box allows them, and no assistant or API call can tick it.
+- **No deleting or replacing project files** until you tick **Allow deleting and replacing project files**.
+- **Passwords and API keys** are left out of everything the API returns.
 
-🌙 **[Download the Latest Nightly Build](https://github.com/OrcaSlicer/OrcaSlicer/releases/tag/nightly-builds)**  
-Explore the latest developments in OrcaSlicer with our nightly builds. Feedback on these versions is highly appreciated.
+## Updates
 
-# How to install
+The build checks this repository for new releases and offers them in OrcaSlicer's usual update dialog. Releases are named after the OrcaSlicer version plus this fork's number (`v2.5.0-mcp.16`), follow upstream's stable releases only, and are built by GitHub Actions with checksums in `SHA256SUMS.txt`.
 
-## Windows
+## Problems and credits
 
-Download the **Windows Installer exe** for your preferred version from the [releases page](https://github.com/OrcaSlicer/OrcaSlicer/releases). Both `x64` and `arm64` installers are published — pick the one matching your CPU.
+Report problems on the [orcaslicer-mcp issue tracker](https://github.com/MaxEllis/orcaslicer-mcp/issues), which covers this build, the plugin and the connector, so nothing gets lost between them. Anything that also happens in stock OrcaSlicer belongs with [OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer/issues). The API is documented in the [Remote API reference](docs/remote-api/README.md).
 
-- *For convenience there is also a portable build available.*
-    <details>
-    <summary>Troubleshooting</summary>
-
-  - *If you have troubles to run the build, you might need to install following runtimes:*
-  - [MicrosoftEdgeWebView2RuntimeInstallerX64](https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v1.0.10-sf2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe)
-    - [Details of this runtime](https://aka.ms/webview2)
-    - [Alternative Download Link Hosted by Microsoft](https://go.microsoft.com/fwlink/p/?LinkId=2124703)
-  - [vcredist2019_x64](https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v1.0.10-sf2/vcredist2019_x64.exe)
-    - [Alternative Download Link Hosted by Microsoft](https://aka.ms/vs/17/release/vc_redist.x64.exe)
-    - This file may already be available on your computer if you've installed visual studio.  Check the following location: `%VCINSTALLDIR%Redist\MSVC\v142`
-    </details>
-
-### Microsoft Store
-
-Install from the [Microsoft Store](https://apps.microsoft.com/detail/9mv6gl23xm59) when you prefer a Store-signed package (helps on Windows 11 Smart App Control).
-
-### Windows Package Manager
-
-```shell
-winget install --id=SoftFever.OrcaSlicer -e
-```
-
-## Mac
-
-1. Download the universal DMG, which runs on both Apple Silicon and Intel Macs.
-2. Drag OrcaSlicer.app to Application folder.
-3. *If you want to run a build from a PR, you also need to follow the instructions below:*
-
-    <details>
-    <summary>Quarantine</summary>
-
-    - Option 1 (You only need to do this once. After that the app can be opened normally.):
-      - Step 1: Hold _cmd_ and right click the app, from the context menu choose **Open**.
-      - Step 2: A warning window will pop up, click _Open_
-
-    - Option 2:
-      Execute this command in terminal:
-
-      ```shell
-      xattr -dr com.apple.quarantine /Applications/OrcaSlicer.app
-      ```
-
-    - Option 3:
-        - Step 1: open the app, a warning window will pop up  
-            ![mac_cant_open](./SoftFever_doc/mac_cant_open.png)
-        - Step 2: in `System Settings` -> `Privacy & Security`, click `Open Anyway`:  
-            ![mac_security_setting](./SoftFever_doc/mac_security_setting.png)
-    </details>
-
-### Homebrew Cask
-
-```shell
-brew install --cask orcaslicer
-```
-
-The [Homebrew cask](https://formulae.brew.sh/cask/orcaslicer) installs the official macOS DMG from [GitHub Releases](https://github.com/OrcaSlicer/OrcaSlicer/releases).
-
-## Linux
-
-### Flathub (Recommended)
-
-OrcaSlicer is available through FlatHub:
-
-<a href='https://flathub.org/apps/com.orcaslicer.OrcaSlicer'><img width='240' alt='Download on Flathub' src='https://dl.flathub.org/assets/badges/flathub-badge-en.png'/></a>
-
-Install from the command line:
-
-```shell
-flatpak install flathub com.orcaslicer.OrcaSlicer
-flatpak run com.orcaslicer.OrcaSlicer
-```
-
-It can also be installed through graphical software managers (KDE Discover, GNOME Software, etc.) when Flathub is enabled. Search for **OrcaSlicer** in your software center.
-
-### AppImage
-
-AppImages are published for both **x86_64** and **aarch64** (ARM64). Pick the file matching your CPU — the ARM64 build has `aarch64` in its name (e.g. `OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_*.AppImage`).
-
- 1. Download App image from the [releases page](https://github.com/OrcaSlicer/OrcaSlicer/releases).
- 2. Double click the downloaded file to run it.
-
- 3. If you run into trouble executing it, try this command in the terminal:
-    `chmod +x /path_to_appimage/OrcaSlicer_Linux.AppImage`
-
-# How to Compile
-
-All updated build instructions for Windows, macOS, and Linux are now available on the official [OrcaSlicer Wiki - How to build](https://www.orcaslicer.com/wiki/how_to_build) page.
-
-Please refer to the wiki to ensure you're following the latest and most accurate steps for your platform.
-
-# Klipper Note
-
-If you're running Klipper, it's recommended to add the following configuration to your `printer.cfg` file.
-
-```gcode
-# Enable object exclusion
-[exclude_object]
-
-# Enable arcs support
-[gcode_arcs]
-resolution: 0.1
-```
-
-# Supports
-
-**OrcaSlicer** is an open-source project, and we're deeply grateful to all our sponsors and backers.  
-Their generous support helps fund filaments and other essential 3D printing materials for the project.  
-Thank you! :)
-
-## Sponsors
-
-<table>
-<tr>
-<td>
-<a href="https://qidi3d.com/" style="display:inline-block; border-radius:8px; background:#fff;">
-  <img src="SoftFever_doc\sponsor_logos\QIDI.png" alt="QIDI" width="100" height="100">
-</a>
-</td>
-<td>
-<a href="https://bigtree-tech.com/" style="display:inline-block; border-radius:8px; background:#222;">
-    <img src="SoftFever_doc\sponsor_logos\BigTreeTech.png" alt="BIGTREE TECH" width="100" height="100">
-</a>
-</td>
-</tr>
-</table>
-
-## Backers:
-
-**Ko-fi supporters** ☕: [Backers list](https://github.com/user-attachments/files/16147016/Supporters_638561417699952499.csv)
-
-## Support the project
-
-<a href="https://github.com/sponsors/SoftFever"><img src="https://img.shields.io/badge/GitHub%20Sponsors-30363D?style=flat&logo=GitHub-Sponsors&logoColor=EA4AAA" height="50"></a>  
-<a href="https://ko-fi.com/G2G5IP3CP"><img src="https://img.shields.io/badge/Support_me_on_Ko--fi-FF5E5B?style=flat&logo=ko-fi&logoColor=white" height="50"></a>  
-<a href="https://paypal.me/softfever3d"><img src="https://img.shields.io/badge/PayPal-003087?style=flat&logo=paypal&logoColor=fff" height="50"></a>
-
-## Some Background
-
-Open-source slicing has always been built on a tradition of collaboration and attribution. [Slic3r](https://github.com/Slic3r/Slic3r), created by Alessandro Ranellucci and the RepRap community, laid the foundation. [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research built on Slic3r and acknowledged that heritage. [Bambu Studio](https://github.com/bambulab/BambuStudio) in turn forked from PrusaSlicer, and [SuperSlicer](https://github.com/supermerill/SuperSlicer) by @supermerill extended PrusaSlicer with community-driven enhancements. Each project carried the work of its predecessors forward, crediting those who came before.
-
-OrcaSlicer began in that same spirit, drawing from BambuStudio, PrusaSlicer, and ideas inspired by CuraSlicer and SuperSlicer. But it has since grown far beyond its origins. Through relentless innovation — introducing advanced calibration tools, precise wall and seam control, tree supports, adaptive slicing, and hundreds of other features — OrcaSlicer has become the most widely used and actively developed open-source slicer in the 3D printing community. Many of its innovations have been adopted by other slicers, making it a driving force for the entire industry.
-
-The OrcaSlicer logo was designed by community member [Justin Levine](https://github.com/jal-co).
-
-# License
-
-- **OrcaSlicer** is licensed under the GNU Affero General Public License, version 3.
-- The **GNU Affero General Public License**, version 3 ensures that if you use any part of this software in any way (even behind a web server), your software must be released under the same license.
-- OrcaSlicer includes a **pressure advance calibration pattern test** adapted from Andrew Ellis' generator, which is licensed under GNU General Public License, version 3. Ellis' generator is itself adapted from a generator developed by Sineos for Marlin, which is licensed under GNU General Public License, version 3.
-- The **Bambu networking plugin** is based on non-free libraries from BambuLab. It is optional to the OrcaSlicer and provides extended functionalities for Bambulab printer users.
+OrcaSlicer is made by the [OrcaSlicer team and contributors](https://github.com/OrcaSlicer/OrcaSlicer/graphs/contributors) and builds on Bambu Studio, PrusaSlicer and Slic3r. This fork is AGPL-3.0, like OrcaSlicer ([LICENSE.txt](LICENSE.txt)). If it saves you time, you can [buy me a coffee](https://buymeacoffee.com/maxellis).
