@@ -830,6 +830,7 @@ today.
 | `{"action": "undo_restore"}` | The user clicked Undo on the "Restored to" line | exactly one `result` |
 | `{"action": "reveal", "row": <id>}` | The user opened the detail line of a row with `reveal: true`, only when `capabilities.reveal` is `true` (closing it sends nothing) | nothing; show that setting in the host's settings (this fork: `Sidebar::jump_to_option`, as OrcaSlicer's own "Jump to" links, which switches to the setting's tab and page and highlights it). Ignore it during a restore or a project load, or when the setting is gone (a slice or job running does not stop it) |
 | `{"action": "open_settings"}` | The settings icon, or the link in the off line (both only when `capabilities.open_settings` is not `false`) | nothing; open the host's settings (Preferences > Remote API here, the plugin's own settings page in the plugin) |
+| `{"action": "open", "url": "<link>"}` | The user clicked a setup route's button that opens a link (only after a `setup` message) | nothing; open the link through the system, but only one of the `open` links the host itself sent in `setup`, compared whole |
 
 Ids arrive as JavaScript numbers. `reveal` never gets a `result` (fire and forget). Every `undo`, `restore` and
 `undo_restore` must get a `result`, also when it is refused or fails: until then the page shows "Reverting…" or
@@ -921,6 +922,22 @@ is always unavailable with "Changed again since; restore an earlier point instea
 **`state`**: `{"type": "state", "api": "on" | "off"}`, after `ready` and whenever it changes. `on` means the
 assistant can reach OrcaSlicer now (this fork: the Remote API server is listening, not only enabled in
 Preferences). `off` shows `off_text` above the timeline. Until the first `state` the page assumes `on`.
+
+**`setup`** (optional): how to connect an AI app, for a host that wants the empty timeline to do that. The plugin
+sends it after `ready` and again when the first app connects; this fork sends none, and the page then shows its
+usual empty line.
+```json
+{"type": "setup", "status": null, "paused": false,
+ "apps": [{"id": "claude", "name": "Claude", "where": "Claude", "icon": "<svg ...>",
+           "routes": [{"label": "Claude app", "hint": "For chats. Download the extension, then open the file.",
+                       "act": "Download", "primary": true, "open": "https://...", "copy": null, "also": "", "off": false}]}]}
+```
+While the timeline is empty, the page shows a square per app (the first chosen), the routes of the chosen one with
+one button each (`open` sends `{"action": "open"}`, else `copy` goes to the clipboard; `off` routes have no button
+and a dashed border; `also` is appended to the hint), and "Waiting for <where>…". With `status`
+(`{"seen": <unix seconds>, "app": "<name>"}`) it shows "Connected to <app>" and where the changes will appear
+instead; the first change replaces either with the timeline. There is no question to ask: the first request from
+the app switches the view by itself.
 
 **`result`**: the answer to one action.
 ```json
