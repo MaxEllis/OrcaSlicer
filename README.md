@@ -34,7 +34,7 @@ Rather keep stock OrcaSlicer? The [plugin](https://github.com/MaxEllis/orcaslice
 | Platform | File on the [latest release](https://github.com/MaxEllis/OrcaSlicer/releases/latest) |
 |---|---|
 | Windows 10/11 | `win64-installer.exe` (Arm: `winarm64-installer.exe`), or the portable `.zip` |
-| macOS 11 and later, Apple silicon | `macos-arm64.dmg`. It is signed but not notarized: the first launch needs **System Settings → Privacy & Security → Open Anyway**. Intel Macs: [v2.4.2-mcp.15](https://github.com/MaxEllis/OrcaSlicer/releases/tag/v2.4.2-mcp.15) has a universal build. |
+| macOS 11 and later | `macos-universal.dmg` runs on Intel and Apple silicon Macs; `macos-arm64.dmg` is a smaller download for Apple silicon only. Both are signed but not notarized: the first launch needs **System Settings → Privacy & Security → Open Anyway**. |
 | Linux | `linux-x64.AppImage` or `linux-aarch64.AppImage`, or the `.flatpak` files |
 
 The installer and the Mac app take the place of OrcaSlicer: same name, same place, same profile folder, so your printers and presets carry over. To keep stock OrcaSlicer as well, use the portable Windows zip or the Linux AppImage.
