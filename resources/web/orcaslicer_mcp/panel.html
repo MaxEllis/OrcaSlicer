@@ -50,6 +50,32 @@
   .empty button { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
   .offnote { border-bottom: 1px solid var(--border); }
 
+  /* First run (a host that sends "setup"): how to connect an AI app, then goals to try. */
+  .setup { padding: 14px 12px; }
+  .setup .sh { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+  .setup .slead { color: var(--muted); font-size: 12px; line-height: 1.45; margin-bottom: 10px; }
+  .ssqs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .ssq { aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+         border: 1px solid var(--border); border-radius: 8px; background: var(--hover-soft); color: var(--muted); font-size: 11.5px; line-height: 1.2; text-align: center; padding: 4px; }
+  .ssq svg { width: 26px; height: 26px; flex: none; }
+  .ssq:hover { color: var(--fg); }
+  .ssq[aria-pressed="true"] { border: 1.5px solid var(--accent); color: var(--fg); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .ssteps { list-style: none; margin: 12px 0 0; padding: 0; counter-reset: s; }
+  .ssteps > li { display: grid; grid-template-columns: 14px 1fr; column-gap: 6px; padding: 5px 0; font-size: 12.5px; }
+  .ssteps > li::before { counter-increment: s; content: counter(s); color: var(--muted); }
+  .sroutes { grid-column: 2; display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+  .sroute { border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; }
+  .sroute b { font-weight: 600; display: block; } .sroute small { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.4; margin: 1px 0 6px; }
+  .sroute.off { border-style: dashed; } .sroute.off b { color: var(--muted); font-weight: 500; } .sroute.off small { margin-bottom: 0; }
+  .sact { border-radius: 4px; padding: 3px 10px; border: 1px solid var(--accent); background: var(--accent); color: #fff; }
+  .sact.second { background: transparent; color: var(--fg); border-color: var(--border); }
+  .sdone { color: var(--link); font-size: 12px; }
+  .sstat { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  .sstat.top { margin: 0 0 12px; padding: 0; border: 0; color: var(--fg); }
+  .sdot { width: 8px; height: 8px; border-radius: 50%; background: #d9a441; flex: none; } .sdot.ok { background: #3fb27f; }
+  .sgoals { list-style: none; margin: 4px 0 10px; padding: 0; }
+  .sgoals li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; }
+
   /* Links that act: underlined in the link colour. Unavailable ones: faint, no underline, no pointer. */
   .lnk { color: var(--link); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; border-radius: 2px; }
   .lnk.off { color: var(--faint); text-decoration: none; cursor: default; }
@@ -561,6 +587,9 @@
   var restoredTo = null, canUndoRestore = false, restoreFailed = false;
   var live = {};
   var api = 'on';
+  var setup = null;            // the host's "setup" message: how to connect an AI app (first run), or null
+  var setupApp = null;         // the app square picked in it
+  var setupDone = {};          // which of its buttons were pressed ("Copied", "Opening...")
   var openGroups = {};          // group id -> bool
   var newestSeen = null;        // newest group id at the last render
   var openRows = {};            // row id -> bool
@@ -895,7 +924,8 @@
     }
     var shown = shownGroups();
     if (!shown.length) {
-      if (api !== 'off') html += '<div class="empty">When an assistant changes something, it shows up here.</div>';
+      if (api !== 'off') html += setup && setup.apps && setup.apps.length ? setupHtml()
+        : '<div class="empty">When an assistant changes something, it shows up here.</div>';
     } else {
       html += restoredLineHtml();
       html += shown.map(groupHtml).join(''); // index 0 is the newest group: the "Restored to" line is not one
@@ -907,6 +937,48 @@
     updateFold();
     updateGear();
     placeFocus(keep, pending);
+  }
+
+  function setupCurrent() {
+    var a = null;
+    setup.apps.forEach(function (x) { if (x.id === setupApp) a = x; });
+    return a || setup.apps[0];
+  }
+  function setupHtml() {
+    var st = setup.status;
+    if (st && st.seen) {
+      return '<div class="setup"><div class="sstat top"><span class="sdot ok"></span><b>' + esc(st.app ? 'Connected to ' + st.app : 'Connected') + '</b></div>' +
+        '<div class="sh">Now tell it what you want</div><div class="slead">A goal works better than a setting. For example:</div>' +
+        '<ul class="sgoals">' + (setup.goals || []).map(function (g, i) {
+          return '<li><span>' + esc(g) + '</span>' + (setupDone['g' + i] ? '<span class="sdone">Copied</span>'
+            : '<button type="button" class="lnk" data-scopy="g' + i + '" data-fk="sg' + i + '">Copy</button>') + '</li>';
+        }).join('') + '</ul><div class="slead">Its changes will appear here, each with Revert.</div></div>';
+    }
+    var app = setupCurrent();
+    var squares = setup.apps.map(function (a) {
+      return '<button type="button" class="ssq" data-sapp="' + esc(a.id) + '" data-fk="sa:' + esc(a.id) + '" aria-pressed="' + (a.id === app.id) + '">' +
+        (a.icon || '') + '<span>' + esc(a.name) + '</span></button>';
+    }).join('');
+    var routes = app.routes.map(function (r, j) {
+      var act = '';
+      if (!r.off) act = setupDone['r' + j] ? '<span class="sdone">' + (r.open ? 'Opening\u2026' : 'Copied') + '</span>'
+        : '<button type="button" class="sact' + (r.primary ? '' : ' second') + '" data-' + (r.open ? 'sopen' : 'scopy') + '="r' + j + '" data-fk="sr' + j + '">' + esc(r.act) + '</button>';
+      return '<div class="sroute' + (r.off ? ' off' : '') + '"><b>' + esc(r.label) + '</b><small>' + esc(r.hint) + (r.also ? ' ' + esc(r.also) : '') + '</small>' + act + '</div>';
+    }).join('');
+    return '<div class="setup"><div class="sh">Connect your AI app</div>' +
+      '<div class="slead">Then tell it the print you want. Every change it makes shows up here, and you can undo any of it.</div>' +
+      '<div class="ssqs">' + squares + '</div><ol class="ssteps"><li><span>Set it up where you use ' + esc(app.where || app.name) + '</span><div class="sroutes">' + routes + '</div></li>' +
+      '<li><span>' + esc(app.ask) + ': \u201c' + esc(setup.ask) + '\u201d ' + (setupDone.ask ? '<span class="sdone">Copied</span>'
+        : '<button type="button" class="lnk" data-scopy="ask" data-fk="sk">Copy</button>') + '</span></li></ol>' +
+      '<div class="sstat"><span class="sdot"></span>Waiting for ' + esc(app.where || app.name) + '\u2026</div></div>';
+  }
+  function copyToClipboard(text, done) {
+    function fallback() {
+      var a = document.createElement('textarea'); a.value = text; document.body.appendChild(a); a.select();
+      var ok = false; try { ok = document.execCommand('copy'); } catch (e) {} document.body.removeChild(a); done(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+    else fallback();
   }
 
   function applyHistory(m) {
@@ -983,6 +1055,7 @@
     }
     else if (m.type === 'state') { api = m.api === 'off' ? 'off' : 'on'; render(); }
     else if (m.type === 'result') applyResult(m);
+    else if (m.type === 'setup') { setup = m; render(); }
   }
   window.__mcpPanelReceive = receive;
   if (window.orca && window.orca.onMessage) window.orca.onMessage(receive);
@@ -1004,6 +1077,18 @@
     var el;
     // An unavailable control (a disabled restore icon or undo link) does nothing, and never toggles its group.
     if (ancestor(target, 'aria-disabled')) return true;
+    if ((el = ancestor(target, 'data-sapp'))) { setupApp = el.getAttribute('data-sapp'); setupDone = {}; focusNext = 'sa:' + setupApp; render(); return true; }
+    if ((el = ancestor(target, 'data-sopen'))) {
+      var ok = el.getAttribute('data-sopen'), or = setupCurrent().routes[Number(ok.slice(1))];
+      if (or && or.open) { send({ action: 'open', url: or.open }); setupDone[ok] = true; render(); }
+      return true;
+    }
+    if ((el = ancestor(target, 'data-scopy'))) {
+      var ck = el.getAttribute('data-scopy'), text = ck === 'ask' ? setup.ask : ck.charAt(0) === 'g' ? (setup.goals || [])[Number(ck.slice(1))]
+        : (setupCurrent().routes[Number(ck.slice(1))] || {}).copy;
+      if (text) copyToClipboard(text, function (done) { if (done) { setupDone[ck] = true; render(); } });
+      return true;
+    }
     if ((el = ancestor(target, 'data-undo'))) {
       var id = Number(el.getAttribute('data-undo'));
       pendingUndo[id] = 'busy'; delete undoError[id];
