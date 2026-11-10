@@ -113,6 +113,9 @@ py::dict app_info()
     require_main_thread("app_info");
     py::dict out;
     out["version"]  = SoftFever_VERSION;
+    // The OrcaSlicer MCP build has its Remote API and panel built in: the OrcaSlicer MCP plugin reads this and stays
+    // off instead of opening a second panel and a second server. Stock OrcaSlicer has no such key.
+    out["orca_mcp_version"] = ORCA_MCP_VERSION;
     out["build"]    = GUI::build_commit_label;
     out["mode"]     = app.is_editor() ? "editor" : "gcode viewer";
     out["language"] = GUI::into_u8(app.current_language_code_safe());

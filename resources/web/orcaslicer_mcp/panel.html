@@ -50,7 +50,7 @@
   .empty button { color: var(--link); text-decoration: underline; text-underline-offset: 2px; }
   .offnote { border-bottom: 1px solid var(--border); }
 
-  /* First run (a host that sends "setup"): how to connect an AI app, then goals to try. */
+  /* First run (a host that sends "setup"): how to connect an AI app, then that it connected. */
   .setup { padding: 14px 12px; }
   .setup .sh { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
   .setup .slead { color: var(--muted); font-size: 12px; line-height: 1.45; margin-bottom: 10px; }
@@ -73,8 +73,6 @@
   .sstat { display: flex; align-items: center; gap: 7px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
   .sstat.top { margin: 0 0 12px; padding: 0; border: 0; color: var(--fg); }
   .sdot { width: 8px; height: 8px; border-radius: 50%; background: #d9a441; flex: none; } .sdot.ok { background: #3fb27f; }
-  .sgoals { list-style: none; margin: 4px 0 10px; padding: 0; }
-  .sgoals li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 9px; margin-bottom: 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; }
 
   /* Links that act: underlined in the link colour. Unavailable ones: faint, no underline, no pointer. */
   .lnk { color: var(--link); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; border-radius: 2px; }
@@ -948,11 +946,7 @@
     var st = setup.status;
     if (st && st.seen) {
       return '<div class="setup"><div class="sstat top"><span class="sdot ok"></span><b>' + esc(st.app ? 'Connected to ' + st.app : 'Connected') + '</b></div>' +
-        '<div class="sh">Now tell it what you want</div><div class="slead">A goal works better than a setting. For example:</div>' +
-        '<ul class="sgoals">' + (setup.goals || []).map(function (g, i) {
-          return '<li><span>' + esc(g) + '</span>' + (setupDone['g' + i] ? '<span class="sdone">Copied</span>'
-            : '<button type="button" class="lnk" data-scopy="g' + i + '" data-fk="sg' + i + '">Copy</button>') + '</li>';
-        }).join('') + '</ul><div class="slead">Its changes will appear here, each with Revert.</div></div>';
+        '<div class="slead">Ask it for the print you want. Its changes will appear here, each with Revert.</div></div>';
     }
     var app = setupCurrent();
     var squares = setup.apps.map(function (a) {
@@ -1084,8 +1078,7 @@
       return true;
     }
     if ((el = ancestor(target, 'data-scopy'))) {
-      var ck = el.getAttribute('data-scopy'), text = ck === 'ask' ? setup.ask : ck.charAt(0) === 'g' ? (setup.goals || [])[Number(ck.slice(1))]
-        : (setupCurrent().routes[Number(ck.slice(1))] || {}).copy;
+      var ck = el.getAttribute('data-scopy'), text = ck === 'ask' ? setup.ask : (setupCurrent().routes[Number(ck.slice(1))] || {}).copy;
       if (text) copyToClipboard(text, function (done) { if (done) { setupDone[ck] = true; render(); } });
       return true;
     }
