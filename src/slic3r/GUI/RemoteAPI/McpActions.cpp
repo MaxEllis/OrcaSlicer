@@ -2,6 +2,7 @@
 #include "McpJournal.hpp"  // the user-change journal: panel actions are the user's
 #include "McpRecorder.hpp"
 #include "McpText.hpp"
+#include "libslic3r/LocalesUtils.hpp" // string_to_double_decimal_point: std::stod reads "0.5" as 0 in a decimal-comma UI
 #include "RemoteAPIController.hpp" // the shared apply paths, the F8 gate, open_project_from
 #include "RemoteAPIServer.hpp"     // broadcast
 
@@ -114,12 +115,11 @@ bool parse_num(const std::string &s, double &n, std::string &unit)
     static const std::regex re(R"(^\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*(.*?)\s*$)");
     std::smatch m;
     if (!std::regex_match(s, m, re)) return false;
-    try {
-        n = std::stod(m[1].str());
-    } catch (const std::exception &) {
-        return false;
-    }
-    if (!std::isfinite(n)) return false;
+    std::string num = m[1].str();
+    if (!num.empty() && num[0] == '+') num.erase(0, 1); // the classic parser takes no plus sign
+    size_t used = 0;
+    n = string_to_double_decimal_point(num, &used);
+    if (num.empty() || used != num.size() || !std::isfinite(n)) return false;
     unit = m[2].str();
     return true;
 }

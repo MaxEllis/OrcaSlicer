@@ -6,6 +6,7 @@
 #include "McpSettingLabel.hpp"
 #include "McpPanel.hpp"
 #include "McpText.hpp"
+#include "libslic3r/LocalesUtils.hpp" // string_to_double_decimal_point: std::stod reads "0.5" as 0 in a decimal-comma UI
 #include "UiTaskGate.hpp"
 #include "ConfigRange.hpp"
 
@@ -1208,13 +1209,13 @@ static std::string numeric_list_error(const std::string &s)
         const size_t b     = tok.find_first_not_of(" \t");
         const size_t e     = tok.find_last_not_of(" \t");
         tok                = (b == std::string::npos) ? std::string() : tok.substr(b, e - b + 1);
-        try {
+        {
+            // Only the parse matters here, with a decimal point whatever the UI language.
+            std::string num = tok;
+            if (!num.empty() && num[0] == '+') num.erase(0, 1);
             size_t pos = 0;
-            (void) std::stod(tok, &pos); // only the parse matters here
-            if (pos != tok.size())
-                throw std::invalid_argument("trailing characters");
-        } catch (const std::exception &) {
-            return "\"" + tok + "\" is not a number";
+            (void) string_to_double_decimal_point(num, &pos);
+            if (num.empty() || pos != num.size()) return "\"" + tok + "\" is not a number";
         }
         if (comma == std::string::npos) break;
         start = comma + 1;

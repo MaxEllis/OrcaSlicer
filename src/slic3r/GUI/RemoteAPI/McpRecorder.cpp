@@ -1,6 +1,7 @@
 #include "McpRecorder.hpp"
 #include "RemoteAPIController.hpp" // set_backup_in_progress: the F8 gate around the checkpoint export
 #include "McpText.hpp"
+#include "libslic3r/LocalesUtils.hpp" // float_to_string_decimal_point: a decimal point in every UI language
 
 #include "libslic3r/Format/bbs_3mf.hpp" // backup_defer
 #include "libslic3r/Model.hpp"
@@ -108,9 +109,7 @@ static std::string duration_text(double sec)
 
 static std::string grams_text(double g)
 {
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%.1f g", g);
-    return buf;
+    return float_to_string_decimal_point(g, 1) + " g";
 }
 
 McpRecorder &McpRecorder::get()
@@ -173,9 +172,9 @@ int McpRecorder::created_plate_index(int row, const std::vector<uint64_t> &plate
 std::string McpRecorder::num_text(double v)
 {
     if (!std::isfinite(v)) return "0";
-    char buf[64];
-    std::snprintf(buf, sizeof buf, "%.3f", v);
-    std::string t = buf;
+    // Never printf: it follows OrcaSlicer's UI language ("2,000" in Catalan, trimmed to "2,"), and these numbers are
+    // compared, parsed back and read by the assistant.
+    std::string t = float_to_string_decimal_point(v, 3);
     while (!t.empty() && t.back() == '0') t.pop_back();
     if (!t.empty() && t.back() == '.') t.pop_back();
     if (t == "-0") t = "0";
