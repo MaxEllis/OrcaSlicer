@@ -1,6 +1,7 @@
 #include "McpActions.hpp"
 #include "McpJournal.hpp"  // the user-change journal: panel actions are the user's
 #include "McpRecorder.hpp"
+#include "McpText.hpp"
 #include "RemoteAPIController.hpp" // the shared apply paths, the F8 gate, open_project_from
 #include "RemoteAPIServer.hpp"     // broadcast
 
@@ -70,12 +71,12 @@ std::set<int> s_marked;
 std::string   s_marked_key;
 unsigned      s_marked_epoch = 0;
 
-const char *const kMovedSince   = "moved since";
-const char *const kChangedSince = "changed since";
-const char *const kRemovedSince = "removed since";
+const char *const kMovedSince   = MCP_T("moved since");
+const char *const kChangedSince = MCP_T("changed since");
+const char *const kRemovedSince = MCP_T("removed since");
 const char *const kArrow        = "\xE2\x86\x92"; // U+2192, as the move-to-plate rows write it
-const char *const kUntracked    = "Can't track this object after the project was reloaded";
-const char *const kPointChanged = "The restore point was changed on disk, so it is not used";
+const char *const kUntracked    = MCP_T("Can't track this object after the project was reloaded");
+const char *const kPointChanged = MCP_T("The restore point was changed on disk, so it is not used");
 constexpr int     kRevealBlinkSteps = 22; // Tab's highlight: 11 steps of 300 ms for a search hit
 
 struct Live
@@ -217,7 +218,7 @@ std::string object_name_of(const McpRow &r)
     if (t == "object_config") return before_sep(r.where, " only");
     if (t == "duplicate") return before_sep(r.value, ", now ");
     if (t == "instance_plate") return before_sep(r.value, std::string(" ") + kArrow);
-    if (t == "instances") return r.where.empty() ? std::string("An object") : r.where;
+    if (t == "instances") return r.where.empty() ? std::string(MCP_T("An object")) : r.where;
     return !r.where.empty() ? r.where : (!r.value.empty() ? r.value : r.label);
 }
 
@@ -297,10 +298,10 @@ Live live_of(const McpRow &r)
         PresetCollection *c = collection(scope);
         if (c == nullptr) return {};
         const ConfigOption *opt  = c->get_edited_preset().config.option(key);
-        std::string         text = opt != nullptr ? config_live_text(r, key, opt->serialize()) : std::string("not set");
+        std::string         text = opt != nullptr ? config_live_text(r, key, opt->serialize()) : std::string(MCP_T("not set"));
         // Another preset is being edited now: the assistant's value is not the one shown any more.
         const std::string sel = c->get_selected_preset_name();
-        if (t.contains("preset") && t["preset"].is_string() && t["preset"].get<std::string>() != sel) text += " in " + sel;
+        if (t.contains("preset") && t["preset"].is_string() && t["preset"].get<std::string>() != sel) text = mcp_fmt(MCP_T("{value} in {preset}"), {{"value", text}, {"preset", sel}});
         return live_value(text);
     }
 
@@ -325,16 +326,16 @@ Live live_of(const McpRow &r)
     if (type == "preset_saved") {
         PresetCollection *c = collection(t.value("preset_type", std::string()));
         if (c == nullptr) return {};
-        return live_value(c->find_preset(t.value("name", std::string()), false) != nullptr ? r.value : std::string("deleted since"));
+        return live_value(c->find_preset(t.value("name", std::string()), false) != nullptr ? r.value : std::string(MCP_T("deleted since")));
     }
 
     if (type == "plate_added") {
         PartPlateList &plates = p->get_partplate_list();
         const int      idx    = created_plate_now(r.id);
         if (idx == -2) return {}; // not known in this app run: the undo says so on click
-        if (idx < 0) return live_value("deleted since");
+        if (idx < 0) return live_value(MCP_T("deleted since"));
         PartPlate *plate = plates.get_plate(idx);
-        return live_value(plate != nullptr && plate->empty() ? r.value : std::string("has objects now"));
+        return live_value(plate != nullptr && plate->empty() ? r.value : std::string(MCP_T("has objects now")));
     }
 
     if (type == "file_moved") {
@@ -342,7 +343,7 @@ Live live_of(const McpRow &r)
         const fs::path from = into_path(from_u8(t.value("from", std::string())));
         const fs::path to   = into_path(from_u8(t.value("to", std::string())));
         if (!fs::is_regular_file(to, ec)) return live_value(kMovedSince);
-        if (fs::exists(from, ec) && !fs::equivalent(from, to, ec)) return live_value("old name taken");
+        if (fs::exists(from, ec) && !fs::equivalent(from, to, ec)) return live_value(MCP_T("old name taken"));
         return live_value(r.value);
     }
 
@@ -397,10 +398,10 @@ Live live_of(const McpRow &r)
         return live_value(config_map(it->second) == t.value("after", json()) ? r.value : std::string(kChangedSince));
     }
     if (type == "height_ranges_cleared")
-        return live_value(mo->layer_config_ranges.empty() ? r.value : std::string("ranges set since"));
+        return live_value(mo->layer_config_ranges.empty() ? r.value : std::string(MCP_T("ranges set since")));
     if (type == "transform" || type == "duplicate" || type == "instance_plate") {
         const int ii = mcp_find_instance(t, current, refs[size_t(oi)].instance_ids);
-        if (ii < 0) return live_value(type == "duplicate" ? "copy removed since" : kMovedSince);
+        if (ii < 0) return live_value(type == "duplicate" ? MCP_T("copy removed since") : kMovedSince);
         return live_value(same_matrix(McpRecorder::instance_matrix(*mo->instances[ii]), t.value("after", json())) ? r.value
                                                                                                             : std::string(kMovedSince));
     }
@@ -441,7 +442,8 @@ std::string apply_preset_edits(const json &changes)
         T *tgt = nullptr;
         for (T &x : ts)
             if (x.cfg.option(it.key()) != nullptr) { tgt = &x; break; }
-        if (tgt == nullptr) return it.key() + ": not a print, filament or printer setting";
+        if (tgt == nullptr)
+            return mcp_fmt(MCP_T("{key}: not a print, filament or printer setting"), {{"key", it.key()}});
         // A copy of the value there now, for the range check (set_deserialize_strict replaces it).
         std::unique_ptr<ConfigOption> was(tgt->cfg.option(it.key())->clone());
         std::string raw;
@@ -449,7 +451,7 @@ std::string apply_preset_edits(const json &changes)
         if (v.is_string()) raw = v.get<std::string>();
         else if (v.is_boolean()) raw = v.get<bool>() ? "1" : "0";
         else if (v.is_number()) raw = v.dump();
-        else return it.key() + ": unsupported value";
+        else return mcp_fmt(MCP_T("{key}: unsupported value"), {{"key", it.key()}});
         try {
             tgt->cfg.set_deserialize_strict(it.key(), raw);
         } catch (const std::exception &e) {
@@ -463,7 +465,7 @@ std::string apply_preset_edits(const json &changes)
     for (T &x : ts) {
         if (!x.touched) continue;
         Tab *tab = wxGetApp().get_tab(x.type);
-        if (tab == nullptr) return "the settings tab is not ready";
+        if (tab == nullptr) return MCP_T("the settings tab is not ready");
         tab->load_config(x.cfg);
         plater()->on_config_change(x.cfg);
     }
@@ -514,12 +516,12 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     const std::string type = t.value("type", std::string());
     Plater           *p    = plater();
     auto             *bundle = wxGetApp().preset_bundle;
-    const std::string gone   = object_name_of(r) + " is no longer on the plate";
+    const std::string gone   = mcp_fmt(MCP_T("{object} is no longer on the plate"), {{"object", object_name_of(r)}});
 
     if (type == "config") {
         const std::string key    = t.value("key", std::string());
         const std::string scope  = t.value("scope", std::string());
-        if (!t.contains("before_raw") || !t["before_raw"].is_string()) return "Can't set it back";
+        if (!t.contains("before_raw") || !t["before_raw"].is_string()) return MCP_T("Can't set it back");
         const std::string before = t["before_raw"].get<std::string>();
         if (scope == "project") {
             DynamicPrintConfig             proj = bundle->project_config;
@@ -530,28 +532,28 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
                 if (index.is_number_integer() && key == "filament_colour") {
                     auto *o = proj.option<ConfigOptionStrings>(key);
                     const size_t i = index.get<size_t>();
-                    if (o == nullptr || i >= o->values.size()) return "That filament is gone";
+                    if (o == nullptr || i >= o->values.size()) return MCP_T("That filament is gone");
                     o->values[i] = before;
                 } else if (index.is_number_integer()) {
                     ConfigOptionFloat one;
-                    if (!one.deserialize(before)) return "Can't set it back";
+                    if (!one.deserialize(before)) return MCP_T("Can't set it back");
                     proj.option<ConfigOptionFloats>(key, true)->set_at(&one, index.get<size_t>(), 0);
                 } else {
                     proj.set_deserialize_strict(key, before);
                 }
             } catch (const std::exception &) {
-                return "Can't set it back";
+                return MCP_T("Can't set it back");
             }
             Controller::apply_project_config(proj, {key}, colours_before);
             return {};
         }
         PresetCollection *c = collection(scope);
-        if (c == nullptr) return "Can't set it back";
+        if (c == nullptr) return MCP_T("Can't set it back");
         DynamicPrintConfig cfg = c->get_edited_preset().config;
         try {
             cfg.set_deserialize_strict(key, before);
         } catch (const std::exception &) {
-            return "Can't set it back";
+            return MCP_T("Can't set it back");
         }
         {
             // Never put back a value OrcaSlicer's own fields would refuse.
@@ -559,10 +561,10 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             json                rd;
             std::string         rtext;
             if (cfg.option(key) != nullptr && !Controller::config_value_in_range(key, now, *cfg.option(key), rd, rtext))
-                return "Can't set it back: " + rtext;
+                return mcp_fmt(MCP_T("Can't set it back: {reason}"), {{"reason", rtext}});
         }
         Tab *tab = wxGetApp().get_tab(preset_type(scope));
-        if (tab == nullptr) return "The settings tab is not ready";
+        if (tab == nullptr) return MCP_T("The settings tab is not ready");
         tab->load_config(cfg);
         p->on_config_change(cfg);
         return {};
@@ -574,25 +576,26 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         Sidebar          &sidebar = p->sidebar();
         if (slot.is_number_integer() && sidebar.is_multifilament()) {
             const size_t s = slot.get<size_t>();
-            if (s >= bundle->filament_presets.size()) return "That filament is gone";
+            if (s >= bundle->filament_presets.size()) return MCP_T("That filament is gone");
             const Preset *pr = bundle->filaments.find_preset(before, false, true);
-            if (pr == nullptr) return before + " is no longer there";
-            if (!pr->is_compatible) return before + " doesn't suit this printer now";
+            if (pr == nullptr) return mcp_fmt(MCP_T("{name} is no longer there"), {{"name", before}});
+            if (!pr->is_compatible) return mcp_fmt(MCP_T("{name} doesn't suit this printer now"), {{"name", before}});
             Controller::select_filament_slot(s, before);
             return {};
         }
         const std::string scope = slot.is_number_integer() ? std::string("filament") : t.value("preset_type", std::string());
         PresetCollection *c = collection(scope);
-        if (c == nullptr) return "Can't switch back";
-        if (c->find_preset(before, false, true) == nullptr) return before + " is no longer there";
+        if (c == nullptr) return MCP_T("Can't switch back");
+        if (c->find_preset(before, false, true) == nullptr)
+            return mcp_fmt(MCP_T("{name} is no longer there"), {{"name", before}});
         Tab *tab = wxGetApp().get_tab(preset_type(scope));
-        if (tab == nullptr) return "The settings tab is not ready";
+        if (tab == nullptr) return MCP_T("The settings tab is not ready");
         // The way PUT /preset avoids the unsaved-changes dialog: drop the unsaved edits first (the row's tip says so).
         const std::vector<std::string> dropped = discard_edits();
         s_undo_dropped                         = dropped;
         if (!tab->select_preset(before, false, "", /*force_select=*/true, /*force_no_transfer=*/true)) {
             cancelled = true;
-            return "Switch cancelled";
+            return MCP_T("Switch cancelled");
         }
         if (!dropped.empty()) {
             note = " (dropped unsaved edits: ";
@@ -605,12 +608,12 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     if (type == "preset_saved") {
         const std::string ts = t.value("preset_type", std::string()), name = t.value("name", std::string());
         const std::string why = Controller::preset_delete_refusal(ts, name);
-        if (why == "unknown_preset") return name + " is gone already";
-        if (why == "builtin_preset") return "Built-in preset";
-        if (why == "preset_selected") return "It is selected; switch to another preset first";
-        if (why == "has_children") return "Other presets inherit it";
-        if (!why.empty()) return "Can't delete it";
-        if (!Controller::delete_user_preset(ts, name)) return "Couldn't delete it";
+        if (why == "unknown_preset") return mcp_fmt(MCP_T("{name} is gone already"), {{"name", name}});
+        if (why == "builtin_preset") return MCP_T("Built-in preset");
+        if (why == "preset_selected") return MCP_T("It is selected; switch to another preset first");
+        if (why == "has_children") return MCP_T("Other presets inherit it");
+        if (!why.empty()) return MCP_T("Can't delete it");
+        if (!Controller::delete_user_preset(ts, name)) return MCP_T("Couldn't delete it");
         return {};
     }
 
@@ -619,18 +622,18 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         // the grid now (deleting an earlier plate moves every later one down a slot).
         PartPlateList &plates = p->get_partplate_list();
         const int      idx    = created_plate_now(r.id);
-        if (idx < 0) return "The plate has changed since; restore an earlier point instead";
+        if (idx < 0) return MCP_T("The plate has changed since; restore an earlier point instead");
         PartPlate *plate = plates.get_plate(idx);
         // Extra guard: still in its recorded slot, it must also have the recorded origin.
         const json origin = t.value("origin", json());
         if (idx == t.value("index", -1) && origin.is_array() && origin.size() == 3) {
             const Vec3d o = plate->get_origin();
             if (!same_matrix(json{o.x(), o.y(), o.z()}, origin))
-                return "The plate has changed since; restore an earlier point instead";
+                return MCP_T("The plate has changed since; restore an earlier point instead");
         }
-        if (!plate->empty()) return "It has objects on it now";
-        if (!p->can_delete_plate()) return "It is the last plate";
-        if (p->delete_plate(idx) != 0) return "Couldn't delete it";
+        if (!plate->empty()) return MCP_T("It has objects on it now");
+        if (!p->can_delete_plate()) return MCP_T("It is the last plate");
+        if (p->delete_plate(idx) != 0) return MCP_T("Couldn't delete it");
         Controller::slice_state_follows_plate();
         return {};
     }
@@ -638,22 +641,22 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     if (type == "file_moved") {
         const std::string err = Controller::move_project_file_back(t.value("from", std::string()), t.value("to", std::string()));
         if (err.empty()) return {};
-        if (err == "exists") return "The old name is taken now";
-        if (err == "file_not_found") return r.value + " is gone";
-        if (err == "directory_not_found") return "The old folder is gone";
-        return "Couldn't move it back";
+        if (err == "exists") return MCP_T("The old name is taken now");
+        if (err == "file_not_found") return mcp_fmt(MCP_T("{name} is gone"), {{"name", r.value}});
+        if (err == "directory_not_found") return MCP_T("The old folder is gone");
+        return MCP_T("Couldn't move it back");
     }
 
     if (type == "slot_mapping") {
         const std::string err = Controller::revert_slot_mapping(t);
         if (err.empty()) return {};
-        if (err == "project_changed") return "The project changed since";
-        return "Can't change it back";
+        if (err == "project_changed") return MCP_T("The project changed since");
+        return MCP_T("Can't change it back");
     }
 
     if (type == "removed") {
         const ModelObject *stash = McpRecorder::get().stashed_object(t.value("stash", 0), t.value("stash_session", std::string()));
-        if (stash == nullptr) return "Can't put it back after a restart; restore an earlier point instead";
+        if (stash == nullptr) return MCP_T("Can't put it back after a restart; restore an earlier point instead");
         Plater::TakeSnapshot snapshot(p, "Put back " + stash->name);
         // Model::add_object clones the copy (volumes, modifiers, paint, per-object config, layer ranges,
         // instances with their transforms). Same steps as a paste (Selection::paste_objects_from_clipboard), at
@@ -684,7 +687,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             if (oi == -2) return kUntracked;
             if (oi < 0) return gone;
             const int ii = mcp_find_instance(it, current, refs[size_t(oi)].instance_ids);
-            if (ii < 0) return "Moved again since";
+            if (ii < 0) return MCP_T("Moved again since");
             ours.insert({oi, ii});
         }
         for (int pi = plates_before; pi < plates.get_plate_count(); ++pi) {
@@ -693,7 +696,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             for (size_t oi = 0; oi < model.objects.size(); ++oi)
                 for (size_t ii = 0; ii < model.objects[oi]->instances.size(); ++ii)
                     if (plate->contain_instance(int(oi), int(ii)) && ours.count({int(oi), int(ii)}) == 0)
-                        return "Plate " + std::to_string(pi + 1) + " holds other objects now";
+                        return mcp_fmt(MCP_T("Plate {n} holds other objects now"), {{"n", std::to_string(pi + 1)}});
         }
         Plater::TakeSnapshot snapshot(p, "Put back");
         while (plates.get_plate_count() < plates_before)
@@ -736,13 +739,13 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
             if (t.value("had_override", false)) cfg.set_deserialize_strict(key, t.value("before_raw", std::string()));
             else cfg.erase(key);
         } catch (const std::exception &) {
-            return "Can't set it back";
+            return MCP_T("Can't set it back");
         }
         if (cfg.has(key)) {
             json        rd;
             std::string rtext;
             if (!Controller::config_value_in_range(key, mo->config.get().option(key), *cfg.option(key), rd, rtext))
-                return "Can't set it back: " + rtext;
+                return mcp_fmt(MCP_T("Can't set it back: {reason}"), {{"reason", rtext}});
         }
         Plater::TakeSnapshot snapshot(p, "Change Object Settings");
         mo->config.assign_config(std::move(cfg));
@@ -771,7 +774,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
                 put.emplace_back(t_layer_height_range{t.value("min_z", 0.0), t.value("max_z", 0.0)},
                                  config_from_map(t["before"]));
         } catch (const std::exception &) {
-            return "Can't put the ranges back";
+            return MCP_T("Can't put the ranges back");
         }
         Plater::TakeSnapshot snapshot(p, type == "height_range" ? "Delete Height Range" : "Add Height Range");
         if (type == "height_range" && t.value("before", json()).is_null())
@@ -783,7 +786,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     }
     if (type == "transform" || type == "instance_plate") {
         const int ii = mcp_find_instance(t, current, instance_ids);
-        if (ii < 0) return "Moved again since";
+        if (ii < 0) return MCP_T("Moved again since");
         Plater::TakeSnapshot snapshot(p, type == "transform" ? "Transform Object" : "move to plate");
         set_matrix(mo, ii, t.value("before", json()));
         instances_changed(oi, {ii});
@@ -792,7 +795,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
     }
     if (type == "duplicate") {
         const int ii = mcp_find_instance(t, current, instance_ids);
-        if (ii < 0) return "The copy is gone already";
+        if (ii < 0) return MCP_T("The copy is gone already");
         Plater::TakeSnapshot snapshot(p, "Decrease Instances");
         PartPlateList &plates = p->get_partplate_list();
         if (mo->instances.size() <= 1) {
@@ -814,7 +817,7 @@ std::string undo_row(const McpRow &r, bool &cancelled, std::string &note)
         wxGetApp().obj_list()->update_plate_values_for_items();
         return {};
     }
-    return "Nothing to undo";
+    return MCP_T("Nothing to undo");
 }
 
 // "Reverted in the panel: Wall loops back to 2" and the like, for the user-change journal.
@@ -861,18 +864,18 @@ void publish(json event)
 std::string busy_reason()
 {
     Plater *p = plater();
-    if (p == nullptr) return "Not ready";
-    if (McpActions::restoring()) return "A restore is running";
-    if (p->is_loading_project()) return "Not while a project is loading";
-    if (p->is_background_process_slicing()) return "Not while slicing";
+    if (p == nullptr) return MCP_T("Not ready");
+    if (McpActions::restoring()) return MCP_T("A restore is running");
+    if (p->is_loading_project()) return MCP_T("Not while a project is loading");
+    if (p->is_background_process_slicing()) return MCP_T("Not while slicing");
     // An arrange or orient job finishes (and records its row) from the job queue, maybe inside a restore's load.
-    if (!p->get_ui_job_worker().is_idle()) return "Not while OrcaSlicer is busy with a job";
+    if (!p->get_ui_job_worker().is_idle()) return MCP_T("Not while OrcaSlicer is busy with a job");
     // Inside an export's or an API task's event pump the project is being written or changed: wait. Also while an
     // API request is between its change and its journal baseline: the journal would take the API's change for the
     // user's.
     if (Controller::backup_in_progress() ||
         ((Controller::api_ui_task_active() || Controller::requests_in_flight()) && s_test_depth == 0))
-        return "Busy with the assistant's request; try again in a moment";
+        return MCP_T("Busy with the assistant's request; try again in a moment");
     return {};
 }
 
@@ -908,10 +911,10 @@ std::string open_preset_point(const std::string &path_utf8)
     json j;
     try {
         boost::nowide::ifstream in(into_path(from_u8(path_utf8)).string().c_str(), std::ios::binary);
-        if (!in) return "The restore point can't be read";
+        if (!in) return MCP_T("The restore point can't be read");
         j = json::parse(in);
     } catch (const std::exception &) {
-        return "The restore point can't be read";
+        return MCP_T("The restore point can't be read");
     }
     Plater *p      = plater();
     auto   *bundle = wxGetApp().preset_bundle;
@@ -1029,7 +1032,7 @@ std::string open_point(const std::string &path_utf8)
             p->set_plater_dirty(true);
             p->update_title_dirty_status();
             Controller::slice_state_follows_plate();
-            return "Couldn't open the restore point";
+            return MCP_T("Couldn't open the restore point");
         }
     }
     settings_ids_follow_selection();
@@ -1117,25 +1120,26 @@ json McpActions::undo(int row_id)
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
     const McpRow *found = rec.history().row(row_id);
-    if (found == nullptr) return result_failed("Not in this project's timeline");
+    if (found == nullptr) return result_failed(MCP_T("Not in this project's timeline"));
     const McpRow r = *found; // the history may change under the undo (a moved file moves its history)
-    if (r.undo_verb.empty()) return result_failed("Nothing to undo");
-    if (!r.undone_at.empty()) return result_failed("Reverted at " + r.undone_at);
+    if (r.undo_verb.empty()) return result_failed(MCP_T("Nothing to undo"));
+    if (!r.undone_at.empty()) return result_failed(mcp_fmt(MCP_T("Reverted at {time}"), {{"time", r.undone_at}}));
     const auto &gs     = rec.history().groups();
     // R43: the assistant changed the same setting again later: undoing this row would overwrite that change. P1: its
     // own preset switch dropped the edit, so there is nothing of it left to undo.
     {
         const McpTracking tr = mcp_tracking(rec.history().rows(), gs.empty() ? -1 : gs.back().id);
-        if (tr.dropped.count(r.id) > 0) return result_failed("Dropped by a preset switch; restore an earlier point instead");
-        if (tr.superseded.count(r.id) > 0) return result_failed("Changed again since; restore an earlier point instead");
+        if (tr.dropped.count(r.id) > 0) return result_failed(MCP_T("Dropped by a preset switch; restore an earlier point instead"));
+        if (tr.superseded.count(r.id) > 0) return result_failed(MCP_T("Changed again since; restore an earlier point instead"));
     }
     // Never overwrite a later change: the row's value must still be what is there.
     try {
         const Live l = live_of(r);
-        if (l.known && !l.present) return result_failed(object_name_of(r) + " is no longer on the plate");
-        if (l.known && !same_text(l.value, r.value)) return result_failed("You changed it since");
+        if (l.known && !l.present)
+            return result_failed(mcp_fmt(MCP_T("{object} is no longer on the plate"), {{"object", object_name_of(r)}}));
+        if (l.known && !same_text(l.value, r.value)) return result_failed(MCP_T("You changed it since"));
     } catch (const std::exception &e) {
-        return result_failed(std::string("Can't check it now: ") + e.what());
+        return result_failed(mcp_fmt(MCP_T("Can't check it now: {reason}"), {{"reason", e.what()}}));
     }
     bool        cancelled = false;
     std::string why, note;
@@ -1147,7 +1151,7 @@ json McpActions::undo(int row_id)
         why = undo_row(r, cancelled, note);
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "MCP panel: undo of row " << r.id << " failed: " << e.what();
-        why = "Couldn't undo it";
+        why = MCP_T("Couldn't undo it");
     }
     if (cancelled) return result_cancelled(why);
     if (!why.empty()) return result_failed(why);
@@ -1175,12 +1179,12 @@ json McpActions::restore(int group)
     rec.sync_project();
     McpHistory &h    = rec.history();
     const std::string file = h.checkpoint_of(group);
-    if (file.empty() || h.groups().empty()) return result_failed("No restore point here");
+    if (file.empty() || h.groups().empty()) return result_failed(MCP_T("No restore point here"));
     const int newest = h.groups().back().id;
-    if (group >= newest) return result_failed("No restore point here");
+    if (group >= newest) return result_failed(MCP_T("No restore point here"));
     const std::string path = rec.checkpoint_path(file);
     boost::system::error_code ec;
-    if (!fs::is_regular_file(into_path(from_u8(path)), ec)) return result_failed("The restore point is gone");
+    if (!fs::is_regular_file(into_path(from_u8(path)), ec)) return result_failed(MCP_T("The restore point is gone"));
 
     s_restoring.store(true);
     ScopeGuard done([] { s_restoring.store(false); });
@@ -1210,7 +1214,7 @@ json McpActions::restore(int group)
     // The state now, for "Undo" on the "Restored to" line. It is also the newest group's end state.
     const std::string    snapshot    = rec.write_checkpoint("pre-restore");
     const McpFingerprint snapshot_fp = snapshot.empty() ? McpFingerprint() : McpRecorder::fingerprint(rec.checkpoint_path(snapshot));
-    if (snapshot.empty() || snapshot_fp.sha256.empty()) return result_failed("Couldn't save the current state first");
+    if (snapshot.empty() || snapshot_fp.sha256.empty()) return result_failed(MCP_T("Couldn't save the current state first"));
     if (h.checkpoint_of(newest).empty()) {
         const std::string ext  = fs::path(snapshot).extension().string();
         const std::string name = "cp-" + std::to_string(newest) + ext;
@@ -1269,10 +1273,10 @@ json McpActions::undo_restore()
     mcp_journal_begin(); // the user's edits before this action stay theirs in the journal
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
-    if (!restore_state_current(rec) || s_restore.snapshot.empty()) return result_failed("Nothing to undo");
+    if (!restore_state_current(rec) || s_restore.snapshot.empty()) return result_failed(MCP_T("Nothing to undo"));
     const std::string path = rec.checkpoint_path(s_restore.snapshot);
     boost::system::error_code ec;
-    if (!fs::is_regular_file(into_path(from_u8(path)), ec)) return result_failed("The snapshot before the restore is gone");
+    if (!fs::is_regular_file(into_path(from_u8(path)), ec)) return result_failed(MCP_T("The snapshot before the restore is gone"));
 
     s_restoring.store(true);
     ScopeGuard done([] { s_restoring.store(false); });
@@ -1281,7 +1285,7 @@ json McpActions::undo_restore()
 
     if (!mcp_fingerprint_ok(s_restore.snapshot_fp, McpRecorder::fingerprint(path))) {
         BOOST_LOG_TRIVIAL(warning) << "MCP panel: the pre-restore snapshot does not match its fingerprint";
-        return result_failed("The snapshot before the restore was changed on disk, so it is not used");
+        return result_failed(MCP_T("The snapshot before the restore was changed on disk, so it is not used"));
     }
 
     // m6: the note names the point the undone restore had gone back to.
@@ -1317,19 +1321,19 @@ json McpActions::reveal(int row_id)
 {
     // Only showing a setting: it waits out a restore or a project load (the tabs are being rebuilt), but not a
     // slice or a job, so a click during background slicing still finds the setting.
-    if (restoring()) return result_failed("A restore is running");
-    if (Plater *pl = plater(); pl == nullptr || pl->is_loading_project()) return result_failed("Not while a project is loading");
+    if (restoring()) return result_failed(MCP_T("A restore is running"));
+    if (Plater *pl = plater(); pl == nullptr || pl->is_loading_project()) return result_failed(MCP_T("Not while a project is loading"));
     McpRecorder &rec = McpRecorder::get();
     rec.sync_project();
     const McpRow *r = rec.history().row(row_id);
-    if (r == nullptr) return result_failed("Not in this project's timeline");
-    if (!mcp_row_revealable(*r)) return result_failed("Nothing to show in the settings");
+    if (r == nullptr) return result_failed(MCP_T("Not in this project's timeline"));
+    if (!mcp_row_revealable(*r)) return result_failed(MCP_T("Nothing to show in the settings"));
     const std::string  key   = r->target.value("key", std::string());
     const std::string  scope = r->target.value("scope", std::string());
     const Preset::Type type  = scope == "print" ? Preset::TYPE_PRINT : scope == "filament" ? Preset::TYPE_FILAMENT : Preset::TYPE_PRINTER;
     PresetCollection  *c     = collection(scope);
-    if (c == nullptr || !c->get_edited_preset().config.has(key)) return result_failed("The setting is not in this preset any more");
-    if (wxGetApp().get_tab(type) == nullptr) return result_failed("The settings tab is not there");
+    if (c == nullptr || !c->get_edited_preset().config.has(key)) return result_failed(MCP_T("The setting is not in this preset any more"));
+    if (wxGetApp().get_tab(type) == nullptr) return result_failed(MCP_T("The settings tab is not there"));
 
     Sidebar &sidebar = wxGetApp().sidebar();
     // The row changed the global print preset: show that, not an object's own value of the key (get_tab_for_option
@@ -1361,7 +1365,7 @@ json McpActions::reveal(int row_id)
 
 json McpActions::apply_as_user(const json &changes)
 {
-    if (!changes.is_object() || changes.empty()) return result_failed("No changes");
+    if (!changes.is_object() || changes.empty()) return result_failed(MCP_T("No changes"));
     const std::string err = apply_preset_edits(changes);
     return err.empty() ? result_ok() : result_failed(err);
 }

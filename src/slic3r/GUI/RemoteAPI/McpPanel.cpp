@@ -3,8 +3,10 @@
 #include "RemoteAPIController.hpp" // the F8 gate: backup_in_progress / api_ui_task_active
 #include "McpActions.hpp"
 #include "McpRecorder.hpp"
+#include "McpText.hpp"
 
 #include "libslic3r/AppConfig.hpp"
+#include "libslic3r/PrintConfig.hpp" // print_config_def: the choices of a setting row (translations)
 #include "libslic3r/Utils.hpp" // resources_dir
 #include "slic3r/GUI/DockPanel.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
@@ -14,22 +16,27 @@
 
 #include <boost/log/trivial.hpp>
 #include <boost/nowide/fstream.hpp>
+#include <boost/filesystem/operations.hpp>
 
+#include <wx/intl.h>
 #include <wx/thread.h>
 #include <wx/timer.h>
 #include <wx/weakref.h>
 #include <wx/webview.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <deque>
 #include <exception>
 #include <functional>
 #include <limits>
+#include <map>
 #include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace Slic3r { namespace GUI { namespace RemoteAPI {
 
@@ -97,8 +104,8 @@ bool api_listening() { return wxGetApp().remote_api_server().running(); }
 // The window is being rebuilt or the app is closing: pane actions are dropped ("" when they can run).
 std::string closing_reason()
 {
-    if (wxGetApp().is_closing()) return "Not while OrcaSlicer is closing";
-    if (wxGetApp().is_recreating_gui()) return "Not while the window is being rebuilt";
+    if (wxGetApp().is_closing()) return MCP_T("Not while OrcaSlicer is closing");
+    if (wxGetApp().is_recreating_gui()) return MCP_T("Not while the window is being rebuilt");
     return {};
 }
 
@@ -129,8 +136,129 @@ std::string read_page()
     return ss.str();
 }
 
-const char *const kClosedText = "OrcaSlicer MCP panel closed. Get it back from View > OrcaSlicer MCP panel.";
-const char *const kClosedUndo = "Undo";
+const char *const kClosedText = MCP_T("OrcaSlicer MCP panel closed. Get it back from View > OrcaSlicer MCP panel.");
+const char *const kClosedUndo = MCP_T("Undo");
+
+// ---- Translations (orcaslicer-mcp #21) -----------------------------------------------------------------------
+// The page translates what it draws from its own tables (resources/web/orcaslicer_mcp/i18n, inline in the page);
+// the host sends OrcaSlicer's language and, for setting rows, OrcaSlicer's own words for their English ones.
+
+// OrcaSlicer's user interface language: the full code ("ca_ES", "zh_TW"), not current_language_code_safe(), which
+// turns Catalan, Basque and Hungarian into en_US and Traditional into Simplified Chinese.
+std::string ui_language()
+{
+    return std::string(wxGetApp().current_language_code().ToUTF8().data());
+}
+bool ui_language_is_english()
+{
+    const std::string code = ui_language();
+    return code.empty() || code.rfind("en", 0) == 0 || code == "C" || code == "POSIX";
+}
+
+// OrcaSlicer's own translation of one of its English words (a setting's label, a section, a choice).
+std::string orca_word(const std::string &en)
+{
+    if (en.empty()) return en;
+    return std::string(wxGetTranslation(wxString::FromUTF8(en.c_str())).ToUTF8().data());
+}
+
+// A setting's English name as mcp_setting_label builds it ("Wall loops", "Acceleration: Normal printing", "Nozzle
+// temperature – Other layers"), in OrcaSlicer's words part by part: the whole when OrcaSlicer has it, else the section
+// and the text either side of ": ", and the parts either side of the sidebar's en dash. "" when nothing changed.
+std::string local_setting_name(const std::string &en)
+{
+    static const std::string kColon = ": ", kDash = " \xE2\x80\x93 ";
+    auto dashed = [](const std::string &t) {
+        const size_t d = t.find(kDash);
+        if (d == std::string::npos) return orca_word(t);
+        return orca_word(t.substr(0, d)) + kDash + orca_word(t.substr(d + kDash.size()));
+    };
+    std::string out = orca_word(en);
+    if (out == en) {
+        const size_t c = en.find(kColon);
+        out = c == std::string::npos ? dashed(en) : orca_word(en.substr(0, c)) + kColon + dashed(en.substr(c + kColon.size()));
+    }
+    return out == en ? std::string() : out;
+}
+
+// {"<English>": "<OrcaSlicer's word>"} for a row's setting name and the choices of its setting (all of them, so a value
+// the user set since reads in the language too), or null. Cached per language: a history push lists every row.
+json local_words(const McpRow &r, const std::string &language)
+{
+    std::string key, type = r.target.is_object() ? r.target.value("type", std::string()) : std::string();
+    if (type == "config" || type == "object_config") key = r.target.value("key", std::string());
+    else if (type == "refused") {
+        const std::string action = r.target.value("action", std::string());
+        if (action != "PUT /config" && action != "PUT /objects/{id}/config") return nullptr;
+    } else
+        return nullptr;
+    static std::map<std::string, std::string> s_names; // language + "\n" + English -> local ("" = none)
+    // The setting's name, without the filament slots a label may end with ("<name> (filament 2)", "<name> (filaments
+    // 1, 3)"); a name that itself ends in "(filament)" keeps it.
+    std::string name = r.label;
+    if (!name.empty() && name.back() == ')') {
+        size_t slots = name.rfind(" (filaments ");
+        const size_t one = name.rfind(" (filament ");
+        if (one != std::string::npos && (slots == std::string::npos || one > slots)) slots = one;
+        const size_t digit = slots == std::string::npos ? slots : name.find_first_of("0123456789", slots);
+        if (slots != std::string::npos && digit != std::string::npos && name.find(' ', slots + 2) + 1 == digit)
+            name = name.substr(0, slots);
+    }
+    json out = json::object();
+    if (!name.empty()) {
+        const std::string ck = language + "\n" + name;
+        auto it = s_names.find(ck);
+        if (it == s_names.end()) it = s_names.emplace(ck, local_setting_name(name)).first;
+        if (!it->second.empty()) out[name] = it->second;
+    }
+    if (!key.empty()) {
+        const ConfigOptionDef *def = print_config_def.get(key);
+        if (def != nullptr && (def->type == coEnum || def->type == coEnums))
+            for (const std::string &label : def->enum_labels) {
+                const std::string word = orca_word(label);
+                if (!label.empty() && word != label) out[label] = word;
+            }
+    }
+    return out.empty() ? json(nullptr) : out;
+}
+
+// One of the panel's phrases for text the pane shows outside its page (the closed banner), from the same tables:
+// i18n/<code>.json, else <language>.json, else the regional table of that language; English when there is none.
+std::string panel_phrase(const char *en)
+{
+    static std::string s_loaded = "\x01";
+    static json        s_table;
+    const std::string  code = ui_language_is_english() ? std::string() : ui_language();
+    if (code != s_loaded) {
+        s_loaded = code;
+        s_table  = json();
+        if (!code.empty()) {
+            std::string c = code.substr(0, code.find('.'));
+            std::replace(c.begin(), c.end(), '-', '_');
+            std::string base = c.substr(0, c.find('_'));
+            std::transform(base.begin(), base.end(), base.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+            const std::string dir = resources_dir() + "/web/orcaslicer_mcp/i18n/";
+            std::vector<std::string> tries{c, base};
+            for (const char *regional : {"pt_BR", "zh_CN", "zh_TW"})
+                if (std::string(regional).rfind(base + "_", 0) == 0) tries.emplace_back(regional);
+            for (const std::string &name : tries) {
+                const std::string path = dir + name + ".json";
+                boost::system::error_code ec;
+                if (!boost::filesystem::is_regular_file(boost::filesystem::path(path), ec)) continue;
+                try {
+                    boost::nowide::ifstream in(path.c_str(), std::ios::in | std::ios::binary);
+                    s_table = json::parse(in).value("phrases", json::object());
+                } catch (const std::exception &e) {
+                    BOOST_LOG_TRIVIAL(warning) << "MCP panel: translations not read from " << path << ": " << e.what();
+                }
+                break;
+            }
+        }
+    }
+    const auto it = s_table.is_object() ? s_table.find(en) : s_table.end();
+    return s_table.is_object() && it != s_table.end() && it->is_string() && !it->get<std::string>().empty() ? it->get<std::string>()
+                                                                                                           : std::string(en);
+}
 
 NotificationManager *notifications()
 {
@@ -155,8 +283,8 @@ void show_closed_banner()
     NotificationManager *nm = notifications();
     if (nm == nullptr) return;
     nm->close_notification_of_type(NotificationType::McpPanelClosed);
-    nm->push_notification(NotificationType::McpPanelClosed, NotificationManager::NotificationLevel::RegularNotificationLevel, kClosedText,
-                          kClosedUndo, [](wxEvtHandler *) {
+    nm->push_notification(NotificationType::McpPanelClosed, NotificationManager::NotificationLevel::RegularNotificationLevel,
+                          panel_phrase(kClosedText), panel_phrase(kClosedUndo), [](wxEvtHandler *) {
                               // The link is clicked inside the 3D view's render: the pane opens from the app's queue.
                               wxGetApp().CallAfter([]() {
                                   if (closing_reason().empty()) McpPanel::show();
@@ -168,14 +296,15 @@ void show_closed_banner()
 json capabilities()
 {
     json c = {{"restore", true},
-              {"kinds", {"setting", "preset", "model", "plate", "slice", "file", "refused"}},
+              {"kinds", {"setting", "preset", "model", "plate", "slice", "file", "refused", "note"}},
               {"open_settings", true},
               {"settings_hint", ""},
               {"reveal", true},        // a click on a setting row shows the setting in the sidebar (McpActions::reveal)
               {"tracked_live", true}}; // live entries only for the latest row of each setting (R43, McpActions::live_values)
     // The page's default off line ("The Remote API is off.") fits a switched-off API; an enabled one that failed to
     // bind its port says so.
-    if (api_enabled() && !api_listening()) c["off_text"] = "The Remote API couldn't start. Check its port.";
+    if (api_enabled() && !api_listening()) c["off_text"] = MCP_T("The Remote API couldn't start. Check its port.");
+    c["language"] = ui_language(); // the page draws its words in it (resources/web/orcaslicer_mcp/i18n)
     return c;
 }
 
@@ -279,6 +408,22 @@ public:
         m["type"]         = "history";
         m["version"]      = kProtocolVersion;
         m["capabilities"] = capabilities();
+        // OrcaSlicer's own words for the setting rows (only here: GET /activity and the rows stay English).
+        if (!ui_language_is_english() && m.contains("rows") && m["rows"].is_array()) {
+            try {
+                std::map<int, const McpRow *> by_id;
+                for (const McpRow &r : McpRecorder::get().history().rows()) by_id[r.id] = &r;
+                const std::string language = ui_language();
+                for (json &row : m["rows"]) {
+                    const auto it = by_id.find(row.value("id", -1));
+                    if (it == by_id.end()) continue;
+                    json words = local_words(*it->second, language);
+                    if (!words.is_null()) row["local"] = std::move(words);
+                }
+            } catch (const std::exception &e) {
+                BOOST_LOG_TRIVIAL(warning) << "MCP panel: no local words: " << e.what();
+            }
+        }
         // Cleared after activity(): a project switch it noticed is in this push already. The page asks for the live
         // values itself after a history.
         m_want_history = false;
@@ -348,9 +493,9 @@ private:
             try {
                 res = McpActions::reveal(id);
             } catch (const std::exception &e) {
-                res = {{"status", "failed"}, {"reason", std::string("Something went wrong: ") + e.what()}};
+                res = {{"status", "failed"}, {"reason", mcp_fmt(MCP_T("Something went wrong: {reason}"), {{"reason", e.what()}})}};
             } catch (...) {
-                res = {{"status", "failed"}, {"reason", "Something went wrong"}};
+                res = {{"status", "failed"}, {"reason", MCP_T("Something went wrong")}};
             }
             const std::string status = text_field(res, "status");
             if (status != "ok") BOOST_LOG_TRIVIAL(debug) << "MCP panel: reveal of row " << id << " not shown: " << text_field(res, "reason");
@@ -408,7 +553,7 @@ private:
             if (!int_field(data, key, id)) {
                 result[key]        = data.is_object() && data.contains(key) ? data[key] : json(nullptr);
                 result["status"]   = "failed";
-                result["reason"]   = action == "undo" ? "No such change" : "No such restore point";
+                result["reason"]   = action == "undo" ? MCP_T("No such change") : MCP_T("No such restore point");
                 push(result);
                 return;
             }
@@ -435,9 +580,9 @@ private:
                     res = McpActions::undo_restore();
             } catch (const std::exception &e) {
                 BOOST_LOG_TRIVIAL(error) << "MCP panel: " << action << " failed: " << e.what();
-                res = {{"status", "failed"}, {"reason", std::string("Something went wrong: ") + e.what()}};
+                res = {{"status", "failed"}, {"reason", mcp_fmt(MCP_T("Something went wrong: {reason}"), {{"reason", e.what()}})}};
             } catch (...) {
-                res = {{"status", "failed"}, {"reason", "Something went wrong"}};
+                res = {{"status", "failed"}, {"reason", MCP_T("Something went wrong")}};
             }
             const std::string status = text_field(res, "status");
             const std::string reason = text_field(res, "reason");
@@ -445,8 +590,8 @@ private:
             result["status"]         = shown;
             if (shown != "ok")
                 result["reason"] = !reason.empty() ? reason
-                                   : action == "undo" ? std::string("Could not revert")
-                                                      : std::string("Could not restore");
+                                   : action == "undo" ? std::string(MCP_T("Could not revert"))
+                                                      : std::string(MCP_T("Could not restore"));
             if (!self) return;
             // The timeline first (marks, "Restored to"), then the result, so the page never shows the old state
             // without its busy mark. Not inside another restore's or export's event pump (this action was refused

@@ -1,5 +1,6 @@
 #include "McpRecorder.hpp"
 #include "RemoteAPIController.hpp" // set_backup_in_progress: the F8 gate around the checkpoint export
+#include "McpText.hpp"
 
 #include "libslic3r/Format/bbs_3mf.hpp" // backup_defer
 #include "libslic3r/Model.hpp"
@@ -212,7 +213,7 @@ std::string McpRecorder::config_value_text(const std::string &key, const std::st
     bool labelled = false; // an enum label or On/Off: no unit after it
     if (d != nullptr && !cut) {
         if (d->type == coBool && (v == "1" || v == "0" || v == "true" || v == "false")) {
-            v        = (v == "1" || v == "true") ? "On" : "Off";
+            v        = (v == "1" || v == "true") ? MCP_T("On") : MCP_T("Off");
             labelled = true;
         } else if (d->type == coEnum && d->enum_values.size() == d->enum_labels.size()) {
             for (size_t i = 0; i < d->enum_values.size(); ++i)
@@ -668,7 +669,7 @@ void McpRecorder::record_refusal(std::string label, std::string why, std::string
     McpRow r;
     r.kind   = "refused";
     r.label  = std::move(label);
-    r.value  = value.empty() ? std::string("Not allowed") : std::move(value);
+    r.value  = value.empty() ? std::string(MCP_T("Not allowed")) : std::move(value);
     r.where  = std::move(why);
     r.error  = true;
     r.target = std::move(target);
@@ -680,7 +681,21 @@ void McpRecorder::record_note(const std::string &kind, const std::string &text, 
 {
     if (!wxThread::IsMain()) return;
     if (kind == "refused") {
-        record_refusal(text, where, value.empty() ? std::string("Not allowed") : value, {{"type", "refused"}, {"action", "note"}});
+        record_refusal(text, where, value.empty() ? std::string(MCP_T("Not allowed")) : value, {{"type", "refused"}, {"action", "note"}});
+        return;
+    }
+    if (kind == "note") {
+        // The assistant's own words (orcaslicer-mcp #21), in the user's language: a plain row in the group still open
+        // from the changes it explains, or a new group without a restore point, like a refusal. It changes nothing,
+        // has no undo and does not end the group.
+        open_change(false);
+        McpRow r;
+        r.kind   = "note";
+        r.label  = text;
+        r.value  = value;
+        r.where  = where;
+        r.target = {{"type", "note"}};
+        record(std::move(r));
         return;
     }
     sync_project();
@@ -722,7 +737,7 @@ void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &
 
     McpRow r;
     r.kind  = "slice";
-    r.where = "plate " + std::to_string(plate_no);
+    r.where = mcp_fmt(MCP_T("plate {n}"), {{"n", std::to_string(plate_no)}});
     if (ok) {
         double secs = -1, grams = -1;
         if (stats.is_object()) {
@@ -731,7 +746,7 @@ void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &
             it = stats.find("filament_used_g");
             if (it != stats.end() && it->is_number()) grams = it->get<double>();
         }
-        r.label = "Sliced";
+        r.label = MCP_T("Sliced");
         if (secs >= 0 && grams >= 0) r.value = duration_text(secs) + " " + kMiddleDot + " " + grams_text(grams);
         else if (secs >= 0)          r.value = duration_text(secs);
         else if (grams >= 0)         r.value = grams_text(grams);
@@ -744,9 +759,9 @@ void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &
                 break;
             }
     } else if (error == "cancelled") {
-        r.label = "Slicing cancelled";
+        r.label = MCP_T("Slicing cancelled");
     } else {
-        r.label = "Slicing failed";
+        r.label = MCP_T("Slicing failed");
         r.error = true;
         std::string reason = error.substr(0, error.find('\n'));
         if (reason.size() > 80) {
@@ -754,8 +769,9 @@ void McpRecorder::slice_finished(const json &stats, bool ok, const std::string &
             while (cut > 0 && (static_cast<unsigned char>(reason[cut]) & 0xC0) == 0x80) --cut; // UTF-8 boundary
             reason = reason.substr(0, cut) + "...";
         }
-        r.value = reason.empty() ? "OrcaSlicer reported an error" : reason;
-        if (!error.empty() && error != reason) r.where += std::string(" ") + kMiddleDot + " " + error;
+        r.value = reason.empty() ? MCP_T("OrcaSlicer reported an error") : reason;
+        if (!error.empty() && error != reason)
+            r.where = mcp_fmt(MCP_T("plate {n} \xC2\xB7 {error}"), {{"n", std::to_string(plate_no)}, {"error", error}});
     }
     r.ts   = now_s();
     r.time = hhmm(r.ts);

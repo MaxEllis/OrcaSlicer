@@ -90,7 +90,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/project/move` | Move or rename a project file (`{"from", "to", "overwrite"}`); the window follows for the open project |
 | DELETE | `/project/file` | Delete a project file from disk (never the open project's) |
 | GET | `/activity` | The MCP panel's timeline of this project: the API's changes, what was undone, restore points |
-| POST | `/activity/note` | One row the connector adds to the MCP panel (`{"kind": "slice" \| "refused", "text", "value"?, "detail"?}`) |
+| POST | `/activity/note` | One row the connector adds to the MCP panel (`{"kind": "slice" \| "refused" \| "note", "text", "value"?, "detail"?}`) |
 | GET | `/user_changes?since=` | What the user changed outside the API since a journal seq (hand edits, preset switches, objects, plates, projects, panel undos) |
 
 ### GET /status
@@ -699,6 +699,10 @@ curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
   nothing kept") and ends it the way a slice result does. No restore point is taken.
 - `kind` `"refused"`: a refused row (`label` = `text`, `value` default "Not allowed", `where` = `detail`), as for a
   request OrcaSlicer refused.
+- `kind` `"note"`: a plain row the assistant writes itself, in the user's language, to explain what it did or
+  why (`label` = `text`, `value`, `where` = `detail`, no undo). It joins the group still open from the changes it
+  explains (a new group when none is open), does not end it, and is drawn with a neutral note icon. It changes
+  nothing and takes no restore point. Builds that take it list `"note"` in the panel's `capabilities.kinds`.
 
 `text` is required (at most 160 bytes), `value` at most 80, `detail` at most 400; line breaks and tabs become
 spaces, and control and format characters (C0/C1 controls, bidi overrides and isolates, zero-width characters, the
@@ -846,9 +850,9 @@ another.
 {"type": "history", "version": 1,
  "rows": [ /* rows, below */ ], "groups": [ /* groups, below */ ],
  "restored_to": null, "restore_failed": false, "can_undo_restore": false, "slice_valid": true,
- "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused"],
+ "capabilities": {"restore": true, "kinds": ["setting", "preset", "model", "plate", "slice", "file", "refused", "note"],
                   "open_settings": true, "settings_hint": "", "settings_label": "Remote API settings",
-                  "off_text": "The Remote API is off.", "reveal": true, "tracked_live": true}}
+                  "off_text": "The Remote API is off.", "reveal": true, "tracked_live": true, "language": "ca_ES"}}
 ```
 - `rows`, `groups`, `restored_to`, `restore_failed` and `can_undo_restore` are the shape of `GET /activity`
   above (this fork sends exactly that object plus `type`, `version` and `capabilities`).
@@ -885,6 +889,10 @@ another.
   - `off_text` (string, optional): the line shown while `state.api` is `"off"`. Default "The Remote API is
     off."; the plugin sends "Assistant access is off.", this fork sends "The Remote API couldn't start. Check its
     port." when it is enabled but not listening, and nothing otherwise.
+  - `language` (string, optional): OrcaSlicer's user interface language (`"ca_ES"`, `"zh_TW"`, `"pt_BR"`;
+    `"en_US"`, `""` or none = English). The page draws its words in it (see Translations). This fork sends
+    `GUI_App::current_language_code()` (not the `_safe()` form, which turns Catalan, Basque and Hungarian into
+    `en_US` and Traditional into Simplified Chinese).
 
 **`live`**: the current values of the rows, after the page asks and when settings, objects or the project change.
 ```json
@@ -1004,6 +1012,31 @@ Every string a host sends is shown as plain text: the page escapes it, so HTML i
   (read only with `capabilities.reveal`). This fork marks setting rows of the print, filament and printer presets;
   per-object settings, project keys (filament colours, wipe tower position), presets, models and plates are not
   marked.
+- `local` (object, optional): the host's own translation of English words in this row, `{"<English>": "<in the
+  user's language>"}`: a setting's name and a choice's label, as OrcaSlicer itself shows them ("Wall loops",
+  "Classic"). The page uses them for the label, the values and inside templates (a tip "Set Wall loops back to
+  2"). Sent only when `capabilities.language` is not English, and only for words that differ.
+- The kind `note` (`POST /activity/note` with `"kind": "note"`): the assistant's own words, shown as they are with
+  a neutral icon, never translated, never the group's title while the group holds a change.
+
+### Translations
+
+The page translates what it draws (orcaslicer-mcp #21). Everything a host sends stays English in the rows, the API
+replies and the assistant's change journal: the assistant and the host's code read them.
+- `resources/web/orcaslicer_mcp/i18n/<code>.json` (OrcaSlicer's 22 languages): `{"language", "name",
+  "machine_translated", "phrases": {"<English>": "<translation>"}, "review"?: {"<English>": "<what to check>"}}`.
+  They start machine-made (with OrcaSlicer's translation glossary and its own wording); corrections are welcome.
+- `catalog.json` lists every phrase: the page's own (`t('...')`, `N_('...')` in panel.html), the ones this fork
+  sends (`MCP_T("...")` and `mcp_fmt(MCP_T("Set {label} back to {before}"), ...)` in `src/slic3r/GUI/RemoteAPI`,
+  see `McpText.hpp`), and `external.json` (the connector's notes).
+- `python3 scripts/mcp_panel_i18n.py update` rewrites the catalogue and the page's `panel-i18n` block (all languages
+  inline, so the page stays one file for the plugin too); `check` fails on a stale block or a language missing a
+  phrase or changing its `{placeholders}`. `tests/remote-api-panel/panel-i18n.test.mjs` checks the same.
+- The page picks the table from `capabilities.language`: the code, else its language (`ca`), else a table of that
+  language (`pt` -> `pt_BR`), else English. A phrase the host sends is translated when it matches a catalogue
+  entry exactly, or a template: `{n}`, `{count}`, `{index}`, `{line}`, `{first}`, `{last}` match digits, `{time}`
+  `H:MM`/`HH:MM`, any other name any text, and those parts are translated in turn ("Put Cube back on Plate 2").
+  Anything else (object, preset and file names, numbers) is drawn as it came.
 
 ### What the page shows (for hosts and testers)
 

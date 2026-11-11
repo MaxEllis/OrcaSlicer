@@ -1,0 +1,2439 @@
+{
+ "note": "Every phrase the OrcaSlicer MCP panel shows, in English. Made by scripts/mcp_panel_i18n.py update: do not edit. {name} parts are filled in when shown and must stay in a translation as they are.",
+ "phrases": [
+  {
+   "en": "(empty line)",
+   "host": true,
+   "from": [
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "(hidden)",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "A restore is running",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Adaptive layer height",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Add model",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Add plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Add {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Added",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Added plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Already back to {before}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "An object",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Arrange",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Arranged",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Ask it for the print you want. Its changes will appear here, each with Revert.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Assistant",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Assistant set {value} · was {before}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Assistant set {value} · you set it back",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Auto-orient",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Auto-oriented",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Built-in name",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Built-in preset",
+   "host": true,
+   "from": [
+    "McpActions.cpp",
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Busy",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Busy slicing",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Busy with the assistant's request; try again in a moment",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't change it back",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't check it now: {reason}",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't delete it",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't put it back after a restart; restore an earlier point instead",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't put the ranges back",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't set it back",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't set it back: {reason}",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't switch back",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't track this object after the project was reloaded",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Cancelled",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Change back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Change {label} back to {before}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Changed again since",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Changed again since; restore an earlier point instead",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Clear height ranges",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Collapse all",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Compared {n} option · nothing kept",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Compared {n} option · settings may not be back as they were",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Compared {n} options · nothing kept",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Compared {n} options · settings may not be back as they were",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Comparison couldn't put back: {labels}",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Connect your AI app",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Connected",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Connected to {app}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Copied",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Could not restore",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "Could not revert",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't compute",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't delete",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't delete it",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't move",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't move it back",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't open it",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't open the restore point",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't restore to {time}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Couldn't save",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't save the current state first",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't select",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Couldn't undo it",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Delete Plate {n} (only while it is empty)",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Delete plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Delete plate {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Delete preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Delete the {type} preset {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Delete {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Delete {type} preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Deleted file",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Deleted plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Deleted preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Dropped by a preset switch",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Dropped by a preset switch; restore an earlier point instead",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Duplicate object {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Duplicated",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Expand all",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Failed",
+   "host": true,
+   "from": [
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "Filament",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Filament preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Filament trays",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Filament {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Filament {n} colour",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Filament {n} tray",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "File",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "File exists",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "File not found",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Files and presets saved to disk stay.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Folder not found",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Go back to before the restore",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Height range {min}–{max} mm",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Height ranges cleared",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Hidden value",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Invalid value",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "It has objects on it now",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "It is no longer on the plate",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "It is selected; switch to another preset first",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "It is the last plate",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Its objects moved beside the bed",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Last plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Layer height out of range",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Layer height reset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Line {line} of {count}:",
+   "host": true,
+   "from": [
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "Lines {first} to {last} of {count}:",
+   "host": true,
+   "from": [
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "Model",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Move back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Move object {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Move object {n} to Plate {index}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Move {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Move {name} back to {path}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Move {name} back to {plate}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Move {name} back where it was",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Moved",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Moved again since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Moved to plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Needs Preferences › Remote API › Allow deleting and replacing project files",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Needs Preferences › Remote API › Allow script, G-code and connection edits",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Never saved",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "New project",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "New {type} preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "No CANVAS trays",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No changes",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "No restore point here",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpActions.cpp",
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "No room for another plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No such change",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "No such copy",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No such filament",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No such plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No such preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "No such restore point",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "No such tray",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Not allowed",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp",
+    "RemoteAPIController.cpp",
+    "orcaslicer-mcp set_config"
+   ]
+  },
+  {
+   "en": "Not compatible",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Not editable here",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Not in the recent list",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Not in this project's timeline",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Not put back",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Not ready",
+   "host": true,
+   "from": [
+    "McpActions.cpp",
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Not stored",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Not while OrcaSlicer is busy with a job",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Not while OrcaSlicer is closing",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "Not while a project is loading",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Not while slicing",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Not while the window is being rebuilt",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "Note",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Nothing moved",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Nothing on the plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Nothing to show in the settings",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Nothing to undo",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "OK",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Object has no copy",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Object not found",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Object settings {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Off",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "On",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "Open project {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Open the {settings}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Opened project",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Opening…",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "OrcaSlicer MCP panel closed. Get it back from View > OrcaSlicer MCP panel.",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "OrcaSlicer reported an error",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "Other presets inherit it",
+   "host": true,
+   "from": [
+    "McpActions.cpp",
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Out of date: something changed after this slice",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Out of range",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp",
+    "orcaslicer-mcp set_config"
+   ]
+  },
+  {
+   "en": "Overlaps a range",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Plate",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Plate locked",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Plate {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Plate {n} holds other objects now",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Preset",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Preset in use",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Print preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Printer",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Printer preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Project is open",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Put back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Put the height ranges of {object} back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Put the previous layer height profile of {object} back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Put the {n} objects back where they were",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Put {name} back on {plate}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Quality {value}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Read-only",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Refused",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Rejected",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remote API settings",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Remove",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove copy",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove object {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove range",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove the new copy of {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove the {label} override from {object}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove the {min}–{max} mm range from {object}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Remove {name} from the plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Removed",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Renamed",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Replaced the saved {type} preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Reset layer height",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Restore point folder",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Restore the project to how it was at {time} (undoes later changes)",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Restore to {time}?",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Restore undone",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Restored to {time}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Restoring…",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Revert",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Reverted",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Reverted at {time}",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Reverting…",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Rotate back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Rotate object {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Rotate {name} back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Rotated",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Same path",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Save project",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Save project as {name}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Save {type} preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Saved preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Saved project",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Scale back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Scale object {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Scale {name} back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Scaled",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Scripts, custom G-code and printer connection settings are locked. Tick 'Allow script, G-code and connection edits' in Preferences > Remote API to let the assistant change them, or change it yourself here.",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp set_config"
+   ]
+  },
+  {
+   "en": "Set it up where you use {app}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Set the {min}–{max} mm range of {object} back to {before}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Set {label} back to {before}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Set {label} on {object} back to {before}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Setting",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Settings",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Show details",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Show what it was and find it in settings",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Show what it was and undo it",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Show what it was, undo it, and find it in settings",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Slice result",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Sliced",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "Sliced {where}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Slicing cancelled",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "Slicing failed",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "Something went wrong",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "Something went wrong: {reason}",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "Switch back",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Switch cancelled",
+   "host": true,
+   "from": [
+    "McpActions.cpp",
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Switch {label} back to {before}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Switch {label} back to {before} (drops unsaved edits)",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "That filament is gone",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The Remote API couldn't start. Check its port.",
+   "host": true,
+   "from": [
+    "McpPanel.cpp"
+   ]
+  },
+  {
+   "en": "The Remote API is off.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "The copy is gone already",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The old folder is gone",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The old name is taken now",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The plate has changed since; restore an earlier point instead",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The project changed since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The restore point can't be read",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The restore point is gone",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The restore point was changed on disk, so it is not used",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The setting is not in this preset any more",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The settings tab is not ready",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The settings tab is not there",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The snapshot before the restore is gone",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "The snapshot before the restore was changed on disk, so it is not used",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Then tell it the print you want. Every change it makes shows up here, and you can undo any of it.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "They may still hold the last option's values ({reason}).",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Tray not ready",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Tray used twice",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Undo",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpPanel.cpp",
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Unknown setting",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Unsaved changes",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Unsaved edits dropped: {list}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Unsupported file",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Untitled",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Waiting for {app}…",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Was {before}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "When an assistant changes something, it shows up here.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "Wipe tower X",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Wipe tower Y",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Wrong number of values",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Yes",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "You changed it since",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Your own changes since then are undone too.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "beside the bed",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "changed by you",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "changed since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "copy removed since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "deleted since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "dropped by a preset switch",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "has objects now",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "layer {height} mm",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "line {line}: {text} ({count} lines)",
+   "host": true,
+   "from": [
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "moved since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "none",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "not a number",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "not rotated",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "not set",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "old name taken",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "out of date",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "plate {n}",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp",
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "plate {n} · {error}",
+   "host": true,
+   "from": [
+    "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "ranges set since",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "removed since",
+   "host": true,
+   "from": [
+    "panel.html",
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "reverted",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "set back by you",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "the plate",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "the settings tab is not ready",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "to {position}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "undone by the restore",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{angle}° about {axis}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{key}: not a print, filament or printer setting",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{key}: unsupported value",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{label} (filament {n})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} (filaments {list})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be above {min} (got {got})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be above {min} (got {got}); the lowest the printer allows is set in Printer Settings > Layer height limits",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be above {min} and at most {max} (got {got})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be above {min} and at most {max} (got {got}); the lowest the printer allows is set in Printer Settings > Layer height limits",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be at least {min} (got {got})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be at least {min} (got {got}); the lowest the printer allows is set in Printer Settings > Layer height limits",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be at most {max} (got {got})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be at most {max} (got {got}); the lowest the printer allows is set in Printer Settings > Layer height limits",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be between {min} and {max} (got {got})",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} must be between {min} and {max} (got {got}); the lowest the printer allows is set in Printer Settings > Layer height limits",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{label} not allowed",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{name} doesn't suit this printer now",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{name} is gone",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{name} is gone already",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{name} is no longer on the plate",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{name} is no longer there",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{name} → {plate}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{name}, now {n} copies",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{n} object",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{n} objects",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{n} range",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{n} ranges",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{object} is no longer on the plate",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{object} only",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{object} only · from the print preset",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{preset} (unsaved)",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "{text} ({count} lines)",
+   "host": true,
+   "from": [
+    "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "{title} and {n} more",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{value} in {preset}",
+   "host": true,
+   "from": [
+    "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "{verb} (unavailable: {why})",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{verb} {what}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{verb}: {label} back to {before}",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
+   "en": "{x} × {y} × {z} mm",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  }
+ ]
+}

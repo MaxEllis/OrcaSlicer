@@ -5,7 +5,7 @@
 //
 // ---- Row text and the target schema, consumed by McpActions -------------------------------------------------
 // The API handlers (RemoteAPIController.cpp) record one row per change. `kind` is one of setting, preset,
-// model, plate, slice, file, refused. `value` and `before` of setting rows are config_value_text() of the raw
+// model, plate, slice, file, refused, and note (the assistant's own words, POST /activity/note). `value` and `before` of setting rows are config_value_text() of the raw
 // values (unit added, enum label, first line only, cut at 40 bytes): a live value compared with `value` must be
 // formatted the same way. `target` is host-only (never sent to the page) and says what the row changed:
 //
@@ -93,8 +93,9 @@ public:
     // A note from the assistant's connector (POST /activity/note, M4): kind "slice" adds one slice-kind row (label =
     // text, title_hint "note": it names its group when the group holds no change) and closes the group like a slice
     // result ("Compared 3 options · nothing kept" after a comparison whose trial requests recorded nothing); kind
-    // "refused" adds a refusal the connector made itself (label = text, value, where = detail), as record_refusal.
-    // Changes nothing in the project; no checkpoint.
+    // "refused" adds a refusal the connector made itself (label = text, value, where = detail), as record_refusal;
+    // kind "note" adds the assistant's own words (label = text, value, where = detail) to the group still open, or a
+    // new one, without ending it. Changes nothing in the project; no checkpoint.
     void record_note(const std::string &kind, const std::string &text, const std::string &value, const std::string &where);
 
     // Does nothing while a project is loading (Plater::is_loading_project). Follows the open project: loads its history on an open, rekeys untitled/ on the first save of an

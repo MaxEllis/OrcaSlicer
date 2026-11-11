@@ -1,4 +1,5 @@
 #include "McpHistory.hpp"
+#include "McpText.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -155,7 +156,7 @@ void McpHistory::mark_undone(int id, std::string hhmm)
 static json restore_json(const McpGroup &g)
 {
     if (!g.checkpoint.empty()) return {{"available", true}, {"why", ""}};
-    if (g.checkpoint_failed) return {{"available", false}, {"why", "No restore point here"}};
+    if (g.checkpoint_failed) return {{"available", false}, {"why", MCP_T("No restore point here")}};
     return nullptr;
 }
 
@@ -165,7 +166,7 @@ static std::string page_error(const McpRow &r)
     if (!r.error) return std::string();
     if (!r.where.empty()) return r.where;
     if (!r.value.empty()) return r.value;
-    return "Failed";
+    return MCP_T("Failed");
 }
 
 bool mcp_row_revealable(const McpRow &row)
@@ -319,7 +320,7 @@ bool ends_with(const std::string &s, const std::string &tail)
 std::string shown_line(std::string s, size_t max_chars)
 {
     while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
-    if (s.find_first_not_of(" \t") == std::string::npos) return "(empty line)";
+    if (s.find_first_not_of(" \t") == std::string::npos) return MCP_T("(empty line)");
     size_t chars = 0, i = 0;
     for (; i < s.size(); ++i) {
         if ((static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) continue; // a continuation byte
@@ -350,11 +351,15 @@ std::string mcp_multiline_display(const std::string &text, const std::string *ot
 {
     const std::vector<std::string> lines = split_lines(text);
     if (lines.size() < 2) return {};
-    const std::string count = " (" + std::to_string(lines.size()) + " lines)";
+    const std::string count = std::to_string(lines.size());
     const size_t      k     = first_change(lines, other);
-    if (k > 0 && k < lines.size()) return "line " + std::to_string(k + 1) + ": " + shown_line(lines[k], kLineChars) + count;
+    if (k > 0 && k < lines.size())
+        return mcp_fmt(MCP_T("line {line}: {text} ({count} lines)"),
+                       {{"line", std::to_string(k + 1)}, {"text", shown_line(lines[k], kLineChars)}, {"count", count}});
     const std::string head = shown_line(lines[0], kLineChars);
-    return head + (ends_with(head, kLineEllipsis) ? std::string() : std::string(" ") + kLineEllipsis) + count;
+    return mcp_fmt(MCP_T("{text} ({count} lines)"),
+                   {{"text", head + (ends_with(head, kLineEllipsis) ? std::string() : std::string(" ") + kLineEllipsis)},
+                    {"count", count}});
 }
 
 std::string mcp_multiline_tip(const std::string &text, const std::string *other)
@@ -364,9 +369,12 @@ std::string mcp_multiline_tip(const std::string &text, const std::string *other)
     size_t from = first_change(lines, other);
     if (from >= lines.size()) from = 0;
     const size_t to  = std::min(lines.size(), from + kTipLines);
-    std::string  out = to - from == 1 ? "Line " + std::to_string(from + 1)
-                                      : "Lines " + std::to_string(from + 1) + " to " + std::to_string(to);
-    out += " of " + std::to_string(lines.size()) + ":";
+    std::string  out = to - from == 1
+                           ? mcp_fmt(MCP_T("Line {line} of {count}:"),
+                                     {{"line", std::to_string(from + 1)}, {"count", std::to_string(lines.size())}})
+                           : mcp_fmt(MCP_T("Lines {first} to {last} of {count}:"),
+                                     {{"first", std::to_string(from + 1)}, {"last", std::to_string(to)},
+                                      {"count", std::to_string(lines.size())}});
     for (size_t i = from; i < to; ++i) out += "\n" + shown_line(lines[i], kTipLineChars);
     if (to < lines.size()) out += std::string("\n") + kLineEllipsis;
     return out;
