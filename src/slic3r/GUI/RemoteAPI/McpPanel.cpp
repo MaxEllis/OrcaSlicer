@@ -186,13 +186,34 @@ std::string local_setting_name(const std::string &en)
 json local_words(const McpRow &r, const std::string &language)
 {
     std::string key, type = r.target.is_object() ? r.target.value("type", std::string()) : std::string();
+    bool        listed = false; // the label lists setting names ("Start G-code, End G-code"): a connector's refusal
     if (type == "config" || type == "object_config") key = r.target.value("key", std::string());
     else if (type == "refused") {
         const std::string action = r.target.value("action", std::string());
-        if (action != "PUT /config" && action != "PUT /objects/{id}/config") return nullptr;
+        if (action == "note") listed = true;
+        else if (action != "PUT /config" && action != "PUT /objects/{id}/config") return nullptr;
     } else
         return nullptr;
     static std::map<std::string, std::string> s_names; // language + "\n" + English -> local ("" = none)
+    if (listed) {
+        // A refusal the connector made itself (POST /activity/note kind "refused"): its text is the setting names it
+        // refused, joined with ", " (orcaslicer-mcp); each name that OrcaSlicer translates is sent.
+        json out = json::object();
+        const std::string label = r.label;
+        for (size_t start = 0; start <= label.size();) {
+            const size_t      comma = label.find(", ", start);
+            const std::string name  = label.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+            if (!name.empty()) {
+                const std::string ck = language + "\n" + name;
+                auto it = s_names.find(ck);
+                if (it == s_names.end()) it = s_names.emplace(ck, local_setting_name(name)).first;
+                if (!it->second.empty()) out[name] = it->second;
+            }
+            if (comma == std::string::npos) break;
+            start = comma + 2;
+        }
+        return out.empty() ? json(nullptr) : out;
+    }
     // The setting's name, without the filament slots a label may end with ("<name> (filament 2)", "<name> (filaments
     // 1, 3)"); a name that itself ends in "(filament)" keeps it.
     std::string name = r.label;

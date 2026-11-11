@@ -284,6 +284,13 @@
    ]
   },
   {
+   "en": "Compared {n} option",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices (a note's text, its value apart)"
+   ]
+  },
+  {
    "en": "Compared {n} option · nothing kept",
    "host": true,
    "from": [
@@ -295,6 +302,13 @@
    "host": true,
    "from": [
     "orcaslicer-mcp compare_slices"
+   ]
+  },
+  {
+   "en": "Compared {n} options",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices (a note's text, its value apart)"
    ]
   },
   {
@@ -2084,6 +2098,13 @@
    ]
   },
   {
+   "en": "nothing kept",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices (a note's value)"
+   ]
+  },
+  {
    "en": "old name taken",
    "host": true,
    "from": [
@@ -2139,6 +2160,13 @@
    "host": false,
    "from": [
     "panel.html"
+   ]
+  },
+  {
+   "en": "settings may not be back as they were",
+   "host": true,
+   "from": [
+    "orcaslicer-mcp compare_slices (a note's value)"
    ]
   },
   {

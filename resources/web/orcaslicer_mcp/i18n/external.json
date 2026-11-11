@@ -1,15 +1,61 @@
 {
  "note": "Text other programs put into the panel through POST /api/v1/activity/note (the orcaslicer-mcp connector). Keep in step with orcaslicer-mcp: server.py _compare_note and _restore_failed_note, client.py REFUSED_KEYS_DETAIL*, the range refusal.",
  "phrases": [
-  {"en": "Compared {n} option · nothing kept", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "Compared {n} options · nothing kept", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "Compared {n} option · settings may not be back as they were", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "Compared {n} options · settings may not be back as they were", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "Comparison couldn't put back: {labels}", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "Not put back", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "They may still hold the last option's values ({reason}).", "from": "orcaslicer-mcp compare_slices"},
-  {"en": "Out of range", "from": "orcaslicer-mcp set_config"},
-  {"en": "Not allowed", "from": "orcaslicer-mcp set_config"},
-  {"en": "Scripts, custom G-code and printer connection settings are locked. Tick 'Allow script, G-code and connection edits' in Preferences > Remote API to let the assistant change them, or change it yourself here.", "from": "orcaslicer-mcp set_config"}
+  {
+   "en": "Compared {n} option · nothing kept",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "Compared {n} options · nothing kept",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "Compared {n} option · settings may not be back as they were",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "Compared {n} options · settings may not be back as they were",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "Comparison couldn't put back: {labels}",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "Not put back",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "They may still hold the last option's values ({reason}).",
+   "from": "orcaslicer-mcp compare_slices"
+  },
+  {
+   "en": "Out of range",
+   "from": "orcaslicer-mcp set_config"
+  },
+  {
+   "en": "Not allowed",
+   "from": "orcaslicer-mcp set_config"
+  },
+  {
+   "en": "Scripts, custom G-code and printer connection settings are locked. Tick 'Allow script, G-code and connection edits' in Preferences > Remote API to let the assistant change them, or change it yourself here.",
+   "from": "orcaslicer-mcp set_config"
+  },
+  {
+   "en": "Compared {n} option",
+   "from": "orcaslicer-mcp compare_slices (a note's text, its value apart)"
+  },
+  {
+   "en": "Compared {n} options",
+   "from": "orcaslicer-mcp compare_slices (a note's text, its value apart)"
+  },
+  {
+   "en": "nothing kept",
+   "from": "orcaslicer-mcp compare_slices (a note's value)"
+  },
+  {
+   "en": "settings may not be back as they were",
+   "from": "orcaslicer-mcp compare_slices (a note's value)"
+  }
  ]
 }

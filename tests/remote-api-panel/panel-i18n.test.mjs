@@ -208,3 +208,11 @@ test('a template that is nearly all placeholders never rewrites a user\'s own na
   assert.strictEqual(Core.ht('Plate 2'), 'Placa 2');
   assert.strictEqual(Core.ht('bracket.3mf is gone'), 'bracket.3mf ja no hi és');
 });
+
+test('a connector refusal listing several settings draws each name in the host\'s words; a plain comma name stays', () => {
+  const { Core } = load(FAKE);
+  Core.setLanguage('xx');
+  const r = row({ kind: 'refused', label: 'Start G-code, End G-code', local: { 'Start G-code': 'Inici', 'End G-code': 'Final' } });
+  assert.strictEqual(Core.rowLabel(r), 'Inici, Final');
+  assert.strictEqual(Core.rowLabel(row({ kind: 'model', label: 'Box, small' })), 'Box, small');
+});
