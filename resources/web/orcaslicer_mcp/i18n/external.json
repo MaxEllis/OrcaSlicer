@@ -1,5 +1,5 @@
 {
- "note": "Text other programs put into the panel through POST /api/v1/activity/note (the orcaslicer-mcp connector). Keep in step with orcaslicer-mcp: server.py _compare_note and _restore_failed_note, client.py REFUSED_KEYS_DETAIL*, the range refusal.",
+ "note": "Text other programs put into the panel through POST /api/v1/activity/note (the orcaslicer-mcp connector). Keep in step with orcaslicer-mcp: server.py _compare_note and _restore_failed_note, client.py REFUSED_KEYS_DETAIL*, the range refusal. The OrcaSlicer MCP plugin's own words (its capabilities, undo results, setup view and closed banner) are here too: keep in step with orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py.",
  "phrases": [
   {
    "en": "Compared {n} option · nothing kept",
@@ -56,6 +56,146 @@
   {
    "en": "settings may not be back as they were",
    "from": "orcaslicer-mcp compare_slices (a note's value)"
+  },
+  {
+   "en": "Assistant access is off.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Assistant settings",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Needs the OrcaSlicer MCP build",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Nothing to revert",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "It is no longer there",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Restore points need the OrcaSlicer MCP build",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "The plugin did not start",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "The plugin never changes scripts, G-code or printer connection settings",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "OrcaSlicer MCP panel closed. It comes back when your assistant next uses OrcaSlicer, or press Space and pick OrcaSlicer MCP.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Other app",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "your app",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Claude app",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "ChatGPT desktop app",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "ChatGPT on the web or phone",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Codex in a terminal or editor",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Your app's MCP settings",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Add to Cursor",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Add to VS Code",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Download",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Copy",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Copy command",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Copy settings",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Copy settings instead",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Copy .vscode/mcp.json settings instead",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "For chats. Download the extension, then open the file. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "In a terminal, an editor or the app's Code tab. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Run this once. The desktop app shares the setting. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Can't connect: it only reaches servers on the internet, not programs on your computer.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Cursor opens and asks you to confirm. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "VS Code opens and asks you to confirm. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "LM Studio, Windsurf and most others take this form. Needs uv.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Also add {setting} as an environment variable.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "In the extension's settings, set OrcaSlicer settings folder to {folder}.",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
   }
  ]
 }

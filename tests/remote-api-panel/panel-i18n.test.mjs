@@ -216,3 +216,35 @@ test('a connector refusal listing several settings draws each name in the host\'
   assert.strictEqual(Core.rowLabel(r), 'Inici, Final');
   assert.strictEqual(Core.rowLabel(row({ kind: 'model', label: 'Box, small' })), 'Box, small');
 });
+
+test('the setup view gives "your app" whole sentences (a language with cases cannot slot it), a named app the template', () => {
+  const i18n = { host: ['Set it up where you use {app}', 'Waiting for {app}…'], langs: { xx: {
+    'Set it up where you use {app}': '[Set up in {app}]', 'Waiting for {app}…': '[Waiting for {app}]',
+    'Set it up where you use your app': '[Set up in your own app]', 'Waiting for your app…': '[Waiting for your own app]',
+    'your app': '[your app]', 'Other app': '[Other app]', 'Copy': '[Copy]' } } };
+  const route = { label: 'Settings', hint: 'Paste this.', act: 'Copy', primary: true, copy: 'x', open: null, off: false, also: '',
+    copy_label: '' };
+  const empty = (language) => ({ type: 'history', rows: [], groups: [], capabilities: { restore: false, language } });
+  const setup = (where, name) => ({ type: 'setup', apps: [{ id: 'a', name, where, icon: '', routes: [route] }], status: null,
+    paused: false });
+  const other = load(i18n);
+  other.receive({ type: 'state', api: 'on' });
+  other.receive(empty('xx'));
+  other.receive(setup('your app', 'Other app'));
+  assert.match(other.els.list.innerHTML, /\[Set up in your own app\]/);
+  assert.match(other.els.list.innerHTML, /\[Waiting for your own app\]/);
+  assert.match(other.els.list.innerHTML, />\[Other app\]</);
+  assert.doesNotMatch(other.els.list.innerHTML, /\[your app\]/);
+  const named = load(i18n);
+  named.receive({ type: 'state', api: 'on' });
+  named.receive(empty('xx'));
+  named.receive(setup('Cursor', 'Cursor'));
+  assert.match(named.els.list.innerHTML, /\[Set up in Cursor\]/);
+  assert.match(named.els.list.innerHTML, /\[Waiting for Cursor\]/);
+  const en = load('shipped');
+  en.receive({ type: 'state', api: 'on' });
+  en.receive(empty(''));
+  en.receive(setup('your app', 'Other app'));
+  assert.match(en.els.list.innerHTML, /Set it up where you use your app/);
+  assert.match(en.els.list.innerHTML, /Waiting for your app…/);
+});

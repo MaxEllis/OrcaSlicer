@@ -44,6 +44,20 @@
    ]
   },
   {
+   "en": "Add to Cursor",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Add to VS Code",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Add {name}",
    "host": true,
    "from": [
@@ -69,6 +83,13 @@
    "host": false,
    "from": [
     "panel.html"
+   ]
+  },
+  {
+   "en": "Also add {setting} as an environment variable.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -107,6 +128,13 @@
    ]
   },
   {
+   "en": "Assistant access is off.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Assistant set {value} · was {before}",
    "host": false,
    "from": [
@@ -118,6 +146,13 @@
    "host": false,
    "from": [
     "panel.html"
+   ]
+  },
+  {
+   "en": "Assistant settings",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -182,6 +217,13 @@
    "host": true,
    "from": [
     "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Can't connect: it only reaches servers on the internet, not programs on your computer.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -270,10 +312,38 @@
    ]
   },
   {
+   "en": "ChatGPT desktop app",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "ChatGPT on the web or phone",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Claude app",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Clear height ranges",
    "host": true,
    "from": [
     "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Codex in a terminal or editor",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -358,6 +428,41 @@
    "host": false,
    "from": [
     "panel.html"
+   ]
+  },
+  {
+   "en": "Copy",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Copy .vscode/mcp.json settings instead",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Copy command",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Copy settings",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Copy settings instead",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -461,6 +566,13 @@
    ]
   },
   {
+   "en": "Cursor opens and asks you to confirm. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Delete Plate {n} (only while it is empty)",
    "host": true,
    "from": [
@@ -528,6 +640,13 @@
    "host": true,
    "from": [
     "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Download",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -651,6 +770,13 @@
    ]
   },
   {
+   "en": "For chats. Download the extension, then open the file. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Go back to before the restore",
    "host": false,
    "from": [
@@ -679,6 +805,20 @@
    ]
   },
   {
+   "en": "In a terminal, an editor or the app's Code tab. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "In the extension's settings, set OrcaSlicer settings folder to {folder}.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Invalid value",
    "host": true,
    "from": [
@@ -700,6 +840,13 @@
    ]
   },
   {
+   "en": "It is no longer there",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "It is selected; switch to another preset first",
    "host": true,
    "from": [
@@ -718,6 +865,13 @@
    "host": true,
    "from": [
     "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "LM Studio, Windsurf and most others take this form. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -753,6 +907,13 @@
    "host": true,
    "from": [
     "McpHistory.cpp"
+   ]
+  },
+  {
+   "en": "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -851,6 +1012,13 @@
    "host": true,
    "from": [
     "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Needs the OrcaSlicer MCP build",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -1076,6 +1244,13 @@
    ]
   },
   {
+   "en": "Nothing to revert",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Nothing to show in the settings",
    "host": true,
    "from": [
@@ -1167,10 +1342,24 @@
    ]
   },
   {
+   "en": "OrcaSlicer MCP panel closed. It comes back when your assistant next uses OrcaSlicer, or press Space and pick OrcaSlicer MCP.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "OrcaSlicer reported an error",
    "host": true,
    "from": [
     "McpRecorder.cpp"
+   ]
+  },
+  {
+   "en": "Other app",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -1435,6 +1624,13 @@
    ]
   },
   {
+   "en": "Restore points need the OrcaSlicer MCP build",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Restore the project to how it was at {time} (undoes later changes)",
    "host": false,
    "from": [
@@ -1527,6 +1723,13 @@
    ]
   },
   {
+   "en": "Run this once. The desktop app shares the setting. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "Same path",
    "host": true,
    "from": [
@@ -1604,6 +1807,13 @@
    ]
   },
   {
+   "en": "Set it up where you use your app",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
    "en": "Set it up where you use {app}",
    "host": false,
    "from": [
@@ -1643,6 +1853,13 @@
    "host": false,
    "from": [
     "panel.html"
+   ]
+  },
+  {
+   "en": "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -1801,6 +2018,20 @@
    ]
   },
   {
+   "en": "The plugin did not start",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "The plugin never changes scripts, G-code or printer connection settings",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
    "en": "The project changed since",
    "host": true,
    "from": [
@@ -1936,6 +2167,20 @@
    ]
   },
   {
+   "en": "VS Code opens and asks you to confirm. Needs uv.",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Waiting for your app…",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
    "en": "Waiting for {app}…",
    "host": false,
    "from": [
@@ -1990,6 +2235,13 @@
    "from": [
     "panel.html",
     "McpActions.cpp"
+   ]
+  },
+  {
+   "en": "Your app's MCP settings",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
@@ -2195,6 +2447,13 @@
    "host": false,
    "from": [
     "panel.html"
+   ]
+  },
+  {
+   "en": "your app",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
   {
