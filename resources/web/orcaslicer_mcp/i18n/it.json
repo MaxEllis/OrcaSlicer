@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "solo {object} · dal profilo di stampa",
   "{preset} (unsaved)": "{preset} (non salvato)",
   "{text} ({count} lines)": "{text} ({count} righe)",
+  "{text}, filament {n}": "{text}, filamento {n}",
   "{title} and {n} more": "{title} e altri {n}",
   "{value} in {preset}": "{value} in {preset}",
   "{verb} (unavailable: {why})": "{verb} (non disponibile: {why})",

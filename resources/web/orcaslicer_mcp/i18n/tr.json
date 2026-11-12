@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "Yalnızca {object} · baskı ön ayarından",
   "{preset} (unsaved)": "{preset} (kaydedilmemiş)",
   "{text} ({count} lines)": "{text} ({count} satır)",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} ve {n} tane daha",
   "{value} in {preset}": "{preset} içinde {value}",
   "{verb} (unavailable: {why})": "{verb} (kullanılamıyor: {why})",

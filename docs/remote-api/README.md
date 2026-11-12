@@ -49,7 +49,8 @@ Base URL: `http://<host>:13130/api/v1`
 |---|---|---|
 | GET | `/status` | App/project/preset status + slice validity |
 | GET | `/config[?keys=a,b]` | Read merged config (secrets redacted) |
-| PUT | `/config` | Apply config edits live (atomic) |
+| PUT | `/config[?slot=n]` | Apply config edits live (atomic); `slot` writes one filament slot's preset |
+| GET | `/filaments` | The project's filament slots: preset, type, vendor, colour, unsaved edits |
 | POST | `/slice` | Start slicing the current plate |
 | GET | `/slice/status` | Current/last slice state + stats + warnings |
 | POST | `/slice/cancel` | Stop a running slice, or clear a stuck `slicing` state |
@@ -68,12 +69,12 @@ Base URL: `http://<host>:13130/api/v1`
 | GET | `/plate/render` | PNG of the current plate: `view=editor\|preview`, `angle=iso\|top\|front\|left\|right\|rear\|bottom`, `frame=plate\|object`, `width`, `height` |
 | GET | `/presets` | Preset names per type, with system and selected flags |
 | PUT | `/preset` | Select a preset (`{"type":"print\|filament\|printer","name"}`) |
-| POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog |
+| POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog; `slot` saves one filament slot's preset and moves only that slot |
 | POST | `/preset/config` | The full config of a named preset (`{"type","name"}`; credentials redacted) |
 | DELETE | `/preset` | Delete a user preset (never a system, selected or inherited-from one) |
-| GET | `/printer/slots` | Elegoo Centauri Carbon 2: read the CANVAS trays now |
-| GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from |
-| PUT | `/printer/slot_mapping` | Set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
+| GET | `/printer/slots` | The printer's filament trays: an Elegoo Centauri Carbon 2's CANVAS (read now), or the selected Bambu Lab printer's AMS and external spool |
+| GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from (on Bambu: the Send dialog's automatic choice) |
+| PUT | `/printer/slot_mapping` | CANVAS only: set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
 | WS | `/events?token=…` | Live event stream |
 | GET | `/plates` | List the plates: index, name, current, locked, objects on each |
 | POST | `/plates` | Add a plate (`{"select": true}` by default) |
@@ -217,6 +218,85 @@ discarding unsaved edits.
 Builds that support it list `preset_slot` in `GET /status` `capabilities`; older builds
 ignore `slot` and switch the Filament tab preset, so check the capability first.
 
+#### Writing one slot's preset
+
+`PUT /config?slot=1` (0-based) writes the filament preset of that slot instead of
+whichever preset is open in the Filament tab. It binds the Filament tab to the
+slot first, exactly as the slot's edit button in the sidebar does: the tab opens
+the slot's preset, and from then on follows it. Nothing else changes, and no
+unsaved print or printer edit is dropped.
+
+```bash
+curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"hot_plate_temp":100}' "http://localhost:13130/api/v1/config?slot=1"
+```
+```json
+{ "applied": ["hot_plate_temp"], "errors": {}, "slot": 1, "preset": "Generic ASA" }
+```
+
+A preset shared by several slots is still one preset: writing slot 1 changes
+every slot loaded with the same preset (the MCP panel row names them, "filament
+1, 3"). To change one of them alone, save that slot's preset under its own name
+first (`POST /preset/save` with `slot`, below).
+
+Only one filament preset can hold unsaved edits at a time (the one in the tab).
+When the tab holds unsaved edits to a *different* preset than the slot's, the
+request is refused with nothing changed, because switching the tab would have to
+drop them (OrcaSlicer asks about that in a dialog nothing can answer remotely):
+
+```json
+{ "applied": [], "error": "filament_edits_unsaved", "preset": "Generic PLA", "modified": ["hot_plate_temp"] }
+```
+Save them (`/preset/save`) or put the keys back first. `409` for that, `422
+slot_out_of_range` (with `filament_count`), `400 invalid_slot` for a value that is
+not a 0-based integer. A slot whose preset is the one already open needs no
+switch, so unsaved edits to that preset are kept and built on.
+
+#### Saving one slot's preset
+
+OrcaSlicer's own Save As moves *every* slot that used the old preset to the new
+name (the sidebar's `update_presets_from_to`). `POST /preset/save` with a 0-based
+`slot` saves from that slot's preset and moves only that slot; the others keep
+their preset:
+
+```bash
+curl -X POST -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
+  -d '{"type":"filament","name":"Polymaker LW-ASA","slot":1}' \
+  http://localhost:13130/api/v1/preset/save
+```
+```json
+{ "saved": "Polymaker LW-ASA", "created": true, "slot": 1, "slots_reassigned": [1], "slots_kept": [0, 2],
+  "filaments": ["Generic ASA", "Polymaker LW-ASA", "Generic ASA"] }
+```
+`slots_kept` lists the slots OrcaSlicer had moved and the API put back. The same
+binding and refusals as `PUT /config?slot=` apply (`409 filament_edits_unsaved`
+when the tab holds unsaved edits to another preset, `422 slot_out_of_range`);
+`slot` with a type other than `filament` is `400 invalid_slot`. Without `slot` the
+route behaves as before.
+
+### GET /filaments
+
+The project's filament slots, as the sidebar shows them, in one read:
+
+```json
+{ "count": 3, "multi_filament": true,
+  "filaments": [
+    { "index": 0, "preset": "Generic ASA", "filament_type": "ASA", "vendor": "Generic", "colour": "#FFFFFF",
+      "system": true, "open_in_tab": false, "modified": false, "modified_keys": [] },
+    { "index": 1, "preset": "Polymaker LW-ASA", "filament_type": "ASA", "vendor": "Polymaker", "colour": "#3C3C3C",
+      "system": false, "open_in_tab": true, "modified": true, "modified_keys": ["hot_plate_temp"] },
+    { "index": 2, "preset": "Generic ASA", "filament_type": "ASA", "vendor": "Generic", "colour": "#FF0000",
+      "system": true, "open_in_tab": false, "modified": false, "modified_keys": [] } ],
+  "tab": { "preset": "Polymaker LW-ASA", "slot": 1, "modified": true } }
+```
+`preset` is the slot's preset; `filament_type`, `vendor` and `system` come from it,
+`colour` from the project. Only the preset open in the Filament tab can hold
+unsaved edits, so `modified` is true for every slot using that preset while it is
+dirty, with the keys as `GET /status` lists them. `tab.slot` is the slot the tab is
+bound to (null when it follows no slot). Builds with this route list
+`filament_slots` in `GET /status` `capabilities`; the `slot` forms of `PUT /config`
+and `POST /preset/save` come with it.
+
 #### Project-scope keys (multi-material / CFS)
 
 Most keys resolve against the edited print, filament or printer preset. A few
@@ -304,6 +384,71 @@ Each message is a JSON object with an `event` field:
 
 > `slice.*` events carry `stats` (on done) but not the slice `warnings` array —
 > call `GET /slice/status` for warnings.
+
+## Printer trays
+
+`GET /printer/slots` and `GET /printer/slot_mapping` answer for two kinds of printer, told apart by `kind`:
+`"canvas"` (an Elegoo Centauri Carbon 2 preset: the CANVAS unit is read over the network, up to about 18 s)
+and `"bambu"` (a Bambu Lab preset: the printer selected in the Device tab, read from the state OrcaSlicer's own
+connection keeps, so the answer is instant and nothing is sent to the printer). Any other preset gets
+`{"supported": false, "kind": "bambu", "reason": "not_supported"}`; a Bambu preset with no printer selected
+`no_printer_selected`, with the selected printer not connected `printer_offline`. Builds that read Bambu printers
+list `bambu_ams` in `GET /status` `capabilities`.
+
+### GET /printer/slots on a Bambu Lab printer
+
+```json
+{ "supported": true, "kind": "bambu", "connected": true,
+  "printer": { "name": "P1S", "model": "Bambu Lab P1S", "connection": "lan" },
+  "active": { "ams_id": "0", "tray_id": "1" },
+  "ams": [ { "ams_id": "0", "type": "AMS", "extruder": 0, "humidity_level": 2, "humidity_percent": 31,
+             "temperature": 24.5, "trays": ["A1", "A2", "A3", "A4"] } ],
+  "trays": [
+    { "ams_id": "0", "tray_id": "0", "index": 0, "label": "A1", "status": "loaded", "ready": true, "active": false,
+      "unknown_filament": false, "filament_type": "ASA", "filament_name": "Bambu ASA", "brand": "Bambu Lab",
+      "filament_id": "GFB00", "bambu_filament": true, "filament_color": "#FFFFFF", "remain_percent": 62,
+      "min_nozzle_temp": 240, "max_nozzle_temp": 280 },
+    { "ams_id": "0", "tray_id": "1", "index": 1, "label": "A2", "status": "loaded", "ready": true, "active": true,
+      "unknown_filament": false, "filament_type": "ASA-Aero", "filament_name": "Polymaker PolyLite LW-ASA",
+      "brand": "Polymaker", "filament_id": "P4a51d2", "bambu_filament": false, "filament_color": "#3C3C3C",
+      "remain_percent": -1, "min_nozzle_temp": 230, "max_nozzle_temp": 270 },
+    { "ams_id": "0", "tray_id": "2", "index": 2, "label": "A3", "status": "empty", "ready": false, "active": false,
+      "unknown_filament": false, "filament_type": "", "filament_name": "", "brand": "", "filament_id": "",
+      "bambu_filament": false, "filament_color": "", "remain_percent": null, "min_nozzle_temp": 0, "max_nozzle_temp": 0 },
+    { "ams_id": "255", "tray_id": "0", "index": 255, "label": "Ext", "status": "empty", "ready": false, "active": false,
+      "unknown_filament": false, "filament_type": "", "filament_name": "", "brand": "", "filament_id": "",
+      "bambu_filament": false, "filament_color": "", "remain_percent": null, "min_nozzle_temp": 0, "max_nozzle_temp": 0 } ] }
+```
+`trays` lists every slot of every AMS unit in order and then the external spool(s) (`ams_id` 255, label `Ext`; a
+second extruder's is 254, `Ext-2`), flat as the CANVAS reply lists them. `label` is the name OrcaSlicer's AMS panel
+shows. `status` is `loaded`, `unknown` (a spool is in, but the printer reports no type or colour for it: set it in the
+AMS panel) or `empty`; `ready` is true only for `loaded`. `filament_type` is the AMS's own type word (`ASA-Aero`,
+`PLA-CF`, `PETG-HF`, ...), `filament_name` the name the AMS panel shows (the printer's, else the preset the tray's
+`filament_id` points at), `active` marks the tray feeding the nozzle. `remain_percent` is the AMS's estimate for
+Bambu spools, -1 when it has none, null for an empty slot. A `humidity_level` of 1 (dry) to 5 is reported by units
+that measure it, null by the others.
+
+### GET /printer/slot_mapping on a Bambu Lab printer
+
+```json
+{ "supported": true, "kind": "bambu", "plate": 0,
+  "printer": { "name": "P1S", "model": "Bambu Lab P1S", "connection": "lan" },
+  "filaments": [
+    { "index": 0, "type": "ASA", "name": "Generic ASA", "vendor": "Generic", "color": "#FFFFFF",
+      "tray": { "ams_id": "0", "tray_id": "0", "index": 0, "label": "A1", "filament_type": "ASA",
+                "filament_name": "Bambu ASA", "brand": "Bambu Lab", "filament_color": "#FFFFFF" },
+      "source": "matched", "warnings": [] },
+    { "index": 1, "type": "ASA", "name": "Polymaker LW-ASA", "vendor": "Polymaker", "color": "#3C3C3C",
+      "tray": null, "source": "none", "warnings": ["No tray holds ASA."] } ],
+  "valid": false,
+  "problems": ["Filament 2 (Polymaker LW-ASA) has no tray: the Send dialog needs a choice."] }
+```
+The filaments are the ones the next Send would map (the current plate's; every project filament when the plate
+reports none), each with the tray the Send dialog's automatic mapping pre-fills. That mapping takes a tray only when
+its `filament_type` equals the slot preset's type (then the nearest colour), so a slot whose type no tray holds
+comes back with `tray` null, a warning, a problem and `valid` false: the Send dialog then waits for the user to
+pick one. There is no `PUT` for Bambu printers: the choice is made in the Send dialog, which keeps no store this
+API could fill.
 
 ## Plates
 

@@ -288,6 +288,10 @@ public:
     void                    update_ui_from_settings();
 	bool                    show_object_list(bool show) const;
     void                    finish_param_edit();
+    // The slot the Filament tab is bound to (its preset follows the tab's), -1 when none. The slot's edit button
+    // sets it; the Remote API sets it to write one slot's preset (RemoteAPI::bind_filament_tab).
+    int                     editing_filament() const;
+    void                    set_editing_filament(int filament_idx);
 
     /**
      * @brief Automatically calculates flushing volumes

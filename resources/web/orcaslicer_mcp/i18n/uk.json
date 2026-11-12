@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "Лише {object} · із пресета друку",
   "{preset} (unsaved)": "{preset} (не збережено)",
   "{text} ({count} lines)": "{text} (рядків: {count})",
+  "{text}, filament {n}": "{text}, філамент {n}",
   "{title} and {n} more": "{title} і ще {n}",
   "{value} in {preset}": "{value} у {preset}",
   "{verb} (unavailable: {why})": "{verb} (недоступно: {why})",

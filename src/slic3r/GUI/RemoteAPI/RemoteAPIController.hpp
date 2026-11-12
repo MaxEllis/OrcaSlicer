@@ -92,6 +92,11 @@ public:
                                      const std::vector<std::string> &colours_before);
     // The filament preset of one slot, as the sidebar combo switches it (slot and preset already checked).
     static void select_filament_slot(size_t slot, const std::string &name);
+    // GET /filaments: the project's filament slots (preset, type, colour, unsaved edits). GUI thread only.
+    static nlohmann::json filament_slots_json();
+    // Binds the Filament tab to one slot, as the slot's edit button does, so PUT /config and POST /preset/save
+    // act on that slot's preset. {} when bound, else {"error", ...} with nothing changed. GUI thread only.
+    static nlohmann::json bind_filament_tab(size_t slot);
     // DELETE /preset's rules ("" = may delete, else the error token) and its deletion. type: print|filament|printer.
     static std::string preset_delete_refusal(const std::string &type, const std::string &name);
     static bool        delete_user_preset(const std::string &type, const std::string &name);
@@ -120,7 +125,8 @@ private:
     Response handle_user_changes(const std::string &target); // GET /user_changes?since=
     Response handle_status();
     Response handle_get_config(const std::string &target);
-    Response handle_put_config(const std::string &body);
+    Response handle_put_config(const std::string &body, int slot = -1); // ?slot=N: that slot's filament preset
+    Response handle_get_filaments();                        // GET /filaments
     Response handle_slice();
     Response handle_slice_status();
     Response handle_slice_cancel();   // F2: POST /slice/cancel - unwedge/abort

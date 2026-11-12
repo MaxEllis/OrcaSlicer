@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "{object} uniquement · du préréglage de traitement",
   "{preset} (unsaved)": "{preset} (non enregistré)",
   "{text} ({count} lines)": "{text} ({count} lignes)",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} et {n} de plus",
   "{value} in {preset}": "{value} dans {preset}",
   "{verb} (unavailable: {why})": "{verb} (indisponible : {why})",

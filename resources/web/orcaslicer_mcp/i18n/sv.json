@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "Bara {object} · från processförinställningen",
   "{preset} (unsaved)": "{preset} (osparad)",
   "{text} ({count} lines)": "{text} ({count} rader)",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} och {n} till",
   "{value} in {preset}": "{value} i {preset}",
   "{verb} (unavailable: {why})": "{verb} (inte tillgängligt: {why})",

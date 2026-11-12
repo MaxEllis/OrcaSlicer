@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "Alleen {object} · uit de printvoorinstelling",
   "{preset} (unsaved)": "{preset} (niet opgeslagen)",
   "{text} ({count} lines)": "{text} ({count} regels)",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} en {n} meer",
   "{value} in {preset}": "{value} in {preset}",
   "{verb} (unavailable: {why})": "{verb} (niet beschikbaar: {why})",

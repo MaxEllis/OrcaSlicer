@@ -388,6 +388,7 @@
   "{object} only · from the print preset": "{object}만 · 프로세스 사전 설정에서",
   "{preset} (unsaved)": "{preset} (저장 안 됨)",
   "{text} ({count} lines)": "{text} ({count}줄)",
+  "{text}, filament {n}": "{text}, 필라멘트 {n}",
   "{title} and {n} more": "{title} 외 {n}개",
   "{value} in {preset}": "{preset}의 {value}",
   "{verb} (unavailable: {why})": "{verb} (사용할 수 없음: {why})",
