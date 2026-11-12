@@ -17,6 +17,7 @@
   "Already back to {before}": "Già tornato a {before}",
   "Also add {setting} as an environment variable.": "Aggiungi anche {setting} come variabile d'ambiente.",
   "An object": "Un oggetto",
+  "Arguments": "Argomenti",
   "Arrange": "Disponi",
   "Arranged": "Disposto",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Chiedi all'assistente la stampa che desideri. Le sue modifiche compariranno qui, ognuna con Annulla modifica.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Cancella intervalli di altezza",
   "Codex in a terminal or editor": "Codex in un terminale o in un editor",
   "Collapse all": "Comprimi tutto",
+  "Command to launch": "Comando da lanciare",
   "Compared {n} option": "Confrontata {n} opzione",
   "Compared {n} option · nothing kept": "Confrontata {n} opzione · nulla conservato",
   "Compared {n} option · settings may not be back as they were": "Confrontata {n} opzione · le impostazioni potrebbero non essere tornate come prima",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Scartato da un cambio di profilo; ripristina invece un punto precedente",
   "Duplicate object {n}": "Duplica oggetto {n}",
   "Duplicated": "Duplicato",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Ogni app ha bisogno di uv, un piccolo strumento gratuito che avvia il connettore. Basta installarlo una volta.",
   "Expand all": "Espandi tutto",
   "Failed": "Fallito",
   "Filament": "Filamento",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "I file e i profili salvati su disco restano.",
   "Folder not found": "Cartella non trovata",
   "For chats. Download the extension, then open the file. Needs uv.": "Per le chat. Scarica l'estensione, poi apri il file. Richiede uv.",
+  "Get uv": "Scarica uv",
   "Go back to before the restore": "Torna a prima del ripristino",
   "Height range {min}–{max} mm": "Intervallo altezza {min}–{max} mm",
   "Height ranges cleared": "Intervalli di altezza cancellati",
@@ -144,6 +148,7 @@
   "Moved": "Spostato",
   "Moved again since": "Spostato di nuovo da allora",
   "Moved to plate": "Spostato sul piatto",
+  "Name": "Nome",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Richiede Preferenze › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Richiede Preferenze › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Richiede Preferenze › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Ripristina {label} su {object} a {before}",
   "Setting": "Impostazione",
   "Settings": "Impostazioni",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, scegli STDIO e incolla questo. Funziona nelle chat di Codex; le normali chat di ChatGPT non possono ancora usarlo. Richiede uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Impostazioni › Plugin › Aggiungi › Aggiungi server MCP, scegli STDIO e compila ogni campo qui sotto. Funziona nelle chat di Codex; le normali chat di ChatGPT non possono ancora usarlo. Richiede uv.",
   "Show details": "Mostra dettagli",
   "Show what it was and find it in settings": "Mostra com'era e trovalo nelle impostazioni",
   "Show what it was and undo it": "Mostra com'era e annulla",
@@ -392,6 +397,7 @@
  },
  "review": {
   "your app": "'la tua app' breaks 'In attesa di ...'; used 'questa app' which fits both sentences but is less personal. Please check.",
-  "Other app": "Used 'Altra app'."
+  "Other app": "Used 'Altra app'.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

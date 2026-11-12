@@ -17,6 +17,7 @@
   "Already back to {before}": "Đã trở lại {before}",
   "Also add {setting} as an environment variable.": "Hãy thêm cả {setting} làm biến môi trường.",
   "An object": "Một vật thể",
+  "Arguments": "Đối số",
   "Arrange": "Sắp xếp",
   "Arranged": "Đã sắp xếp",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Hãy nói bản in bạn muốn. Các thay đổi của trợ lý sẽ hiện ở đây, mỗi thay đổi kèm Hoàn nguyên.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Xóa các phạm vi chiều cao",
   "Codex in a terminal or editor": "Codex trong terminal hoặc trình soạn thảo",
   "Collapse all": "Thu gọn tất cả",
+  "Command to launch": "Lệnh cần khởi chạy",
   "Compared {n} option": "Đã so sánh {n} tùy chọn",
   "Compared {n} option · nothing kept": "Đã so sánh {n} tùy chọn · không giữ gì",
   "Compared {n} option · settings may not be back as they were": "Đã so sánh {n} tùy chọn · cài đặt có thể không trở lại như cũ",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Bị loại bỏ do chuyển cài đặt sẵn; hãy khôi phục về một điểm trước đó",
   "Duplicate object {n}": "Nhân bản vật thể {n}",
   "Duplicated": "Đã nhân bản",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Mọi ứng dụng đều cần uv, một công cụ nhỏ miễn phí để chạy trình kết nối. Chỉ cần cài một lần.",
   "Expand all": "Mở rộng tất cả",
   "Failed": "Thất bại",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "File và cài đặt sẵn đã lưu vào ổ đĩa vẫn được giữ nguyên.",
   "Folder not found": "Không tìm thấy thư mục",
   "For chats. Download the extension, then open the file. Needs uv.": "Dành cho chat. Tải tiện ích mở rộng xuống, rồi mở tệp. Cần uv.",
+  "Get uv": "Tải uv",
   "Go back to before the restore": "Quay lại trước khi khôi phục",
   "Height range {min}–{max} mm": "Phạm vi chiều cao {min}–{max} mm",
   "Height ranges cleared": "Đã xóa các phạm vi chiều cao",
@@ -144,6 +148,7 @@
   "Moved": "Đã di chuyển",
   "Moved again since": "Đã di chuyển lại sau đó",
   "Moved to plate": "Đã chuyển sang Plate",
+  "Name": "Tên",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Cần bật ở Tùy chọn › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Cần bật ở Tùy chọn › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Cần bật ở Tùy chọn › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Đặt {label} của {object} lại thành {before}",
   "Setting": "Cài đặt",
   "Settings": "Cài đặt",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, chọn STDIO rồi dán nội dung này. Dùng được trong chat Codex; chat ChatGPT thông thường chưa dùng được. Cần uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Cài đặt › Plugin › Thêm › Thêm server MCP, chọn STDIO rồi điền từng ô bên dưới. Dùng được trong chat Codex; chat ChatGPT thông thường chưa dùng được. Cần uv.",
   "Show details": "Hiện chi tiết",
   "Show what it was and find it in settings": "Hiện giá trị trước đó và tìm trong cài đặt",
   "Show what it was and undo it": "Hiện giá trị trước đó và hoàn tác",
@@ -399,6 +404,7 @@
   "Built-in preset": "'Cài đặt sẵn có sẵn' reads awkwardly (preset + built-in); check",
   "Dropped by a preset switch": "'Bị loại bỏ' for dropped; check",
   "Auto-orient": "Tự động xoay hướng; check against OrcaSlicer's Orient wording",
-  "{label} must be above {min} (got {got})": "'nhận được' for got; check"
+  "{label} must be above {min} (got {got})": "'nhận được' for got; check",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

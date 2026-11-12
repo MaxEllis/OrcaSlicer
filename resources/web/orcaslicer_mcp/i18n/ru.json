@@ -17,6 +17,7 @@
   "Already back to {before}": "Уже возвращено к {before}",
   "Also add {setting} as an environment variable.": "Также добавьте {setting} как переменную окружения.",
   "An object": "Модель",
+  "Arguments": "Аргументы",
   "Arrange": "Расставить",
   "Arranged": "Расставлено",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Расскажите, какую печать хотите. Его изменения появятся здесь, каждое с кнопкой «Вернуть».",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Очистить диапазоны высот",
   "Codex in a terminal or editor": "Codex в терминале или редакторе",
   "Collapse all": "Свернуть все",
+  "Command to launch": "Команда на запуск",
   "Compared {n} option": "Сравнено вариантов: {n}",
   "Compared {n} option · nothing kept": "Сравнено вариантов: {n} · ничего не сохранено",
   "Compared {n} option · settings may not be back as they were": "Сравнено вариантов: {n} · настройки могли не вернуться к прежним",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Сброшено при смене профиля; восстановите более раннюю точку",
   "Duplicate object {n}": "Дублировать модель {n}",
   "Duplicated": "Продублировано",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Каждому приложению нужен uv — небольшой бесплатный инструмент, который запускает коннектор. Достаточно установить его один раз.",
   "Expand all": "Развернуть все",
   "Failed": "Ошибка",
   "Filament": "Материал",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Сохранённые на диск файлы и профили остаются.",
   "Folder not found": "Папка не найдена",
   "For chats. Download the extension, then open the file. Needs uv.": "Для чатов. Скачайте расширение, затем откройте файл. Требуется uv.",
+  "Get uv": "Скачать uv",
   "Go back to before the restore": "Вернуться к состоянию до восстановления",
   "Height range {min}–{max} mm": "Диапазон высот {min}–{max} mm",
   "Height ranges cleared": "Диапазоны высот очищены",
@@ -144,6 +148,7 @@
   "Moved": "Перемещено",
   "Moved again since": "С тех пор перемещено снова",
   "Moved to plate": "Перемещено на стол",
+  "Name": "Имя",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Требуется: Настройки › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Требуется: Настройки › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Требуется: Настройки › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Вернуть {label} у {object} к значению {before}",
   "Setting": "Настройка",
   "Settings": "Настройки",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, выберите STDIO и вставьте это. Работает в чатах Codex; обычные чаты ChatGPT пока не могут это использовать. Требуется uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Настройки › Плагины › Добавить › Добавить сервер MCP, выберите STDIO и заполните каждое поле ниже. Работает в чатах Codex; обычные чаты ChatGPT пока не могут это использовать. Требуется uv.",
   "Show details": "Подробнее",
   "Show what it was and find it in settings": "Показать прежнее значение и найти в настройках",
   "Show what it was and undo it": "Показать прежнее значение и отменить",
@@ -400,6 +405,7 @@
   "Busy slicing": "'Идёт нарезка' (Slice = Нарезать).",
   "{n} object": "Singular 'модель'; plural written 'моделей: {n}' to avoid number declension.",
   "your app": "Used 'вашего ассистента' (genitive=accusative for animate nouns) so it fits both 'используете …' and 'Ожидание …'; 'приложение' cannot fit both cases.",
-  "Copy settings instead": "Same label as 'Copy settings' (button too short for 'instead')."
+  "Copy settings instead": "Same label as 'Copy settings' (button too short for 'instead').",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

@@ -17,6 +17,7 @@
   "Already back to {before}": "이미 {before}(으)로 되돌아왔습니다",
   "Also add {setting} as an environment variable.": "{setting}도 환경 변수로 추가하세요.",
   "An object": "객체",
+  "Arguments": "인자",
   "Arrange": "정렬",
   "Arranged": "정렬됨",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "원하는 출력물을 요청하세요. 변경 내용이 여기에 표시되며 각각 되돌릴 수 있습니다.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "높이 범위 지우기",
   "Codex in a terminal or editor": "터미널 또는 편집기의 Codex",
   "Collapse all": "모두 접기",
+  "Command to launch": "실행 명령",
   "Compared {n} option": "옵션 {n}개 비교",
   "Compared {n} option · nothing kept": "옵션 {n}개 비교 · 남긴 항목 없음",
   "Compared {n} option · settings may not be back as they were": "옵션 {n}개 비교 · 설정이 원래대로 돌아오지 않았을 수 있음",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "사전 설정 전환으로 삭제되었습니다. 이전 시점으로 복원하세요",
   "Duplicate object {n}": "객체 {n} 복제",
   "Duplicated": "복제됨",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "모든 앱에 uv가 필요합니다. 커넥터를 실행하는 작은 무료 도구이며, 한 번만 설치하면 됩니다.",
   "Expand all": "모두 펼치기",
   "Failed": "실패",
   "Filament": "필라멘트",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "디스크에 저장된 파일과 사전 설정은 그대로 유지됩니다.",
   "Folder not found": "폴더를 찾을 수 없음",
   "For chats. Download the extension, then open the file. Needs uv.": "채팅용입니다. 확장 프로그램을 다운로드한 다음 파일을 여세요. uv가 필요합니다.",
+  "Get uv": "uv 받기",
   "Go back to before the restore": "복원 이전 상태로 되돌아가기",
   "Height range {min}–{max} mm": "높이 범위 {min}–{max} mm",
   "Height ranges cleared": "높이 범위 지워짐",
@@ -144,6 +148,7 @@
   "Moved": "이동됨",
   "Moved again since": "이후 다시 이동됨",
   "Moved to plate": "플레이트로 이동됨",
+  "Name": "이름",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "기본 설정 › Remote API › Allow deleting and replacing project files 필요",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "기본 설정 › Remote API › Allow script, G-code and connection edits 필요",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "기본 설정 › Remote API › Allow script, G-code and connection edits 필요 · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "{object}의 {label}을(를) {before}(으)로 되돌리기",
   "Setting": "설정",
   "Settings": "설정",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add에서 STDIO를 선택하고 이것을 붙여넣으세요. Codex 채팅에서 작동하며, 일반 ChatGPT 채팅에서는 아직 사용할 수 없습니다. uv가 필요합니다.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "설정 › 플러그인 › 추가 › MCP 서버 추가에서 STDIO를 선택하고 아래 각 칸을 채우세요. Codex 채팅에서 작동하며, 일반 ChatGPT 채팅에서는 아직 사용할 수 없습니다. uv가 필요합니다.",
   "Show details": "세부 정보 표시",
   "Show what it was and find it in settings": "이전 값을 보고 설정에서 찾기",
   "Show what it was and undo it": "이전 값을 보고 되돌리기",
@@ -406,6 +411,7 @@
   "Not put back": "Status: a setting a comparison did not restore",
   "your app": "사용 중인 앱 + 을 particle (placeholder is replaced, so particle 을(를) may be needed in app code)",
   "In the extension's settings, set OrcaSlicer settings folder to {folder}.": "(으)로 used since {folder} is a path of unknown final sound",
-  "note": "Heading repeats 사용/쓰는 to avoid '사용 중인 앱을 사용하는'."
+  "note": "Heading repeats 사용/쓰는 to avoid '사용 중인 앱을 사용하는'.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

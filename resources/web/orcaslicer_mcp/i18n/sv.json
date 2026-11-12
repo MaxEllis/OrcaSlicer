@@ -17,6 +17,7 @@
   "Already back to {before}": "Redan tillbaka till {before}",
   "Also add {setting} as an environment variable.": "Lägg också till {setting} som en miljövariabel.",
   "An object": "Ett objekt",
+  "Arguments": "Argument",
   "Arrange": "Arrangera",
   "Arranged": "Arrangerade",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Be assistenten om den utskrift du vill ha. Dess ändringar visas här, var och en med Återgå.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Rensa höjdintervall",
   "Codex in a terminal or editor": "Codex i en terminal eller redigerare",
   "Collapse all": "Fäll ihop alla",
+  "Command to launch": "Kommando för att starta",
   "Compared {n} option": "{n} alternativ jämfört",
   "Compared {n} option · nothing kept": "{n} alternativ jämfört · inget behölls",
   "Compared {n} option · settings may not be back as they were": "{n} alternativ jämfört · inställningarna är kanske inte som förut",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Förlorad vid byte av förinställning; återställ en tidigare punkt i stället",
   "Duplicate object {n}": "Duplicera objekt {n}",
   "Duplicated": "Duplicerad",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Alla appar behöver uv, ett litet gratis verktyg som kör kopplingen. Det räcker att installera det en gång.",
   "Expand all": "Fäll ut alla",
   "Failed": "Misslyckades",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Filer och förinställningar som sparats på disk finns kvar.",
   "Folder not found": "Mappen hittades inte",
   "For chats. Download the extension, then open the file. Needs uv.": "För chattar. Ladda ner tillägget och öppna sedan filen. Kräver uv.",
+  "Get uv": "Hämta uv",
   "Go back to before the restore": "Gå tillbaka till läget före återställningen",
   "Height range {min}–{max} mm": "Höjdintervall {min}–{max} mm",
   "Height ranges cleared": "Höjdintervall rensade",
@@ -144,6 +148,7 @@
   "Moved": "Flyttad",
   "Moved again since": "Flyttad igen sedan dess",
   "Moved to plate": "Flyttad till platta",
+  "Name": "Namn",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Kräver Inställningar › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Kräver Inställningar › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Kräver Inställningar › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Ställ tillbaka {label} på {object} till {before}",
   "Setting": "Inställning",
   "Settings": "Inställningar",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, välj STDIO och klistra in detta. Fungerar i Codex-chattar; vanliga ChatGPT-chattar kan inte använda det ännu. Kräver uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Inställningar › Pluginer › Lägg till › Lägg till MCP-server, välj STDIO och fyll i varje fält nedan. Fungerar i Codex-chattar; vanliga ChatGPT-chattar kan inte använda det ännu. Kräver uv.",
   "Show details": "Visa detaljer",
   "Show what it was and find it in settings": "Visa hur det var och hitta det i inställningarna",
   "Show what it was and undo it": "Visa hur det var och ångra det",
@@ -397,6 +402,7 @@
   "Wipe tower X": "'Prime torn X' per OrcaSlicer catalogue (Prime torn).",
   "Plate": "Platta per glossary.",
   "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Words taken from OrcaSlicer .po (File, Plugins, Config)",
-  "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording"
+  "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

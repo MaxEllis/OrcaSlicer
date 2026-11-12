@@ -100,6 +100,13 @@
    ]
   },
   {
+   "en": "Arguments",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py): a box of the ChatGPT desktop app's MCP server form, in that app's own words"
+   ]
+  },
+  {
    "en": "Arrange",
    "host": true,
    "from": [
@@ -354,6 +361,13 @@
    ]
   },
   {
+   "en": "Command to launch",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py): a box of the ChatGPT desktop app's MCP server form, in that app's own words"
+   ]
+  },
+  {
    "en": "Compared {n} option",
    "host": true,
    "from": [
@@ -434,6 +448,7 @@
    "en": "Copy",
    "host": true,
    "from": [
+    "panel.html",
     "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
    ]
   },
@@ -679,6 +694,13 @@
    ]
   },
   {
+   "en": "Every app needs uv, a small free tool that runs the connector. Install it once.",
+   "host": false,
+   "from": [
+    "panel.html"
+   ]
+  },
+  {
    "en": "Expand all",
    "host": false,
    "from": [
@@ -774,6 +796,13 @@
    "host": true,
    "from": [
     "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+   ]
+  },
+  {
+   "en": "Get uv",
+   "host": false,
+   "from": [
+    "panel.html"
    ]
   },
   {
@@ -991,6 +1020,13 @@
    "host": true,
    "from": [
     "RemoteAPIController.cpp"
+   ]
+  },
+  {
+   "en": "Name",
+   "host": true,
+   "from": [
+    "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py): a box of the ChatGPT desktop app's MCP server form, in that app's own words"
    ]
   },
   {
@@ -1856,7 +1892,7 @@
    ]
   },
   {
-   "en": "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.",
+   "en": "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.",
    "host": true,
    "from": [
     "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"

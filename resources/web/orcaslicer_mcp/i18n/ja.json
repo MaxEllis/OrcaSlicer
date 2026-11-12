@@ -17,6 +17,7 @@
   "Already back to {before}": "すでに {before} に戻っています",
   "Also add {setting} as an environment variable.": "環境変数として {setting} も追加してください。",
   "An object": "オブジェクト",
+  "Arguments": "引数",
   "Arrange": "レイアウト",
   "Arranged": "レイアウトしました",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "造形したいものを伝えてください。変更はここに表示され、それぞれ元に戻せます。",
@@ -53,6 +54,7 @@
   "Clear height ranges": "高さ範囲をクリア",
   "Codex in a terminal or editor": "ターミナルまたはエディターの Codex",
   "Collapse all": "すべて折りたたむ",
+  "Command to launch": "起動用コマンド",
   "Compared {n} option": "{n} 件のオプションを比較",
   "Compared {n} option · nothing kept": "{n} 件のオプションを比較 · 何も残していません",
   "Compared {n} option · settings may not be back as they were": "{n} 件のオプションを比較 · 設定が元に戻っていない可能性があります",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "プリセットの切り替えで破棄されました。代わりに以前の時点に復元してください",
   "Duplicate object {n}": "オブジェクト {n} を複製",
   "Duplicated": "複製しました",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "どのアプリにも uv が必要です。コネクタを実行する無料の小さなツールで、インストールは一度だけです。",
   "Expand all": "すべて展開",
   "Failed": "失敗",
   "Filament": "フィラメント",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "ディスクに保存したファイルとプリセットはそのまま残ります。",
   "Folder not found": "フォルダーが見つかりません",
   "For chats. Download the extension, then open the file. Needs uv.": "チャット用です。拡張機能をダウンロードしてから、そのファイルを開いてください。uv が必要です。",
+  "Get uv": "uv を入手",
   "Go back to before the restore": "復元前の状態に戻す",
   "Height range {min}–{max} mm": "高さ範囲 {min}–{max} mm",
   "Height ranges cleared": "高さ範囲をクリアしました",
@@ -144,6 +148,7 @@
   "Moved": "移動しました",
   "Moved again since": "その後に再度移動されています",
   "Moved to plate": "プレートに移動しました",
+  "Name": "名前",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "設定 › Remote API › Allow deleting and replacing project files が必要です",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "設定 › Remote API › Allow script, G-code and connection edits が必要です",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "設定 › Remote API › Allow script, G-code and connection edits が必要です · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "{object} の {label} を {before} に戻す",
   "Setting": "設定",
   "Settings": "設定",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add を開き、STDIO を選んでこれを貼り付けてください。Codex のチャットで使えます。通常の ChatGPT のチャットではまだ使えません。uv が必要です。",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "設定 › プラグイン › 追加 › MCP サーバーを追加 を開き、STDIO を選んで下の各欄に入力してください。Codex のチャットで使えます。通常の ChatGPT のチャットではまだ使えません。uv が必要です。",
   "Show details": "詳細を表示",
   "Show what it was and find it in settings": "元の値を表示して設定で探す",
   "Show what it was and undo it": "元の値を表示して元に戻す",
@@ -405,6 +410,7 @@
   "Compared {n} option · nothing kept": "'option' = one variant in a slicing comparison",
   "Not put back": "Status: a setting a comparison did not restore",
   "your app": "Read in both sentences as お使いのアプリ; check natural flow",
-  "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "File/Plugins/Config from .po: ファイル/プラグイン/設定"
+  "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "File/Plugins/Config from .po: ファイル/プラグイン/設定",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

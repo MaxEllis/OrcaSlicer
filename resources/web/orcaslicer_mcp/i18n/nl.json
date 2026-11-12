@@ -17,6 +17,7 @@
   "Already back to {before}": "Al terug op {before}",
   "Also add {setting} as an environment variable.": "Voeg {setting} ook toe als omgevingsvariabele.",
   "An object": "Een object",
+  "Arguments": "Argumenten",
   "Arrange": "Rangschikken",
   "Arranged": "Gerangschikt",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Vraag de assistent om de print die u wilt. Zijn wijzigingen verschijnen hier, elk met Terugzetten.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Hoogtebereiken wissen",
   "Codex in a terminal or editor": "Codex in een terminal of editor",
   "Collapse all": "Alles samenvouwen",
+  "Command to launch": "Opdracht om op te starten",
   "Compared {n} option": "{n} optie vergeleken",
   "Compared {n} option · nothing kept": "{n} optie vergeleken · niets bewaard",
   "Compared {n} option · settings may not be back as they were": "{n} optie vergeleken · instellingen staan mogelijk niet zoals eerst",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Vervallen door het wisselen van voorinstelling; herstel in plaats daarvan een eerder punt",
   "Duplicate object {n}": "Object {n} dupliceren",
   "Duplicated": "Gedupliceerd",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Elke app heeft uv nodig, een klein gratis hulpmiddel dat de connector start. Eén keer installeren is genoeg.",
   "Expand all": "Alles uitvouwen",
   "Failed": "Mislukt",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Op schijf opgeslagen bestanden en voorinstellingen blijven behouden.",
   "Folder not found": "Map niet gevonden",
   "For chats. Download the extension, then open the file. Needs uv.": "Voor chats. Download de extensie en open daarna het bestand. Vereist uv.",
+  "Get uv": "uv downloaden",
   "Go back to before the restore": "Terug naar de staat van vóór het herstellen",
   "Height range {min}–{max} mm": "Hoogtebereik {min}–{max} mm",
   "Height ranges cleared": "Hoogtebereiken gewist",
@@ -144,6 +148,7 @@
   "Moved": "Verplaatst",
   "Moved again since": "Sindsdien opnieuw verplaatst",
   "Moved to plate": "Naar printbed verplaatst",
+  "Name": "Naam",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Vereist Voorkeuren › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Vereist Voorkeuren › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Vereist Voorkeuren › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "{label} bij {object} terugzetten naar {before}",
   "Setting": "Instelling",
   "Settings": "Instellingen",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, kies STDIO en plak dit. Werkt in Codex-chats; gewone ChatGPT-chats kunnen het nog niet gebruiken. Vereist uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Instellingen › Plug-ins › Toevoegen › MCP-server toevoegen, kies STDIO en vul elk veld hieronder in. Werkt in Codex-chats; gewone ChatGPT-chats kunnen het nog niet gebruiken. Vereist uv.",
   "Show details": "Details tonen",
   "Show what it was and find it in settings": "Toon wat het was en zoek het op in de instellingen",
   "Show what it was and undo it": "Toon wat het was en maak het ongedaan",
@@ -397,6 +402,7 @@
   "Sliced": "'Geslicet' (participle of slicen per glossary); check spelling/naturalness.",
   "{verb} {what}": "Infinitive verb followed by object reads a bit terse; check.",
   "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Words taken from OrcaSlicer .po (File, Plugins, Config)",
-  "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording"
+  "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

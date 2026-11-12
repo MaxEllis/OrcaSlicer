@@ -17,6 +17,7 @@
   "Already back to {before}": "Bereits wieder {before}",
   "Also add {setting} as an environment variable.": "Fügen Sie außerdem {setting} als Umgebungsvariable hinzu.",
   "An object": "Ein Objekt",
+  "Arguments": "Argumente",
   "Arrange": "Anordnen",
   "Arranged": "Angeordnet",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Bitten Sie den Assistenten um den gewünschten Druck. Seine Änderungen erscheinen hier, jeweils mit Zurücksetzen.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Höhenbereiche löschen",
   "Codex in a terminal or editor": "Codex in einem Terminal oder Editor",
   "Collapse all": "Alle einklappen",
+  "Command to launch": "Befehl zum Starten",
   "Compared {n} option": "{n} Option verglichen",
   "Compared {n} option · nothing kept": "{n} Option verglichen · nichts behalten",
   "Compared {n} option · settings may not be back as they were": "{n} Option verglichen · Einstellungen sind evtl. nicht wie zuvor",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Durch einen Profilwechsel verworfen; stattdessen einen früheren Stand wiederherstellen",
   "Duplicate object {n}": "Objekt {n} duplizieren",
   "Duplicated": "Dupliziert",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Jede App braucht uv, ein kleines kostenloses Werkzeug, das den Connector ausführt. Einmal installieren genügt.",
   "Expand all": "Alle ausklappen",
   "Failed": "Fehlgeschlagen",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Auf der Festplatte gespeicherte Dateien und Profile bleiben erhalten.",
   "Folder not found": "Ordner nicht gefunden",
   "For chats. Download the extension, then open the file. Needs uv.": "Für Chats. Laden Sie die Erweiterung herunter und öffnen Sie dann die Datei. Benötigt uv.",
+  "Get uv": "uv holen",
   "Go back to before the restore": "Zurück zum Stand vor der Wiederherstellung",
   "Height range {min}–{max} mm": "Höhenbereich {min}–{max} mm",
   "Height ranges cleared": "Höhenbereiche gelöscht",
@@ -144,6 +148,7 @@
   "Moved": "Bewegt",
   "Moved again since": "Seitdem erneut bewegt",
   "Moved to plate": "Auf Platte bewegt",
+  "Name": "Name",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Erfordert Einstellungen › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Erfordert Einstellungen › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Erfordert Einstellungen › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "{label} bei {object} auf {before} zurücksetzen",
   "Setting": "Einstellung",
   "Settings": "Einstellungen",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, STDIO wählen und dies einfügen. Funktioniert in Codex-Chats; normale ChatGPT-Chats können es noch nicht nutzen. Benötigt uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Einstellungen › Plugins › Hinzufügen › MCP-Server hinzufügen, STDIO wählen und jedes Feld unten ausfüllen. Funktioniert in Codex-Chats; normale ChatGPT-Chats können es noch nicht nutzen. Benötigt uv.",
   "Show details": "Details zeigen",
   "Show what it was and find it in settings": "Zeigen, was es war, und in den Einstellungen finden",
   "Show what it was and undo it": "Zeigen, was es war, und rückgängig machen",
@@ -398,6 +403,7 @@
   "Filament trays": "CANVAS trays rendered as 'Fächer'; confirm the term.",
   "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "'Settings › Plugins › MCPs › Add' kept English as instructed",
   "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Words taken from OrcaSlicer .po (File, Plugins, Config)",
-  "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording"
+  "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

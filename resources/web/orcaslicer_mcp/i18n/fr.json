@@ -17,6 +17,7 @@
   "Already back to {before}": "Déjà revenu à {before}",
   "Also add {setting} as an environment variable.": "Ajoutez aussi {setting} comme variable d'environnement.",
   "An object": "Un objet",
+  "Arguments": "Arguments",
   "Arrange": "Organiser",
   "Arranged": "Organisé",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Demandez à l'assistant l'impression que vous voulez. Ses modifications apparaîtront ici, chacune avec Revenir.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Effacer les plages de hauteur",
   "Codex in a terminal or editor": "Codex dans un terminal ou un éditeur",
   "Collapse all": "Tout réduire",
+  "Command to launch": "Commande à lancer",
   "Compared {n} option": "{n} option comparée",
   "Compared {n} option · nothing kept": "{n} option comparée · rien conservé",
   "Compared {n} option · settings may not be back as they were": "{n} option comparée · les réglages ne sont peut-être pas revenus comme avant",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Perdu lors d'un changement de préréglage ; restaurez plutôt un point antérieur",
   "Duplicate object {n}": "Dupliquer l'objet {n}",
   "Duplicated": "Dupliqué",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Chaque application a besoin d'uv, un petit outil gratuit qui lance le connecteur. Une seule installation suffit.",
   "Expand all": "Tout développer",
   "Failed": "Échoué",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Les fichiers et préréglages enregistrés sur le disque sont conservés.",
   "Folder not found": "Dossier introuvable",
   "For chats. Download the extension, then open the file. Needs uv.": "Pour les conversations. Téléchargez l'extension, puis ouvrez le fichier. Nécessite uv.",
+  "Get uv": "Obtenir uv",
   "Go back to before the restore": "Revenir à l'état d'avant la restauration",
   "Height range {min}–{max} mm": "Plage de hauteur {min}–{max} mm",
   "Height ranges cleared": "Plages de hauteur effacées",
@@ -144,6 +148,7 @@
   "Moved": "Déplacé",
   "Moved again since": "Déplacé à nouveau depuis",
   "Moved to plate": "Déplacé vers la plaque",
+  "Name": "Nom",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Nécessite Préférences › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Nécessite Préférences › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Nécessite Préférences › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Remettre {label} de {object} à {before}",
   "Setting": "Réglage",
   "Settings": "Réglages",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, choisissez STDIO et collez ceci. Fonctionne dans les conversations Codex ; les conversations ChatGPT ordinaires ne peuvent pas encore l'utiliser. Nécessite uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Paramètres › Plugins › Ajouter › Ajouter un serveur MCP, choisissez STDIO et remplissez chaque champ ci-dessous. Fonctionne dans les conversations Codex ; les conversations ChatGPT ordinaires ne peuvent pas encore l'utiliser. Nécessite uv.",
   "Show details": "Afficher les détails",
   "Show what it was and find it in settings": "Afficher ce que c'était et le retrouver dans les réglages",
   "Show what it was and undo it": "Afficher ce que c'était et l'annuler",
@@ -402,6 +407,7 @@
   "{verb} {what}": "French verb+object, check it reads fine for infinitives like 'Revenir X'.",
   "Space": "Key named 'Espace' (also the word for space)",
   "Nothing to revert": "'Rien à annuler' follows panel's 'Undo = Annuler' but 'Revert' = 'Revenir'; check",
-  "note": "Revert is 'Revenir' but 'Nothing to undo' is 'Rien à annuler' (same as Undo 'Annuler'); chose a 'Revenir'-family phrase. Unsure; 'Rien à annuler' would also be acceptable."
+  "note": "Revert is 'Revenir' but 'Nothing to undo' is 'Rien à annuler' (same as Undo 'Annuler'); chose a 'Revenir'-family phrase. Unsure; 'Rien à annuler' would also be acceptable.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

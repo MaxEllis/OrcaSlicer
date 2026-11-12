@@ -17,6 +17,7 @@
   "Already back to {before}": "已經改回 {before}",
   "Also add {setting} as an environment variable.": "還需將 {setting} 加入為環境變數。",
   "An object": "一個物件",
+  "Arguments": "引數",
   "Arrange": "自動擺放",
   "Arranged": "已自動擺放",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "告訴它你想列印什麼。它的修改會顯示在這裡，每一項都可以復原。",
@@ -53,6 +54,7 @@
   "Clear height ranges": "清除高度範圍",
   "Codex in a terminal or editor": "終端機或編輯器中的 Codex",
   "Collapse all": "全部摺疊",
+  "Command to launch": "啟動指令",
   "Compared {n} option": "已比較 {n} 個選項",
   "Compared {n} option · nothing kept": "已比較 {n} 個選項 · 未保留任何變更",
   "Compared {n} option · settings may not be back as they were": "已比較 {n} 個選項 · 設定可能未還原",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "切換預設時被捨棄，請改為還原到更早的時間點",
   "Duplicate object {n}": "複製物件 {n}",
   "Duplicated": "已複製",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "每個應用程式都需要 uv，這是執行連接器的免費小工具，只需安裝一次。",
   "Expand all": "全部展開",
   "Failed": "失敗",
   "Filament": "線材",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "已儲存到磁碟的檔案和預設會保留。",
   "Folder not found": "找不到資料夾",
   "For chats. Download the extension, then open the file. Needs uv.": "用於聊天。下載擴充功能，然後開啟該檔案。需要 uv。",
+  "Get uv": "取得 uv",
   "Go back to before the restore": "回到還原之前的狀態",
   "Height range {min}–{max} mm": "高度範圍 {min}–{max} mm",
   "Height ranges cleared": "已清除高度範圍",
@@ -144,6 +148,7 @@
   "Moved": "已移動",
   "Moved again since": "之後又被移動",
   "Moved to plate": "已移到列印板",
+  "Name": "名稱",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "需要 偏好設定 › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "需要 偏好設定 › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "需要 偏好設定 › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "將 {object} 的 {label} 改回 {before}",
   "Setting": "設定",
   "Settings": "設定",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "開啟 Settings › Plugins › MCPs › Add，選擇 STDIO 並貼上此內容。可在 Codex 聊天中使用；一般 ChatGPT 聊天暫時無法使用。需要 uv。",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "開啟 設定 › 外掛程式 › 新增 › 新增 MCP 伺服器，選擇「標準輸入/輸出」並填寫下方每一欄。可在 Codex 聊天中使用；一般 ChatGPT 聊天暫時無法使用。需要 uv。",
   "Show details": "顯示詳細資訊",
   "Show what it was and find it in settings": "查看原值並在設定中找到它",
   "Show what it was and undo it": "查看原值並復原",
@@ -406,6 +411,7 @@
   "Not put back": "Status: a setting a comparison did not restore",
   "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "menu path kept in English",
   "Nothing to revert": "existing file renders Revert as 復原",
-  "note": "Heading drops 'your' (clumsy otherwise)."
+  "note": "Heading drops 'your' (clumsy otherwise).",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

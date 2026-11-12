@@ -17,6 +17,7 @@
   "Already back to {before}": "Zaten {before} değerine döndü",
   "Also add {setting} as an environment variable.": "{setting} değerini ortam değişkeni olarak da ekleyin.",
   "An object": "Bir nesne",
+  "Arguments": "Argümanlar",
   "Arrange": "Hizala",
   "Arranged": "Hizalandı",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "İstediğiniz baskıyı ondan isteyin. Yaptığı değişiklikler burada görünür, her birinin yanında Geri döndür düğmesi olur.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Yükseklik aralıklarını temizle",
   "Codex in a terminal or editor": "Terminalde veya düzenleyicide Codex",
   "Collapse all": "Tümünü daralt",
+  "Command to launch": "Başlatma komutu",
   "Compared {n} option": "{n} seçenek karşılaştırıldı",
   "Compared {n} option · nothing kept": "{n} seçenek karşılaştırıldı · hiçbiri saklanmadı",
   "Compared {n} option · settings may not be back as they were": "{n} seçenek karşılaştırıldı · ayarlar eskisi gibi geri gelmemiş olabilir",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Ön ayar değişikliğiyle bırakıldı; bunun yerine daha önceki bir noktayı geri yükleyin",
   "Duplicate object {n}": "{n}. nesneyi çoğalt",
   "Duplicated": "Çoğaltıldı",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Her uygulamanın uv'ye ihtiyacı vardır: bağlayıcıyı çalıştıran küçük, ücretsiz bir araç. Bir kez kurmanız yeterli.",
   "Expand all": "Tümünü genişlet",
   "Failed": "Başarısız",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Diske kaydedilen dosyalar ve ön ayarlar kalır.",
   "Folder not found": "Klasör bulunamadı",
   "For chats. Download the extension, then open the file. Needs uv.": "Sohbetler için. Uzantıyı indirin, ardından dosyayı açın. uv gerekir.",
+  "Get uv": "uv'yi indirin",
   "Go back to before the restore": "Geri yüklemeden önceki duruma dön",
   "Height range {min}–{max} mm": "Yükseklik aralığı {min}–{max} mm",
   "Height ranges cleared": "Yükseklik aralıkları temizlendi",
@@ -144,6 +148,7 @@
   "Moved": "Taşındı",
   "Moved again since": "O zamandan beri yeniden taşındı",
   "Moved to plate": "Plakaya taşındı",
+  "Name": "Ad",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Gerekli: Tercihler › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Gerekli: Tercihler › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Gerekli: Tercihler › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "{object} üzerindeki {label} değerini {before} olarak geri al",
   "Setting": "Ayar",
   "Settings": "Ayarlar",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add yolunu izleyin, STDIO'yu seçin ve bunu yapıştırın. Codex sohbetlerinde çalışır; normal ChatGPT sohbetleri henüz kullanamaz. uv gerekir.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Ayarlar › Eklentiler › Ekle › MCP sunucusu ekle yolunu izleyin, STDIO'yu seçin ve aşağıdaki her alanı doldurun. Codex sohbetlerinde çalışır; normal ChatGPT sohbetleri henüz kullanamaz. uv gerekir.",
   "Show details": "Ayrıntıları göster",
   "Show what it was and find it in settings": "Eski halini göster ve ayarlarda bul",
   "Show what it was and undo it": "Eski halini göster ve geri al",
@@ -399,6 +404,7 @@
   "Preset": "Glossary: 'Ön ayar' (catalogue UI uses 'Ön Ayar' capitalised); used the glossary casing.",
   "{n} objects": "Same as singular (Turkish has no plural after a number).",
   "your app": "'yapay zeka' (no suffix) so '{app} uygulamasını' / '{app} bekleniyor' read passably; imperfect.",
-  "Needs the OrcaSlicer MCP build": "'sürümü' for build (checked .po usage lightly)."
+  "Needs the OrcaSlicer MCP build": "'sürümü' for build (checked .po usage lightly).",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

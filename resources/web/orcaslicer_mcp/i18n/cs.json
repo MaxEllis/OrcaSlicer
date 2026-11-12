@@ -17,6 +17,7 @@
   "Already back to {before}": "Už je zpět na {before}",
   "Also add {setting} as an environment variable.": "Přidejte také {setting} jako proměnnou prostředí.",
   "An object": "Objekt",
+  "Arguments": "Argumenty",
   "Arrange": "Rozložit",
   "Arranged": "Rozloženo",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Popište asistentovi tisk, který chcete. Jeho změny se zobrazí zde, každá s tlačítkem Vrátit změnu.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Vymazat rozsahy výšky",
   "Codex in a terminal or editor": "Codex v terminálu nebo editoru",
   "Collapse all": "Sbalit vše",
+  "Command to launch": "Příkaz ke spuštění",
   "Compared {n} option": "Porovnána {n} možnost",
   "Compared {n} option · nothing kept": "Porovnána {n} možnost · nic nezachováno",
   "Compared {n} option · settings may not be back as they were": "Porovnána {n} možnost · nastavení se nemusela vrátit do původního stavu",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Zahozeno přepnutím předvolby; obnovte raději starší bod",
   "Duplicate object {n}": "Duplikovat objekt {n}",
   "Duplicated": "Duplikováno",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Každá aplikace potřebuje uv, malý bezplatný nástroj, který spouští konektor. Stačí ho nainstalovat jednou.",
   "Expand all": "Rozbalit vše",
   "Failed": "Selhalo",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Soubory a předvolby uložené na disk zůstanou.",
   "Folder not found": "Složka nenalezena",
   "For chats. Download the extension, then open the file. Needs uv.": "Pro chaty. Stáhněte rozšíření a poté otevřete soubor. Vyžaduje uv.",
+  "Get uv": "Získat uv",
   "Go back to before the restore": "Vrátit se do stavu před obnovením",
   "Height range {min}–{max} mm": "Rozsah výšky {min}–{max} mm",
   "Height ranges cleared": "Rozsahy výšky vymazány",
@@ -144,6 +148,7 @@
   "Moved": "Přesunuto",
   "Moved again since": "Od té doby znovu přesunuto",
   "Moved to plate": "Přesunuto na desku",
+  "Name": "Název",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Vyžaduje Předvolby › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Vyžaduje Předvolby › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Vyžaduje Předvolby › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Vrátit {label} u objektu {object} na {before}",
   "Setting": "Nastavení",
   "Settings": "Nastavení",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, vyberte STDIO a vložte toto. Funguje v chatech Codexu; běžné chaty ChatGPT to zatím používat nemohou. Vyžaduje uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Nastavení › Pluginy › Přidat › Přidat server MCP, vyberte STDIO a vyplňte každé pole níže. Funguje v chatech Codexu; běžné chaty ChatGPT to zatím používat nemohou. Vyžaduje uv.",
   "Show details": "Zobrazit podrobnosti",
   "Show what it was and find it in settings": "Zobrazit původní hodnotu a najít ji v nastavení",
   "Show what it was and undo it": "Zobrazit původní hodnotu a vrátit ji zpět",
@@ -400,6 +405,7 @@
   "your app": "Case clash: 'v aplikaci {app}' needs locative, 'Čekání na {app}' accusative. 'vaši aplikaci' fits the second, reads a bit odd in the first (v aplikaci vaši aplikaci). Consider 'tuto aplikaci'/rewrite sentence.",
   "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Words taken from OrcaSlicer .po (File, Plugins, Config)",
   "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording",
-  "note": "Heading/status use locative/accusative of 'vaše aplikace' as the sentence needs."
+  "note": "Heading/status use locative/accusative of 'vaše aplikace' as the sentence needs.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

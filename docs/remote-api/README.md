@@ -834,7 +834,7 @@ today.
 | `{"action": "undo_restore"}` | The user clicked Undo on the "Restored to" line | exactly one `result` |
 | `{"action": "reveal", "row": <id>}` | The user opened the detail line of a row with `reveal: true`, only when `capabilities.reveal` is `true` (closing it sends nothing) | nothing; show that setting in the host's settings (this fork: `Sidebar::jump_to_option`, as OrcaSlicer's own "Jump to" links, which switches to the setting's tab and page and highlights it). Ignore it during a restore or a project load, or when the setting is gone (a slice or job running does not stop it) |
 | `{"action": "open_settings"}` | The settings icon, or the link in the off line (both only when `capabilities.open_settings` is not `false`) | nothing; open the host's settings (Preferences > Remote API here, the plugin's own settings page in the plugin) |
-| `{"action": "open", "url": "<link>"}` | The user clicked a setup route's button that opens a link (only after a `setup` message) | nothing; open the link through the system, but only one of the `open` links the host itself sent in `setup`, compared whole |
+| `{"action": "open", "url": "<link>"}` | The user clicked a setup route's button that opens a link, or the uv link (only after a `setup` message) | nothing; open the link through the system, but only one of the `open` links or the `uv` link the host itself sent in `setup`, compared whole |
 
 Ids arrive as JavaScript numbers. `reveal` never gets a `result` (fire and forget). Every `undo`, `restore` and
 `undo_restore` must get a `result`, also when it is refused or fails: until then the page shows "Reverting…" or
@@ -935,14 +935,23 @@ Preferences). `off` shows `off_text` above the timeline. Until the first `state`
 sends it after `ready` and again when the first app connects; this fork sends none, and the page then shows its
 usual empty line.
 ```json
-{"type": "setup", "status": null, "paused": false,
+{"type": "setup", "status": null, "paused": false, "uv": "https://docs.astral.sh/uv/getting-started/installation/",
  "apps": [{"id": "claude", "name": "Claude", "where": "Claude", "icon": "<svg ...>",
            "routes": [{"label": "Claude app", "hint": "For chats. Download the extension, then open the file.",
-                       "act": "Download", "primary": true, "open": "https://...", "copy": null, "also": "", "off": false}]}]}
+                       "act": "Download", "primary": true, "open": "https://...", "copy": null, "also": "", "off": false}]},
+          {"id": "openai", "name": "OpenAI", "where": "OpenAI", "icon": "<svg ...>",
+           "routes": [{"label": "ChatGPT desktop app", "hint": "Settings › Plugins › Add › Add MCP server, ...",
+                       "act": "", "copy": null, "open": null, "also": "", "off": false,
+                       "fields": [{"label": "Name", "value": "orcaslicer"}, {"label": "Command to launch", "value": "uvx"},
+                                  {"label": "Arguments", "value": "orcaslicer-mcp"}]}]}]}
 ```
 While the timeline is empty, the page shows a square per app (the first chosen), the routes of the chosen one with
 one button each (`open` sends `{"action": "open"}`, else `copy` goes to the clipboard; `off` routes have no button
-and a dashed border; `also` is appended to the hint), and "Waiting for <where>…". With `status`
+and a dashed border; `also` is appended to the hint), and "Waiting for <where>…". A route with `fields` (for an app
+whose form has separate boxes) shows one line per box, the `label` (that app's own word for the box) beside the
+`value`, each with its own Copy; give it an empty `act` so it has no button of its own. With `uv` (optional), a line
+under the routes says every app needs uv, with a link that sends `{"action": "open", "url": <uv>}`: accept that
+link as well as the routes' `open` links. With `status`
 (`{"seen": <unix seconds>, "app": "<name>"}`) it shows "Connected to <app>" and where the changes will appear
 instead; the first change replaces either with the timeline. There is no question to ask: the first request from
 the app switches the view by itself.

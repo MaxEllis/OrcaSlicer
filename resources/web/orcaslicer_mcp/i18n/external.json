@@ -166,8 +166,20 @@
    "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
   },
   {
-   "en": "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.",
+   "en": "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.",
    "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py)"
+  },
+  {
+   "en": "Name",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py): a box of the ChatGPT desktop app's MCP server form, in that app's own words"
+  },
+  {
+   "en": "Command to launch",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py): a box of the ChatGPT desktop app's MCP server form, in that app's own words"
+  },
+  {
+   "en": "Arguments",
+   "from": "OrcaSlicer MCP plugin (orcaslicer-mcp plugin/orcaslicer_mcp_plugin.py): a box of the ChatGPT desktop app's MCP server form, in that app's own words"
   },
   {
    "en": "Run this once. The desktop app shares the setting. Needs uv.",

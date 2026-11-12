@@ -17,6 +17,7 @@
   "Already back to {before}": "Dagoeneko {before} da berriro",
   "Also add {setting} as an environment variable.": "Gehitu {setting} ere ingurune-aldagai gisa.",
   "An object": "Objektu bat",
+  "Arguments": "Arguments",
   "Arrange": "Antolatu",
   "Arranged": "Antolatuta",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Eskatu nahi duzun inprimaketa. Bere aldaketak hemen agertuko dira, bakoitza Leheneratu botoiarekin.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Garbitu altuera-tarteak",
   "Codex in a terminal or editor": "Codex terminal edo editore batean",
   "Collapse all": "Tolestu guztiak",
+  "Command to launch": "Command to launch",
   "Compared {n} option": "{n} aukera konparatu da",
   "Compared {n} option · nothing kept": "{n} aukera konparatu da · ez da ezer mantendu",
   "Compared {n} option · settings may not be back as they were": "{n} aukera konparatu da · baliteke ezarpenak lehen bezala ez egotea",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Aurrezarpen-aldaketak baztertu du; berrezarri lehenagoko puntu bat",
   "Duplicate object {n}": "Bikoiztu {n}. objektua",
   "Duplicated": "Bikoiztuta",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Aplikazio guztiek uv behar dute, konektorea exekutatzen duen tresna txiki eta doakoa. Behin instalatzea nahikoa da.",
   "Expand all": "Zabaldu guztiak",
   "Failed": "Huts egin du",
   "Filament": "Filamentua",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Diskoan gordetako fitxategiak eta aurrezarpenak mantentzen dira.",
   "Folder not found": "Ez da karpeta aurkitu",
   "For chats. Download the extension, then open the file. Needs uv.": "Txatentzat. Deskargatu luzapena eta ireki fitxategia. uv behar da.",
+  "Get uv": "Lortu uv",
   "Go back to before the restore": "Itzuli berrezarpenaren aurreko egoerara",
   "Height range {min}–{max} mm": "Altuera-tartea {min}–{max} mm",
   "Height ranges cleared": "Altuera-tarteak garbituta",
@@ -144,6 +148,7 @@
   "Moved": "Mugituta",
   "Moved again since": "Ordutik berriro mugitua",
   "Moved to plate": "Plaka batera mugituta",
+  "Name": "Name",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Beharrezkoa: Hobespenak › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Beharrezkoa: Hobespenak › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Beharrezkoa: Hobespenak › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Berrezarri {object} objektuaren {label}: {before}",
   "Setting": "Ezarpena",
   "Settings": "Ezarpenak",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, aukeratu STDIO eta itsatsi hau. Codex txatetan funtzionatzen du; ChatGPT txat arruntek ezin dute oraindik erabili. uv behar da.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › Add › Add MCP server, aukeratu STDIO eta bete beheko eremu bakoitza. Codex txatetan funtzionatzen du; ChatGPT txat arruntek ezin dute oraindik erabili. uv behar da.",
   "Show details": "Erakutsi xehetasunak",
   "Show what it was and find it in settings": "Erakutsi zer zen eta aurkitu ezarpenetan",
   "Show what it was and undo it": "Erakutsi zer zen eta desegin",
@@ -401,6 +406,7 @@
   "Copy settings instead": "Basque 'horren ordez' is a guess",
   "Add to Cursor": "Basque case ending on product names (-era/-ra) unverified",
   "Needs the OrcaSlicer MCP build": "'bertsioa' used for 'build'",
-  "your app": "'zure aplikazioa' reads OK in both sentences (absolutive); 'zain' sentence becomes 'zure aplikazioa zain…'"
+  "your app": "'zure aplikazioa' reads OK in both sentences (absolutive); 'zain' sentence becomes 'zure aplikazioa zain…'",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT has no Basque interface; the menu path and box names stay in its English words (what a Basque user most likely sees)."
  }
 }

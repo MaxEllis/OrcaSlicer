@@ -17,6 +17,7 @@
   "Already back to {before}": "Ja torna a ser {before}",
   "Also add {setting} as an environment variable.": "Afegeix també {setting} com a variable d'entorn.",
   "An object": "Un objecte",
+  "Arguments": "Paràmetres",
   "Arrange": "Ordenar",
   "Arranged": "Ordenat",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Demana-li la impressió que vols. Els seus canvis apareixeran aquí, cadascun amb Revertir.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Esborrar els rangs d'alçada",
   "Codex in a terminal or editor": "Codex en un terminal o un editor",
   "Collapse all": "Replega-ho tot",
+  "Command to launch": "Ordre per publicar",
   "Compared {n} option": "S'ha comparat {n} opció",
   "Compared {n} option · nothing kept": "S'ha comparat {n} opció · no s'ha conservat res",
   "Compared {n} option · settings may not be back as they were": "S'ha comparat {n} opció · és possible que la configuració no hagi tornat a com era",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Descartat per un canvi de perfil; restaura un punt anterior",
   "Duplicate object {n}": "Duplicar l'objecte {n}",
   "Duplicated": "Duplicat",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Cada aplicació necessita uv, una eina petita i gratuïta que executa el connector. Instal·la-la un cop.",
   "Expand all": "Desplega-ho tot",
   "Failed": "Ha fallat",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "Els fitxers i perfils desats al disc es mantenen.",
   "Folder not found": "No s'ha trobat la carpeta",
   "For chats. Download the extension, then open the file. Needs uv.": "Per a xats. Descarrega l'extensió i obre el fitxer. Requereix uv.",
+  "Get uv": "Obtenir uv",
   "Go back to before the restore": "Tornar a abans de la restauració",
   "Height range {min}–{max} mm": "Rang d'alçada {min}–{max} mm",
   "Height ranges cleared": "Rangs d'alçada esborrats",
@@ -144,6 +148,7 @@
   "Moved": "Mogut",
   "Moved again since": "Mogut de nou des d'aleshores",
   "Moved to plate": "Mogut a una placa",
+  "Name": "Nom",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Requereix Preferències › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Requereix Preferències › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Requereix Preferències › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "Tornar {label} de {object} a {before}",
   "Setting": "Configuració",
   "Settings": "Configuració",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, tria STDIO i enganxa això. Funciona als xats de Codex; els xats normals de ChatGPT encara no el poden fer servir. Requereix uv.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Ajustaments › Connectors › Afegeix › Afegeix un servidor MCP, tria STDIO i omple cada camp de sota. Funciona als xats de Codex; els xats normals de ChatGPT encara no el poden fer servir. Requereix uv.",
   "Show details": "Mostra detalls",
   "Show what it was and find it in settings": "Mostra què era i troba-ho a la configuració",
   "Show what it was and undo it": "Mostra què era i desfés-ho",
@@ -396,6 +401,7 @@
   "Failed": "matches catalogue 'Ha fallat'",
   "Copy": "Used infinitives like the .po",
   "Copy command": "'Copiar ordre' - check preferred word (ordre/comanda)",
-  "Space": "'Espai'"
+  "Space": "'Espai'",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

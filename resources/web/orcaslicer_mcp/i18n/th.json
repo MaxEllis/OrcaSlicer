@@ -17,6 +17,7 @@
   "Already back to {before}": "กลับเป็น {before} แล้ว",
   "Also add {setting} as an environment variable.": "เพิ่ม {setting} เป็นตัวแปรสภาพแวดล้อมด้วย",
   "An object": "วัตถุ",
+  "Arguments": "อาร์กิวเมนต์",
   "Arrange": "จัดเรียง",
   "Arranged": "จัดเรียงแล้ว",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "บอกชิ้นงานที่ต้องการพิมพ์ การเปลี่ยนแปลงของผู้ช่วยจะแสดงที่นี่ พร้อมปุ่มย้อนกลับ",
@@ -53,6 +54,7 @@
   "Clear height ranges": "ล้างช่วงความสูง",
   "Codex in a terminal or editor": "Codex ในเทอร์มินัลหรือตัวแก้ไข",
   "Collapse all": "ยุบทั้งหมด",
+  "Command to launch": "คำสั่งเปิด",
   "Compared {n} option": "เปรียบเทียบ {n} ตัวเลือก",
   "Compared {n} option · nothing kept": "เปรียบเทียบ {n} ตัวเลือก · ไม่ได้เก็บอะไรไว้",
   "Compared {n} option · settings may not be back as they were": "เปรียบเทียบ {n} ตัวเลือก · การตั้งค่าอาจไม่กลับเป็นเหมือนเดิม",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "ถูกทิ้งเพราะสลับพรีเซ็ต ให้คืนค่าไปยังจุดก่อนหน้าแทน",
   "Duplicate object {n}": "ทำสำเนาวัตถุ {n}",
   "Duplicated": "ทำสำเนาแล้ว",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "ทุกแอปต้องมี uv ซึ่งเป็นเครื่องมือฟรีขนาดเล็กที่ใช้รันตัวเชื่อมต่อ ติดตั้งเพียงครั้งเดียวก็พอ",
   "Expand all": "ขยายทั้งหมด",
   "Failed": "ล้มเหลว",
   "Filament": "เส้นพลาสติก",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "ไฟล์และพรีเซ็ตที่บันทึกลงดิสก์ยังคงอยู่",
   "Folder not found": "ไม่พบโฟลเดอร์",
   "For chats. Download the extension, then open the file. Needs uv.": "สำหรับแชต ดาวน์โหลดส่วนขยาย แล้วเปิดไฟล์ ต้องมี uv",
+  "Get uv": "ดาวน์โหลด uv",
   "Go back to before the restore": "กลับไปก่อนการคืนค่า",
   "Height range {min}–{max} mm": "ช่วงความสูง {min}–{max} mm",
   "Height ranges cleared": "ล้างช่วงความสูงแล้ว",
@@ -144,6 +148,7 @@
   "Moved": "ย้ายแล้ว",
   "Moved again since": "มีการย้ายอีกครั้งหลังจากนั้น",
   "Moved to plate": "ย้ายไปเพลตแล้ว",
+  "Name": "ชื่อ",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "ต้องเปิดที่ การตั้งค่า › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "ต้องเปิดที่ การตั้งค่า › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "ต้องเปิดที่ การตั้งค่า › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "ตั้ง {label} ของ {object} กลับเป็น {before}",
   "Setting": "การตั้งค่า",
   "Settings": "การตั้งค่า",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add เลือก STDIO แล้ววางข้อความนี้ ใช้ได้ในแชต Codex แชต ChatGPT ทั่วไปยังใช้ไม่ได้ ต้องมี uv",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "การตั้งค่า › ปลั๊กอิน › เพิ่ม › เพิ่มเซิร์ฟเวอร์ MCP เลือก STDIO แล้วกรอกแต่ละช่องด้านล่าง ใช้ได้ในแชต Codex แชต ChatGPT ทั่วไปยังใช้ไม่ได้ ต้องมี uv",
   "Show details": "แสดงรายละเอียด",
   "Show what it was and find it in settings": "แสดงค่าเดิมและหาในการตั้งค่า",
   "Show what it was and undo it": "แสดงค่าเดิมและเลิกทำ",
@@ -404,6 +409,7 @@
   "Put {name} back on {plate}": "{plate} follows without a space; check",
   "Open the {settings}": "{settings} follows without a space; check",
   "Scale back": "ปรับขนาดกลับ; check button wording",
-  "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Used .po words ไฟล์/ปลั๊กอิน/การกำหนดค่า."
+  "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Used .po words ไฟล์/ปลั๊กอิน/การกำหนดค่า.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }

@@ -17,6 +17,7 @@
   "Already back to {before}": "Már vissza van állítva erre: {before}",
   "Also add {setting} as an environment variable.": "Add hozzá a(z) {setting} értéket környezeti változóként is.",
   "An object": "Egy objektum",
+  "Arguments": "Argumentumok",
   "Arrange": "Elrendezés",
   "Arranged": "Elrendezve",
   "Ask it for the print you want. Its changes will appear here, each with Revert.": "Kérd el az asszisztenstől a kívánt nyomtatást. A módosításai itt jelennek meg, mindegyik Módosítás visszavonása gombbal.",
@@ -53,6 +54,7 @@
   "Clear height ranges": "Magasságtartományok törlése",
   "Codex in a terminal or editor": "Codex terminálban vagy szerkesztőben",
   "Collapse all": "Összes összecsukása",
+  "Command to launch": "Indítandó parancs",
   "Compared {n} option": "{n} opció összehasonlítva",
   "Compared {n} option · nothing kept": "{n} opció összehasonlítva · semmi sem maradt meg",
   "Compared {n} option · settings may not be back as they were": "{n} opció összehasonlítva · a beállítások nem biztos, hogy visszaálltak az eredetire",
@@ -99,6 +101,7 @@
   "Dropped by a preset switch; restore an earlier point instead": "Elvetve beállításváltás miatt; állíts vissza inkább egy korábbi pontot",
   "Duplicate object {n}": "{n}. objektum duplikálása",
   "Duplicated": "Duplikálva",
+  "Every app needs uv, a small free tool that runs the connector. Install it once.": "Minden alkalmazásnak szüksége van az uv-re, egy kis ingyenes eszközre, amely a csatlakozót futtatja. Elég egyszer telepíteni.",
   "Expand all": "Összes kibontása",
   "Failed": "Sikertelen",
   "Filament": "Filament",
@@ -113,6 +116,7 @@
   "Files and presets saved to disk stay.": "A lemezre mentett fájlok és beállítások megmaradnak.",
   "Folder not found": "A mappa nem található",
   "For chats. Download the extension, then open the file. Needs uv.": "Csevegésekhez. Töltsd le a bővítményt, majd nyisd meg a fájlt. uv szükséges hozzá.",
+  "Get uv": "uv letöltése",
   "Go back to before the restore": "Vissza a visszaállítás előtti állapotra",
   "Height range {min}–{max} mm": "Magasságtartomány {min}–{max} mm",
   "Height ranges cleared": "Magasságtartományok törölve",
@@ -144,6 +148,7 @@
   "Moved": "Áthelyezve",
   "Moved again since": "Azóta ismét áthelyezve",
   "Moved to plate": "Tálcára helyezve",
+  "Name": "Név",
   "Needs Preferences › Remote API › Allow deleting and replacing project files": "Szükséges: Beállítások › Remote API › Allow deleting and replacing project files",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits": "Szükséges: Beállítások › Remote API › Allow script, G-code and connection edits",
   "Needs Preferences › Remote API › Allow script, G-code and connection edits · {object}": "Szükséges: Beállítások › Remote API › Allow script, G-code and connection edits · {object}",
@@ -266,7 +271,7 @@
   "Set {label} on {object} back to {before}": "{label} visszaállítása erre: {before} ({object})",
   "Setting": "Paraméter",
   "Settings": "Beállítások",
-  "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Settings › Plugins › MCPs › Add, válaszd a STDIO-t, és illeszd be ezt. Codex-csevegésekben működik; a szokásos ChatGPT-csevegések még nem tudják használni. uv szükséges hozzá.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "Beállítások › Bővítmények › Hozzáadás › MCP-kiszolgáló hozzáadása, válaszd a STDIO-t, és töltsd ki az alábbi mezőket. Codex-csevegésekben működik; a szokásos ChatGPT-csevegések még nem tudják használni. uv szükséges hozzá.",
   "Show details": "Részletek megjelenítése",
   "Show what it was and find it in settings": "Megmutatja, mi volt, és megkeresi a beállításokban",
   "Show what it was and undo it": "Megmutatja, mi volt, és visszavonja",
@@ -400,6 +405,7 @@
   "Not while slicing": "'Nem szeletelés közben' check naturalness",
   "Put back": "'Visszatevés' check as a button label",
   "your app": "'a(z) az alkalmazásod alkalmazást' is awkward in the first sentence; works well in the second. Reviewer: pick better filler.",
-  "Copy settings instead": "Kept 'helyette'; check length."
+  "Copy settings instead": "Kept 'helyette'; check length.",
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
  }
 }
