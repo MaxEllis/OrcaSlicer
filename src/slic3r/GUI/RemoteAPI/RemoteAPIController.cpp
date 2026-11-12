@@ -1425,6 +1425,27 @@ nlohmann::json Controller::bind_filament_tab(size_t slot)
     return nlohmann::json::object();
 }
 
+// bind_filament_tab binds the Filament tab to a slot for one request only. The GUI drops its binding when the
+// settings dialog closes (Sidebar::finish_param_edit); left bound, every later Sidebar::update_presets(TYPE_FILAMENT)
+// (a project load, a filament switch without a slot, a Preferences change) copies the tab's preset into that slot.
+// On the way out the earlier binding comes back only when that slot still holds the tab's preset, else none.
+namespace {
+struct FilamentTabBindingScope
+{
+    int prev;
+    FilamentTabBindingScope() : prev(wxGetApp().plater()->sidebar().editing_filament()) {}
+    ~FilamentTabBindingScope()
+    {
+        auto  *bundle = wxGetApp().preset_bundle;
+        const bool keep = prev >= 0 && size_t(prev) < bundle->filament_presets.size() &&
+                          bundle->filament_presets[size_t(prev)] == bundle->filaments.get_selected_preset_name();
+        wxGetApp().plater()->sidebar().set_editing_filament(keep ? prev : -1);
+    }
+    FilamentTabBindingScope(const FilamentTabBindingScope &)            = delete;
+    FilamentTabBindingScope &operator=(const FilamentTabBindingScope &) = delete;
+};
+} // namespace
+
 // The project-scope epilogue of PUT /config: applies a staged copy of project_config and runs the follow-ups its
 // keys need. Also the MCP panel's Revert of a project key. GUI thread only.
 void Controller::apply_project_config(const DynamicPrintConfig &proj_new, const std::set<std::string> &proj_keys,
@@ -1536,8 +1557,11 @@ Response Controller::handle_put_config(const std::string &body, int slot)
 
         // ?slot=N: the per-filament keys go to that slot's preset. Binding the Filament tab to the slot first
         // makes it the edited preset, so the preset path below needs no second route; the binding refuses
-        // rather than drop unsaved edits to another preset, and then nothing here changes.
+        // rather than drop unsaved edits to another preset, and then nothing here changes. The binding ends
+        // with this request (FilamentTabBindingScope).
+        std::optional<FilamentTabBindingScope> binding;
         if (slot >= 0) {
+            binding.emplace();
             nlohmann::json bound = bind_filament_tab(size_t(slot));
             if (bound.contains("error")) {
                 mcp_refused_reply(mcp_fmt(MCP_T("Filament {n}"), {{"n", std::to_string(slot + 1)}}), bound, "PUT /config");
@@ -2554,7 +2578,8 @@ Response Controller::handle_save_preset(const std::string &body)
     // saved name. Without it the GUI rule applies: every slot using the old preset moves to the new name.
     int slot = -1;
     if (in.contains("slot") && !in["slot"].is_null()) {
-        if (type_s != "filament" || !in["slot"].is_number_integer() || in["slot"].get<long long>() < 0)
+        if (type_s != "filament" || !in["slot"].is_number_integer() || in["slot"].get<long long>() < 0 ||
+            in["slot"].get<long long>() > std::numeric_limits<int>::max())
             return { 400, {{"error", "invalid_slot"}} };
         slot = int(in["slot"].get<long long>());
     }
@@ -2594,7 +2619,9 @@ Response Controller::handle_save_preset(const std::string &body)
         if (tab == nullptr) return refuse({{"error", "tab_unavailable"}});
         bool created = existing == nullptr;
         std::vector<std::string> slots_before;
+        std::optional<FilamentTabBindingScope> binding; // the slot binding ends with this request
         if (slot >= 0) {
+            binding.emplace();
             nlohmann::json bound = bind_filament_tab(size_t(slot));
             if (bound.contains("error")) return refuse(bound);
             slots_before = bundle->filament_presets;
@@ -5322,7 +5349,8 @@ static std::vector<FilamentInfo> bambu_auto_mapping(MachineObject *obj, const st
         std::vector<FilamentInfo> left, right;
         for (const FilamentInfo &f : filaments) {
             if (f.id < 0 || static_cast<size_t>(f.id) >= maps.size()) continue;
-            (maps[f.id] == 1 ? left : right).push_back(f);
+            if (maps[f.id] == 1) left.push_back(f);
+            else if (maps[f.id] == 2) right.push_back(f); // the Send dialog skips any other value too
         }
         bool has_left_ams = false, has_right_ams = false;
         for (const auto &[id, ams] : obj->GetFilaSystem()->GetAmsList()) {
@@ -5373,6 +5401,7 @@ static nlohmann::json bambu_mapping_json(MachineObject *obj)
                 std::string name, brand;
                 bambu_tray_filament(*t, name, brand);
                 tray["filament_type"]  = t->get_filament_type();
+                tray["filament_id"]    = t->setting_id;
                 tray["filament_name"]  = name;
                 tray["brand"]          = brand;
                 tray["filament_color"] = bambu_tray_colour(*t);
@@ -5385,6 +5414,7 @@ static nlohmann::json bambu_mapping_json(MachineObject *obj)
                         {"type", f.type},
                         {"name", f.name},
                         {"vendor", f.vendor},
+                        {"filament_id", f.filament_id},
                         {"color", f.color},
                         {"tray", tray},
                         {"source", tray.is_null() ? "none" : "matched"},

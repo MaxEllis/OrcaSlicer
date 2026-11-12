@@ -222,9 +222,10 @@ ignore `slot` and switch the Filament tab preset, so check the capability first.
 
 `PUT /config?slot=1` (0-based) writes the filament preset of that slot instead of
 whichever preset is open in the Filament tab. It binds the Filament tab to the
-slot first, exactly as the slot's edit button in the sidebar does: the tab opens
-the slot's preset, and from then on follows it. Nothing else changes, and no
-unsaved print or printer edit is dropped.
+slot first, as the slot's edit button in the sidebar does: the tab opens the
+slot's preset. The binding lasts for this request only (the tab stays on that
+preset, but a later preset switch in the tab no longer moves the slot). Nothing
+else changes, and no unsaved print or printer edit is dropped.
 
 ```bash
 curl -X PUT -H "X-Api-Token: $TOK" -H "Content-Type: application/json" \
@@ -434,11 +435,11 @@ that measure it, null by the others.
 { "supported": true, "kind": "bambu", "plate": 0,
   "printer": { "name": "P1S", "model": "Bambu Lab P1S", "connection": "lan" },
   "filaments": [
-    { "index": 0, "type": "ASA", "name": "Generic ASA", "vendor": "Generic", "color": "#FFFFFF",
-      "tray": { "ams_id": "0", "tray_id": "0", "index": 0, "label": "A1", "filament_type": "ASA",
+    { "index": 0, "type": "ASA", "name": "Generic ASA", "vendor": "Generic", "filament_id": "GFB98", "color": "#FFFFFF",
+      "tray": { "ams_id": "0", "tray_id": "0", "index": 0, "label": "A1", "filament_type": "ASA", "filament_id": "GFB01",
                 "filament_name": "Bambu ASA", "brand": "Bambu Lab", "filament_color": "#FFFFFF" },
       "source": "matched", "warnings": [] },
-    { "index": 1, "type": "ASA", "name": "Polymaker LW-ASA", "vendor": "Polymaker", "color": "#3C3C3C",
+    { "index": 1, "type": "ASA", "name": "Polymaker LW-ASA", "vendor": "Polymaker", "filament_id": "P4a51d2", "color": "#3C3C3C",
       "tray": null, "source": "none", "warnings": ["No tray holds ASA."] } ],
   "valid": false,
   "problems": ["Filament 2 (Polymaker LW-ASA) has no tray: the Send dialog needs a choice."] }
@@ -447,7 +448,8 @@ The filaments are the ones the next Send would map (the current plate's; every p
 reports none), each with the tray the Send dialog's automatic mapping pre-fills. That mapping takes a tray only when
 its `filament_type` equals the slot preset's type (then the nearest colour), so a slot whose type no tray holds
 comes back with `tray` null, a warning, a problem and `valid` false: the Send dialog then waits for the user to
-pick one. There is no `PUT` for Bambu printers: the choice is made in the Send dialog, which keeps no store this
+pick one. `filament_id` on a filament and on its tray (the AMS's own id for the spool) are equal when the tray holds
+the filament the slot's preset describes; names differ (a system preset carries its printer, "@BBL P1S"). There is no `PUT` for Bambu printers: the choice is made in the Send dialog, which keeps no store this
 API could fill.
 
 ## Plates
