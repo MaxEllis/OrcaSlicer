@@ -46,6 +46,13 @@
 #include "slic3r/Utils/ElegooCanvas.hpp"
 #include "slic3r/Utils/ElegooCanvasMatch.hpp"
 #include "slic3r/Utils/ElegooLink.hpp"              // CANVAS: get_canvas_info
+#include "slic3r/GUI/DeviceManager.hpp"             // Bambu AMS: MachineObject (trays, external spool, name)
+#include "slic3r/GUI/DeviceCore/DevManager.h"       // Bambu AMS: DeviceManager::get_selected_machine
+#include "slic3r/GUI/DeviceCore/DevDefs.h"          // Bambu AMS: virtual tray ids, devPrinterUtil
+#include "slic3r/GUI/DeviceCore/DevFilaSystem.h"    // Bambu AMS: DevAms / DevAmsTray
+#include "slic3r/GUI/DeviceCore/DevExtruderSystem.h" // Bambu AMS: the tray feeding the nozzle, extruder count
+#include "slic3r/GUI/DeviceCore/DevMapping.h"       // Bambu AMS: DevMappingUtil::ams_filament_mapping
+#include "libslic3r/ProjectTask.hpp"                // Bambu AMS: FilamentInfo
 
 #include <algorithm>
 #include <cmath>
@@ -758,7 +765,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -5045,6 +5052,7 @@ static nlohmann::json canvas_mapping_json(const ElegooCanvas::Info &info)
     }
     const std::vector<std::string> problems = ElegooCanvas::validate(mappings, info);
     return {{"supported", true},
+            {"kind", "canvas"},
             {"plate", elegoo_canvas_send_plate_index(PLATE_CURRENT_IDX)}, // 0-based plate the next Send would use
             {"filaments", rows},
             {"valid", problems.empty()},
@@ -5119,25 +5127,313 @@ bool Controller::read_canvas_slots(bool use_cached, ElegooCanvas::Info &info, nl
     return true;
 }
 
-// GET /printer/slots - a fresh read of the CANVAS trays.
+
+// ---- Bambu Lab AMS -------------------------------------------------------------------------------------------------
+// The Bambu printer selected in OrcaSlicer's Device tab, read from the MachineObject that OrcaSlicer's own network
+// connection keeps current: nothing is asked of the printer, so a read is instant. Served on the CANVAS routes
+// (GET /printer/slots, GET /printer/slot_mapping) when the printer preset is not an Elegoo CC2. The mapping is the
+// one the Send dialog pre-fills (DevMappingUtil, as SelectMachineDialog::do_ams_mapping runs it); the dialog keeps no
+// store the API could set, so PUT /printer/slot_mapping stays CANVAS-only. GUI thread only.
+
+static nlohmann::json bambu_unsupported(const std::string &reason, const std::string &message)
+{
+    return {{"supported", false}, {"kind", "bambu"}, {"reason", reason}, {"message", message}};
+}
+
+// The selected machine when the printer preset is a Bambu one and the machine is connected, else nullptr with
+// `unsupported` = {"supported":false,"kind":"bambu","reason","message"}.
+static MachineObject *bambu_selected_machine(nlohmann::json &unsupported)
+{
+    if (!wxGetApp().preset_bundle->is_bbl_vendor()) {
+        unsupported = bambu_unsupported("not_supported",
+                                        "The selected printer profile is neither a Bambu Lab printer nor an Elegoo Centauri Carbon 2 with multi-filament (CANVAS) support.");
+        return nullptr;
+    }
+    DeviceManager *dev = wxGetApp().getDeviceManager();
+    MachineObject *obj = dev != nullptr ? dev->get_selected_machine() : nullptr;
+    if (obj == nullptr) {
+        unsupported = bambu_unsupported("no_printer_selected", "No Bambu Lab printer is selected in OrcaSlicer's Device tab.");
+        return nullptr;
+    }
+    if (!obj->is_connected() || obj->GetFilaSystem() == nullptr || obj->GetExtderSystem() == nullptr) {
+        unsupported = bambu_unsupported("printer_offline", obj->get_dev_name() + " is not connected to OrcaSlicer right now.");
+        return nullptr;
+    }
+    return obj;
+}
+
+// The linear tray index OrcaSlicer labels trays by, counted as DevMappingUtil counts them: A1.. = ams*4+tray, an AMS
+// HT (N3S) from 128, the AMS Lite mixed layout from 24.
+static int bambu_tray_index(const DevAms &ams, int tray_id)
+{
+    const int ams_id = std::atoi(ams.GetAmsId().c_str());
+    if (ams.IsAmsLiteMixed()) return AMS_LITE_MIXED_TRAY_INDEX_OFFSET + tray_id;
+    if (ams.GetAmsType() == DevAms::N3S) return ams_id + tray_id;
+    return ams_id * 4 + tray_id;
+}
+
+// "A1", "HT-A", or "Ext" / "Ext-2" for the external spool of the main / deputy extruder.
+static std::string bambu_tray_label(const std::string &ams_id, int tray_index)
+{
+    if (devPrinterUtil::IsVirtualSlot(ams_id)) return ams_id == VIRTUAL_AMS_MAIN_ID_STR ? "Ext" : "Ext-2";
+    return into_u8(wxGetApp().transition_tridid(tray_index));
+}
+
+static std::string bambu_ams_type_name(const DevAms &ams)
+{
+    if (ams.IsAmsLiteMixed()) return "AMS Lite (mixed)";
+    switch (ams.GetAmsType()) {
+    case DevAms::AMS: return "AMS";
+    case DevAms::AMS_LITE: return "AMS Lite";
+    case DevAms::N3F: return "AMS 2 Pro";
+    case DevAms::N3S: return "AMS HT";
+    case DevAms::EXT_SPOOL: return "External spool";
+    default: return "AMS";
+    }
+}
+
+// "#RRGGBB" from the AMS's RRGGBBAA hex, "" when the tray reports none.
+static std::string bambu_tray_colour(const DevAmsTray &t)
+{
+    if (t.color.size() != 8 && t.color.size() != 6) return "";
+    for (char c : t.color)
+        if (!std::isxdigit(static_cast<unsigned char>(c))) return "";
+    std::string out = "#" + t.color.substr(0, 6);
+    for (char &c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    return out;
+}
+
+// The filament's name and brand as the AMS panel shows them: the tray's own name when the printer reports one, else
+// the name of the filament preset the tray's filament id points at; Bambu's own filaments carry the brand.
+static void bambu_tray_filament(const DevAmsTray &t, std::string &name, std::string &brand)
+{
+    name = t.sub_brands;
+    if (!t.setting_id.empty())
+        if (auto info = wxGetApp().preset_bundle->get_filament_by_filament_id(t.setting_id); info.has_value()) {
+            if (name.empty()) name = info->filament_name;
+            brand = info->vendor;
+        }
+    if (brand.empty() && t.is_bbl) brand = "Bambu Lab";
+}
+
+static nlohmann::json bambu_tray_json(const std::string &ams_id, const std::string &tray_id, int tray_index, DevAmsTray &t, bool active)
+{
+    // An AMS slot reports whether a spool sits in it; the external spool only what is loaded.
+    const bool loaded = devPrinterUtil::IsVirtualSlot(ams_id) ? t.is_tray_info_ready() : t.is_exists;
+    const bool known  = loaded && t.is_tray_info_ready();
+    std::string name, brand;
+    bambu_tray_filament(t, name, brand);
+    auto temp = [](const std::string &s) -> int {
+        try { return s.empty() ? 0 : std::stoi(s); } catch (...) { return 0; }
+    };
+    return {{"ams_id", ams_id},
+            {"tray_id", tray_id},
+            {"index", tray_index},
+            {"label", bambu_tray_label(ams_id, tray_index)},
+            {"status", !loaded ? "empty" : known ? "loaded" : "unknown"},
+            {"ready", known},
+            {"active", active},
+            {"unknown_filament", loaded && !known},
+            {"filament_type", known ? t.get_filament_type() : std::string()},
+            {"filament_name", known ? name : std::string()},
+            {"brand", known ? brand : std::string()},
+            {"filament_id", t.setting_id},
+            {"bambu_filament", t.is_bbl},
+            {"filament_color", known ? bambu_tray_colour(t) : std::string()},
+            {"remain_percent", loaded ? nlohmann::json(t.remain) : nlohmann::json(nullptr)},
+            {"min_nozzle_temp", temp(t.nozzle_temp_min)},
+            {"max_nozzle_temp", temp(t.nozzle_temp_max)}};
+}
+
+static nlohmann::json bambu_printer_json(MachineObject *obj)
+{
+    return {{"name", obj->get_dev_name()},
+            {"model", into_u8(obj->get_printer_type_display_str())},
+            {"connection", obj->connection_type()}};
+}
+
+// GET /printer/slots body: every tray of the machine, the AMS units in order and then the external spool(s), flat
+// in `trays` as the CANVAS reply lists them, with the units summarised in `ams`.
+static nlohmann::json bambu_slots_json(MachineObject *obj)
+{
+    const std::string cur_ams  = obj->GetExtderSystem()->GetCurrentAmsId();
+    const std::string cur_slot = obj->GetExtderSystem()->GetCurrentSlotId();
+    nlohmann::json    trays    = nlohmann::json::array();
+    nlohmann::json    units    = nlohmann::json::array();
+    for (auto &[ams_id, ams] : obj->GetFilaSystem()->GetAmsList()) {
+        if (ams == nullptr) continue;
+        nlohmann::json labels = nlohmann::json::array();
+        for (auto &[tray_id, tray] : ams->GetTrays()) {
+            if (tray == nullptr) continue;
+            const int idx = bambu_tray_index(*ams, std::atoi(tray_id.c_str()));
+            trays.push_back(bambu_tray_json(ams_id, tray_id, idx, *tray, ams_id == cur_ams && tray_id == cur_slot));
+            labels.push_back(bambu_tray_label(ams_id, idx));
+        }
+        nlohmann::json unit = {{"ams_id", ams_id},
+                               {"type", bambu_ams_type_name(*ams)},
+                               {"extruder", ams->GetExtruderId()},
+                               {"humidity_level", nullptr},
+                               {"humidity_percent", nullptr},
+                               {"temperature", ams->GetCurrentTemperature()},
+                               {"trays", labels}};
+        if (ams->SupportHumidity()) {
+            unit["humidity_level"]   = ams->GetHumidityLevel();
+            unit["humidity_percent"] = ams->GetHumidityPercent();
+        }
+        units.push_back(unit);
+    }
+    for (DevAmsTray &vt : obj->vt_slot)
+        trays.push_back(bambu_tray_json(vt.id, "0", std::atoi(vt.id.c_str()), vt, vt.id == cur_ams));
+    return {{"supported", true},
+            {"kind", "bambu"},
+            {"connected", true},
+            {"printer", bambu_printer_json(obj)},
+            {"active", {{"ams_id", cur_ams}, {"tray_id", cur_slot}}},
+            {"ams", units},
+            {"trays", trays}};
+}
+
+// DevMappingUtil::ams_filament_mapping as SelectMachineDialog::do_ams_mapping runs it: one surface on a
+// single-extruder printer (the external spool only when there is no AMS); on a two-extruder printer each filament
+// maps within its own extruder's AMS units (that side's external spool when it has none). Rows come back in
+// filament order; an unmapped filament has tray_id -1.
+static std::vector<FilamentInfo> bambu_auto_mapping(MachineObject *obj, const std::vector<ElegooCanvas::ProjectFilament> &project)
+{
+    std::vector<FilamentInfo> filaments;
+    for (const ElegooCanvas::ProjectFilament &f : project) {
+        FilamentInfo info;
+        info.id          = f.index;
+        info.type        = f.type;
+        info.color       = f.color;
+        info.filament_id = f.filament_id;
+        info.brand       = f.vendor;
+        filaments.push_back(std::move(info));
+    }
+    std::vector<FilamentInfo> result;
+    if (filaments.empty()) return result;
+
+    const bool               use_ams     = obj->GetFilaSystem()->HasAms();
+    const DynamicPrintConfig full_config = wxGetApp().preset_bundle->full_config();
+    const auto              *nozzles     = full_config.option<ConfigOptionFloats>("nozzle_diameter");
+    const size_t             nozzle_nums = nozzles != nullptr ? nozzles->values.size() : 1;
+    if (nozzle_nums > 1 && obj->GetExtderSystem()->GetTotalExtderCount() > 1) {
+        const std::vector<int> maps = wxGetApp().plater()->get_partplate_list().get_curr_plate()->get_real_filament_maps(
+            wxGetApp().preset_bundle->project_config);
+        std::vector<FilamentInfo> left, right;
+        for (const FilamentInfo &f : filaments) {
+            if (f.id < 0 || static_cast<size_t>(f.id) >= maps.size()) continue;
+            (maps[f.id] == 1 ? left : right).push_back(f);
+        }
+        bool has_left_ams = false, has_right_ams = false;
+        for (const auto &[id, ams] : obj->GetFilaSystem()->GetAmsList()) {
+            if (ams == nullptr || ams->GetExtruderId() > 1) continue;
+            const bool on_left = (ams->GetExtruderId() == 0) == obj->is_main_extruder_on_left();
+            (on_left ? has_left_ams : has_right_ams) = true;
+        }
+        std::vector<FilamentInfo> rl, rr;
+        if (!left.empty())
+            DevMappingUtil::ams_filament_mapping(obj, left, rl, {use_ams, false, !use_ams || !has_left_ams, false});
+        if (!right.empty())
+            DevMappingUtil::ams_filament_mapping(obj, right, rr, {false, use_ams, false, !use_ams || !has_right_ams});
+        result.insert(result.end(), rl.begin(), rl.end());
+        result.insert(result.end(), rr.begin(), rr.end());
+        std::sort(result.begin(), result.end(), [](const FilamentInfo &a, const FilamentInfo &b) { return a.id < b.id; });
+    } else {
+        DevMappingUtil::ams_filament_mapping(obj, filaments, result, {false, use_ams, false, !use_ams});
+    }
+    return result;
+}
+
+// GET /printer/slot_mapping body on a Bambu printer: the filaments the next Send would map (the current plate's,
+// as the CANVAS path picks them) and the tray the Send dialog pre-fills for each. The matcher takes a tray only
+// when its filament type equals the slot preset's, so a filament whose type no tray holds comes back with
+// tray null and a problem: the dialog then waits for a choice.
+static nlohmann::json bambu_mapping_json(MachineObject *obj)
+{
+    const std::vector<ElegooCanvas::ProjectFilament> filaments = canvas_send_filaments();
+    const std::vector<FilamentInfo>                  mapped    = bambu_auto_mapping(obj, filaments);
+    nlohmann::json                                   rows      = nlohmann::json::array();
+    std::vector<std::string>                         problems;
+    for (const ElegooCanvas::ProjectFilament &f : filaments) {
+        nlohmann::json           tray = nullptr;
+        std::vector<std::string> warnings;
+        auto it = std::find_if(mapped.begin(), mapped.end(), [&f](const FilamentInfo &m) { return m.id == f.index; });
+        if (it != mapped.end() && it->tray_id >= 0 && !it->ams_id.empty()) {
+            DevAmsTray *t       = nullptr;
+            std::string tray_id = it->slot_id;
+            if (devPrinterUtil::IsVirtualSlot(it->ams_id)) {
+                for (DevAmsTray &vt : obj->vt_slot)
+                    if (vt.id == it->ams_id) t = &vt;
+                tray_id = "0";
+            } else if (DevAms *ams = obj->GetFilaSystem()->GetAmsById(it->ams_id); ams != nullptr) {
+                t = ams->GetTray(it->slot_id);
+            }
+            tray = {{"ams_id", it->ams_id}, {"tray_id", tray_id}, {"index", it->tray_id}, {"label", bambu_tray_label(it->ams_id, it->tray_id)}};
+            if (t != nullptr) {
+                std::string name, brand;
+                bambu_tray_filament(*t, name, brand);
+                tray["filament_type"]  = t->get_filament_type();
+                tray["filament_name"]  = name;
+                tray["brand"]          = brand;
+                tray["filament_color"] = bambu_tray_colour(*t);
+            }
+        } else {
+            warnings.push_back("No tray holds " + (f.type.empty() ? std::string("this filament type") : f.type) + ".");
+            problems.push_back("Filament " + std::to_string(f.index + 1) + " (" + f.name + ") has no tray: the Send dialog needs a choice.");
+        }
+        rows.push_back({{"index", f.index},
+                        {"type", f.type},
+                        {"name", f.name},
+                        {"vendor", f.vendor},
+                        {"color", f.color},
+                        {"tray", tray},
+                        {"source", tray.is_null() ? "none" : "matched"},
+                        {"warnings", warnings}});
+    }
+    return {{"supported", true},
+            {"kind", "bambu"},
+            {"printer", bambu_printer_json(obj)},
+            {"plate", elegoo_canvas_send_plate_index(PLATE_CURRENT_IDX)},
+            {"filaments", rows},
+            {"valid", problems.empty()},
+            {"problems", problems}};
+}
+
+// GET /printer/slots - a fresh read of the CANVAS trays; the selected Bambu machine's AMS when the preset is no CC2.
 Response Controller::handle_printer_slots()
 {
     ElegooCanvas::Info info;
     nlohmann::json     unsupported;
-    if (!read_canvas_slots(false, info, unsupported))
+    if (!read_canvas_slots(false, info, unsupported)) {
+        if (unsupported.value("reason", "") == "not_elegoo_cc2")
+            return { 200, run_on_ui([]() -> nlohmann::json {
+                        nlohmann::json why;
+                        MachineObject *obj = bambu_selected_machine(why);
+                        return obj != nullptr ? bambu_slots_json(obj) : why;
+                    }) };
         return { 200, unsupported };
+    }
     nlohmann::json j = ElegooCanvas::info_json(info);
     j["supported"]   = true;
+    j["kind"]        = "canvas";
     return { 200, j };
 }
 
-// GET /printer/slot_mapping - the mapping the next send pre-fills, against the last slot read (read now when none).
+// GET /printer/slot_mapping - the mapping the next send pre-fills, against the last slot read (read now when none);
+// on a Bambu printer the Send dialog's automatic AMS mapping.
 Response Controller::handle_get_slot_mapping()
 {
     ElegooCanvas::Info info;
     nlohmann::json     unsupported;
-    if (!read_canvas_slots(true, info, unsupported))
+    if (!read_canvas_slots(true, info, unsupported)) {
+        if (unsupported.value("reason", "") == "not_elegoo_cc2")
+            return { 200, run_on_ui([]() -> nlohmann::json {
+                        nlohmann::json why;
+                        MachineObject *obj = bambu_selected_machine(why);
+                        return obj != nullptr ? bambu_mapping_json(obj) : why;
+                    }) };
         return { 200, unsupported };
+    }
     auto shared = std::make_shared<ElegooCanvas::Info>(std::move(info));
     nlohmann::json r = run_on_ui([shared]() -> nlohmann::json { return canvas_mapping_json(*shared); });
     return { 200, r };

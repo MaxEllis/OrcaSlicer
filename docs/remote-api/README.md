@@ -72,9 +72,9 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog; `slot` saves one filament slot's preset and moves only that slot |
 | POST | `/preset/config` | The full config of a named preset (`{"type","name"}`; credentials redacted) |
 | DELETE | `/preset` | Delete a user preset (never a system, selected or inherited-from one) |
-| GET | `/printer/slots` | Elegoo Centauri Carbon 2: read the CANVAS trays now |
-| GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from |
-| PUT | `/printer/slot_mapping` | Set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
+| GET | `/printer/slots` | The printer's filament trays: an Elegoo Centauri Carbon 2's CANVAS (read now), or the selected Bambu Lab printer's AMS and external spool |
+| GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from (on Bambu: the Send dialog's automatic choice) |
+| PUT | `/printer/slot_mapping` | CANVAS only: set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
 | WS | `/events?token=…` | Live event stream |
 | GET | `/plates` | List the plates: index, name, current, locked, objects on each |
 | POST | `/plates` | Add a plate (`{"select": true}` by default) |
@@ -384,6 +384,71 @@ Each message is a JSON object with an `event` field:
 
 > `slice.*` events carry `stats` (on done) but not the slice `warnings` array —
 > call `GET /slice/status` for warnings.
+
+## Printer trays
+
+`GET /printer/slots` and `GET /printer/slot_mapping` answer for two kinds of printer, told apart by `kind`:
+`"canvas"` (an Elegoo Centauri Carbon 2 preset: the CANVAS unit is read over the network, up to about 18 s)
+and `"bambu"` (a Bambu Lab preset: the printer selected in the Device tab, read from the state OrcaSlicer's own
+connection keeps, so the answer is instant and nothing is sent to the printer). Any other preset gets
+`{"supported": false, "kind": "bambu", "reason": "not_supported"}`; a Bambu preset with no printer selected
+`no_printer_selected`, with the selected printer not connected `printer_offline`. Builds that read Bambu printers
+list `bambu_ams` in `GET /status` `capabilities`.
+
+### GET /printer/slots on a Bambu Lab printer
+
+```json
+{ "supported": true, "kind": "bambu", "connected": true,
+  "printer": { "name": "P1S", "model": "Bambu Lab P1S", "connection": "lan" },
+  "active": { "ams_id": "0", "tray_id": "1" },
+  "ams": [ { "ams_id": "0", "type": "AMS", "extruder": 0, "humidity_level": 2, "humidity_percent": 31,
+             "temperature": 24.5, "trays": ["A1", "A2", "A3", "A4"] } ],
+  "trays": [
+    { "ams_id": "0", "tray_id": "0", "index": 0, "label": "A1", "status": "loaded", "ready": true, "active": false,
+      "unknown_filament": false, "filament_type": "ASA", "filament_name": "Bambu ASA", "brand": "Bambu Lab",
+      "filament_id": "GFB00", "bambu_filament": true, "filament_color": "#FFFFFF", "remain_percent": 62,
+      "min_nozzle_temp": 240, "max_nozzle_temp": 280 },
+    { "ams_id": "0", "tray_id": "1", "index": 1, "label": "A2", "status": "loaded", "ready": true, "active": true,
+      "unknown_filament": false, "filament_type": "ASA-Aero", "filament_name": "Polymaker PolyLite LW-ASA",
+      "brand": "Polymaker", "filament_id": "P4a51d2", "bambu_filament": false, "filament_color": "#3C3C3C",
+      "remain_percent": -1, "min_nozzle_temp": 230, "max_nozzle_temp": 270 },
+    { "ams_id": "0", "tray_id": "2", "index": 2, "label": "A3", "status": "empty", "ready": false, "active": false,
+      "unknown_filament": false, "filament_type": "", "filament_name": "", "brand": "", "filament_id": "",
+      "bambu_filament": false, "filament_color": "", "remain_percent": null, "min_nozzle_temp": 0, "max_nozzle_temp": 0 },
+    { "ams_id": "255", "tray_id": "0", "index": 255, "label": "Ext", "status": "empty", "ready": false, "active": false,
+      "unknown_filament": false, "filament_type": "", "filament_name": "", "brand": "", "filament_id": "",
+      "bambu_filament": false, "filament_color": "", "remain_percent": null, "min_nozzle_temp": 0, "max_nozzle_temp": 0 } ] }
+```
+`trays` lists every slot of every AMS unit in order and then the external spool(s) (`ams_id` 255, label `Ext`; a
+second extruder's is 254, `Ext-2`), flat as the CANVAS reply lists them. `label` is the name OrcaSlicer's AMS panel
+shows. `status` is `loaded`, `unknown` (a spool is in, but the printer reports no type or colour for it: set it in the
+AMS panel) or `empty`; `ready` is true only for `loaded`. `filament_type` is the AMS's own type word (`ASA-Aero`,
+`PLA-CF`, `PETG-HF`, ...), `filament_name` the name the AMS panel shows (the printer's, else the preset the tray's
+`filament_id` points at), `active` marks the tray feeding the nozzle. `remain_percent` is the AMS's estimate for
+Bambu spools, -1 when it has none, null for an empty slot. A `humidity_level` of 1 (dry) to 5 is reported by units
+that measure it, null by the others.
+
+### GET /printer/slot_mapping on a Bambu Lab printer
+
+```json
+{ "supported": true, "kind": "bambu", "plate": 0,
+  "printer": { "name": "P1S", "model": "Bambu Lab P1S", "connection": "lan" },
+  "filaments": [
+    { "index": 0, "type": "ASA", "name": "Generic ASA", "vendor": "Generic", "color": "#FFFFFF",
+      "tray": { "ams_id": "0", "tray_id": "0", "index": 0, "label": "A1", "filament_type": "ASA",
+                "filament_name": "Bambu ASA", "brand": "Bambu Lab", "filament_color": "#FFFFFF" },
+      "source": "matched", "warnings": [] },
+    { "index": 1, "type": "ASA", "name": "Polymaker LW-ASA", "vendor": "Polymaker", "color": "#3C3C3C",
+      "tray": null, "source": "none", "warnings": ["No tray holds ASA."] } ],
+  "valid": false,
+  "problems": ["Filament 2 (Polymaker LW-ASA) has no tray: the Send dialog needs a choice."] }
+```
+The filaments are the ones the next Send would map (the current plate's; every project filament when the plate
+reports none), each with the tray the Send dialog's automatic mapping pre-fills. That mapping takes a tray only when
+its `filament_type` equals the slot preset's type (then the nearest colour), so a slot whose type no tray holds
+comes back with `tray` null, a warning, a problem and `valid` false: the Send dialog then waits for the user to
+pick one. There is no `PUT` for Bambu printers: the choice is made in the Send dialog, which keeps no store this
+API could fill.
 
 ## Plates
 
