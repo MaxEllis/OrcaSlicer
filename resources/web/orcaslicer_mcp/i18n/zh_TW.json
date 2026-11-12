@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "僅 {object} · 來自列印參數預設",
   "{preset} (unsaved)": "{preset}（未儲存）",
   "{text} ({count} lines)": "{text}（共 {count} 行）",
+  "{text}, filament {n}": "{text}，線材 {n}",
   "{title} and {n} more": "{title} 等另外 {n} 項",
   "{value} in {preset}": "{preset} 中的 {value}",
   "{verb} (unavailable: {why})": "{verb}（無法使用： {why}）",

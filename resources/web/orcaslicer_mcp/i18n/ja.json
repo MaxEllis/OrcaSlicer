@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "{object} のみ · プロセスプリセットから",
   "{preset} (unsaved)": "{preset} (未保存)",
   "{text} ({count} lines)": "{text} ({count} 行)",
+  "{text}, filament {n}": "{text}、フィラメント {n}",
   "{title} and {n} more": "{title} ほか {n} 件",
   "{value} in {preset}": "{preset} の {value}",
   "{verb} (unavailable: {why})": "{verb} (利用不可: {why})",

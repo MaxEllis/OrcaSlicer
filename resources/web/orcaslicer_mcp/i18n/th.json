@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "เฉพาะ {object} · จากพรีเซ็ตการพิมพ์",
   "{preset} (unsaved)": "{preset} (ยังไม่ได้บันทึก)",
   "{text} ({count} lines)": "{text} ({count} บรรทัด)",
+  "{text}, filament {n}": "{text}, เส้นพลาสติก {n}",
   "{title} and {n} more": "{title} และอีก {n} รายการ",
   "{value} in {preset}": "{value} ใน {preset}",
   "{verb} (unavailable: {why})": "{verb} (ใช้ไม่ได้: {why})",

@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "{object} soilik · inprimatze-aurrezarpenetik",
   "{preset} (unsaved)": "{preset} (gorde gabe)",
   "{text} ({count} lines)": "{text} ({count} lerro)",
+  "{text}, filament {n}": "{text}, {n}. filamentua",
   "{title} and {n} more": "{title} eta beste {n}",
   "{value} in {preset}": "{value} hemen: {preset}",
   "{verb} (unavailable: {why})": "{verb} (ez dago erabilgarri: {why})",

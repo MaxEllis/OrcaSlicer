@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "Tik {object} · iš spausdinimo profilio",
   "{preset} (unsaved)": "{preset} (neišsaugota)",
   "{text} ({count} lines)": "{text} (eilučių: {count})",
+  "{text}, filament {n}": "{text}, gija {n}",
   "{title} and {n} more": "{title} ir dar {n}",
   "{value} in {preset}": "{value} profilyje {preset}",
   "{verb} (unavailable: {why})": "{verb} (nepasiekiama: {why})",

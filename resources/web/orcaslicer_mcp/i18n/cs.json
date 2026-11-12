@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "jen {object} · z předvolby tisku",
   "{preset} (unsaved)": "{preset} (neuloženo)",
   "{text} ({count} lines)": "{text} (řádků: {count})",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} a ještě {n}",
   "{value} in {preset}": "{value} v {preset}",
   "{verb} (unavailable: {why})": "{verb} (nedostupné: {why})",

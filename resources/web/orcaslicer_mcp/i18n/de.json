@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "Nur {object} · aus dem Prozessprofil",
   "{preset} (unsaved)": "{preset} (nicht gespeichert)",
   "{text} ({count} lines)": "{text} ({count} Zeilen)",
+  "{text}, filament {n}": "{text}, Filament {n}",
   "{title} and {n} more": "{title} und {n} weitere",
   "{value} in {preset}": "{value} in {preset}",
   "{verb} (unavailable: {why})": "{verb} (nicht verfügbar: {why})",

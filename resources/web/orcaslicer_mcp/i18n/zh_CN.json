@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "仅 {object} · 来自工艺预设",
   "{preset} (unsaved)": "{preset}（未保存）",
   "{text} ({count} lines)": "{text}（共 {count} 行）",
+  "{text}, filament {n}": "{text}，耗材丝 {n}",
   "{title} and {n} more": "{title} 等另外 {n} 项",
   "{value} in {preset}": "{preset} 中的 {value}",
   "{verb} (unavailable: {why})": "{verb}（不可用： {why}）",

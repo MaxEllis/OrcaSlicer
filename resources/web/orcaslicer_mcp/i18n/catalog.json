@@ -2422,6 +2422,13 @@
    ]
   },
   {
+   "en": "{text}, filament {n}",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
    "en": "{title} and {n} more",
    "host": false,
    "from": [

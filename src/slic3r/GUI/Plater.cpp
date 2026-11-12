@@ -7082,6 +7082,8 @@ bool Sidebar::show_object_list(bool show) const
 }
 
 void Sidebar::finish_param_edit() { p->editing_filament = -1; }
+int  Sidebar::editing_filament() const { return p->editing_filament; }
+void Sidebar::set_editing_filament(int filament_idx) { p->editing_filament = filament_idx; }
 
 std::vector<PlaterPresetComboBox*>& Sidebar::combos_filament()
 {

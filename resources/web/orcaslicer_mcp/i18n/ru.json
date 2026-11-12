@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "Только {object} · из профиля печати",
   "{preset} (unsaved)": "{preset} (не сохранён)",
   "{text} ({count} lines)": "{text} (строк: {count})",
+  "{text}, filament {n}": "{text}, материал {n}",
   "{title} and {n} more": "{title} и ещё {n}",
   "{value} in {preset}": "{value} в {preset}",
   "{verb} (unavailable: {why})": "{verb} (недоступно: {why})",

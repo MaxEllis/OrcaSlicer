@@ -76,6 +76,19 @@ paths:
 
         Values may be JSON strings, numbers, or booleans; they are coerced to the
         canonical config string form.
+
+        With `?slot=n` (0-based) the per-filament keys go to that slot's filament
+        preset instead of the one open in the Filament tab: the tab is bound to the
+        slot first, as its sidebar edit button does. Refused with `409
+        filament_edits_unsaved` (nothing changed) when the tab holds unsaved edits
+        to a different preset, `422 slot_out_of_range`, `400 invalid_slot`. The
+        reply then also carries `slot` and `preset`.
+      parameters:
+        - name: slot
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0 }
+          description: 0-based filament slot whose preset receives the per-filament keys.
       requestBody:
         required: true
         content:
@@ -105,6 +118,57 @@ paths:
               examples:
                 not_object: { value: { error: "body_must_be_object" } }
                 bad_json:   { value: { error: "invalid_json" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: "`?slot=` given and the Filament tab holds unsaved edits to another preset; nothing changed."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { applied: [], error: "filament_edits_unsaved", preset: "Generic PLA", modified: ["hot_plate_temp"] }
+        "504": { $ref: "#/components/responses/UiTimeout" }
+  /filaments:
+    get:
+      summary: The project's filament slots
+      operationId: getFilaments
+      description: |
+        One row per filament slot, as the sidebar shows them: the preset, its
+        filament type, vendor and system flag, the project's colour for the slot,
+        and whether the slot's preset is the one open in the Filament tab and
+        holds unsaved edits (only that preset can). `tab` names the preset the
+        tab edits and the slot it is bound to (null when it follows no slot).
+        Builds with this route list `filament_slots` in `GET /status` capabilities.
+      responses:
+        "200":
+          description: The slots.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  multi_filament: { type: boolean }
+                  filaments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: { type: integer, description: 0-based slot }
+                        preset: { type: string }
+                        filament_type: { type: string, example: ASA }
+                        vendor: { type: string, example: Generic }
+                        colour: { type: string, example: "#FF0000" }
+                        system: { type: boolean }
+                        open_in_tab: { type: boolean }
+                        modified: { type: boolean }
+                        modified_keys:
+                          type: array
+                          items: { type: string }
+                  tab:
+                    type: object
+                    properties:
+                      preset: { type: string }
+                      slot: { type: integer, nullable: true }
+                      modified: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "504": { $ref: "#/components/responses/UiTimeout" }
   /slice:

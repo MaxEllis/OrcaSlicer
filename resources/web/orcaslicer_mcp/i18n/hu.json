@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "csak {object} · a nyomtatási beállításból",
   "{preset} (unsaved)": "{preset} (nem mentett)",
   "{text} ({count} lines)": "{text} ({count} sor)",
+  "{text}, filament {n}": "{text}, {n}. filament",
   "{title} and {n} more": "{title} és még {n}",
   "{value} in {preset}": "{value} itt: {preset}",
   "{verb} (unavailable: {why})": "{verb} (nem elérhető: {why})",

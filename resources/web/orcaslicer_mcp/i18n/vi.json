@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "Chỉ {object} · từ cài đặt sẵn in",
   "{preset} (unsaved)": "{preset} (chưa lưu)",
   "{text} ({count} lines)": "{text} ({count} dòng)",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} và {n} mục khác",
   "{value} in {preset}": "{value} trong {preset}",
   "{verb} (unavailable: {why})": "{verb} (không khả dụng: {why})",

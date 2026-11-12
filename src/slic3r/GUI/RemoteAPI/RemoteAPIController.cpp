@@ -758,7 +758,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -1343,6 +1343,81 @@ static size_t config_vector_size(const DynamicPrintConfig &cfg, const std::strin
                : static_cast<const ConfigOptionVectorBase *>(opt)->size();
 }
 
+// GET /filaments: one row per project filament slot. The preset name is what the sidebar combo shows; type, vendor
+// and system come from that preset; the colour is the project's (filament_colour). Only the preset open in the
+// Filament tab can hold unsaved edits, so `modified` is true for the slots using it when it is dirty, with the keys
+// as GET /status lists them. `tab` says which preset the Filament tab edits and the slot it is bound to (null when
+// it follows no slot).
+nlohmann::json Controller::filament_slots_json()
+{
+    auto    *bundle  = wxGetApp().preset_bundle;
+    Sidebar &sidebar = wxGetApp().plater()->sidebar();
+    const std::string edited  = bundle->filaments.get_edited_preset().name;
+    const bool        dirty   = bundle->filaments.current_is_dirty();
+    const auto       *colours = bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+    const int         editing = sidebar.editing_filament();
+    nlohmann::json    modified_keys = dirty ? nlohmann::json(bundle->filaments.current_dirty_options(true))
+                                            : nlohmann::json::array();
+    auto first_of = [](const Preset *p, const char *key) -> std::string {
+        if (p == nullptr) return {};
+        const auto *o = p->config.option<ConfigOptionStrings>(key);
+        return (o == nullptr || o->values.empty()) ? std::string() : o->values.front();
+    };
+    nlohmann::json rows = nlohmann::json::array();
+    for (size_t i = 0; i < bundle->filament_presets.size(); ++i) {
+        const std::string &name = bundle->filament_presets[i];
+        const Preset      *p    = bundle->filaments.find_preset(name, false);
+        const bool         open = name == edited;
+        rows.push_back({{"index", i},
+                        {"preset", name},
+                        {"filament_type", first_of(p, "filament_type")},
+                        {"vendor", first_of(p, "filament_vendor")},
+                        {"colour", colours != nullptr && i < colours->values.size() ? colours->values[i] : std::string()},
+                        {"system", p != nullptr && p->is_system},
+                        {"open_in_tab", open},
+                        {"modified", open && dirty},
+                        {"modified_keys", open && dirty ? modified_keys : nlohmann::json::array()}});
+    }
+    return {{"count", bundle->filament_presets.size()},
+            {"multi_filament", sidebar.is_multifilament()},
+            {"filaments", rows},
+            {"tab", {{"preset", edited},
+                     {"slot", editing >= 0 && size_t(editing) < bundle->filament_presets.size() ? nlohmann::json(editing)
+                                                                                                : nlohmann::json(nullptr)},
+                     {"modified", dirty}}}};
+}
+
+// The slot's edit button does this: the Filament tab opens the slot's preset and is bound to the slot, so what the
+// tab's preset becomes (a save under a new name) the slot follows. Tab::select_preset would ask in a dialog about
+// unsaved edits to a different preset, and no one can answer it remotely, so that case is refused instead of
+// discarded (filament_edits_unsaved: the caller saves them, or puts the keys back, first). A slot whose preset is
+// the one already open needs no switch, edits or not.
+nlohmann::json Controller::bind_filament_tab(size_t slot)
+{
+    auto    *bundle  = wxGetApp().preset_bundle;
+    Sidebar &sidebar = wxGetApp().plater()->sidebar();
+    if (slot >= bundle->filament_presets.size())
+        return {{"error", "slot_out_of_range"}, {"filament_count", bundle->filament_presets.size()}};
+    const std::string name   = bundle->filament_presets[slot];
+    const std::string edited = bundle->filaments.get_edited_preset().name;
+    Tab              *tab    = wxGetApp().get_tab(Preset::TYPE_FILAMENT);
+    if (tab == nullptr) return {{"error", "tab_unavailable"}};
+    if (name != edited) {
+        if (bundle->filaments.current_is_dirty())
+            return {{"error", "filament_edits_unsaved"},
+                    {"preset", edited},
+                    {"modified", bundle->filaments.current_dirty_options(true)}};
+        // -1 first, like Sidebar::edit_filament(): select_preset's on_presets_changed() cascade would otherwise
+        // write into the slot mid-switch.
+        sidebar.set_editing_filament(-1);
+        if (!tab->select_preset(name, false, "", /*force_select=*/true, /*force_no_transfer=*/true))
+            return {{"error", "select_cancelled"}};
+    }
+    sidebar.set_editing_filament(int(slot));
+    if (tab->get_combo_box() != nullptr) tab->get_combo_box()->set_filament_idx(int(slot));
+    return nlohmann::json::object();
+}
+
 // The project-scope epilogue of PUT /config: applies a staged copy of project_config and runs the follow-ups its
 // keys need. Also the MCP panel's Revert of a project key. GUI thread only.
 void Controller::apply_project_config(const DynamicPrintConfig &proj_new, const std::set<std::string> &proj_keys,
@@ -1431,7 +1506,7 @@ void Controller::apply_project_config(const DynamicPrintConfig &proj_new, const 
     }
 }
 
-Response Controller::handle_put_config(const std::string &body)
+Response Controller::handle_put_config(const std::string &body, int slot)
 {
     // May throw nlohmann::json::parse_error - caught by the dispatch route
     // below and turned into a 400, distinct from the generic 500 path.
@@ -1448,9 +1523,21 @@ Response Controller::handle_put_config(const std::string &body)
     // against freed memory - exactly the use-after-free that Task 8 hit.
     // Capturing by value/move means the lambda owns its own copy, independent
     // of this function's stack lifetime.
-    nlohmann::json result = run_on_ui([in = std::move(in)]() -> nlohmann::json {
+    nlohmann::json result = run_on_ui([in = std::move(in), slot]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         const bool allow_sensitive = sensitive_writes_allowed();
+
+        // ?slot=N: the per-filament keys go to that slot's preset. Binding the Filament tab to the slot first
+        // makes it the edited preset, so the preset path below needs no second route; the binding refuses
+        // rather than drop unsaved edits to another preset, and then nothing here changes.
+        if (slot >= 0) {
+            nlohmann::json bound = bind_filament_tab(size_t(slot));
+            if (bound.contains("error")) {
+                mcp_refused_reply(mcp_fmt(MCP_T("Filament {n}"), {{"n", std::to_string(slot + 1)}}), bound, "PUT /config");
+                bound["applied"] = nlohmann::json::array();
+                return bound;
+            }
+        }
 
         struct Target {
             Preset::Type        type;
@@ -1772,9 +1859,24 @@ Response Controller::handle_put_config(const std::string &body)
             api_notify(msg, false);
         }
 
-        return {{"applied", applied}, {"errors", errors}};
+        nlohmann::json reply = {{"applied", applied}, {"errors", errors}};
+        if (slot >= 0) {
+            reply["slot"]   = slot;
+            reply["preset"] = bundle->filaments.get_selected_preset_name();
+        }
+        return reply;
     }, /*timeout_s=*/120); // a checkpoint export in mcp_before_change can be slow
 
+    if (!result.contains("errors")) { // refused before any key was read: the slot binding
+        const std::string err = result.value("error", std::string());
+        if (err == "filament_edits_unsaved") {
+            api_notify("Can't write filament " + std::to_string(slot + 1) + ": the Filament tab has unsaved edits to '" +
+                       result.value("preset", std::string()) + "'", true);
+            return { 409, result };
+        }
+        if (err == "slot_out_of_range") return { 422, result };
+        return { 500, result };
+    }
     int status = result["errors"].empty() ? 200 : 422;
     return { status, result };
 }
@@ -2441,6 +2543,14 @@ Response Controller::handle_save_preset(const std::string &body)
     std::string type_s = in["type"].get<std::string>();
     std::string name   = in["name"].get<std::string>();
     bool detach = in.value("detach", false);
+    // Optional "slot" (0-based, filament only): save from that slot's preset and move only that slot to the
+    // saved name. Without it the GUI rule applies: every slot using the old preset moves to the new name.
+    int slot = -1;
+    if (in.contains("slot") && !in["slot"].is_null()) {
+        if (type_s != "filament" || !in["slot"].is_number_integer() || in["slot"].get<long long>() < 0)
+            return { 400, {{"error", "invalid_slot"}} };
+        slot = int(in["slot"].get<long long>());
+    }
     Preset::Type type = type_s == "print"    ? Preset::TYPE_PRINT :
                         type_s == "filament" ? Preset::TYPE_FILAMENT :
                         type_s == "printer"  ? Preset::TYPE_PRINTER : Preset::TYPE_INVALID;
@@ -2458,7 +2568,7 @@ Response Controller::handle_save_preset(const std::string &body)
     if (name.empty() || name == "." || name == ".." || name.size() > 128 || bad_char)
         return { 400, {{"error", "invalid_name"}} };
 
-    nlohmann::json r = run_on_ui([type, name, detach]() -> nlohmann::json {
+    nlohmann::json r = run_on_ui([type, name, detach, slot]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         PresetCollection &presets = type == Preset::TYPE_PRINT    ? bundle->prints :
                                     type == Preset::TYPE_FILAMENT ? bundle->filaments :
@@ -2476,30 +2586,73 @@ Response Controller::handle_save_preset(const std::string &body)
         Tab *tab = wxGetApp().get_tab(type);
         if (tab == nullptr) return refuse({{"error", "tab_unavailable"}});
         bool created = existing == nullptr;
+        std::vector<std::string> slots_before;
+        if (slot >= 0) {
+            nlohmann::json bound = bind_filament_tab(size_t(slot));
+            if (bound.contains("error")) return refuse(bound);
+            slots_before = bundle->filament_presets;
+        }
         mcp_before_change();
         tab->save_preset(name, detach, /*save_to_project=*/false);
         // save_preset returns void; confirm the preset actually landed.
         const Preset *saved = presets.find_preset(name, false);
         if (saved == nullptr) return refuse({{"error", "save_failed"}});
-        McpRow row = mcp_row("preset", MCP_T("Saved preset"), name, std::string(),
-                             created ? mcp_fmt(MCP_T("New {type} preset"), {{"type", tname}})
-                                     : mcp_fmt(MCP_T("Replaced the saved {type} preset"), {{"type", tname}}));
+        nlohmann::json slots_kept = nlohmann::json::array();
+        if (slot >= 0) {
+            // Tab::save_preset moved every slot that used the old preset to the new name
+            // (Sidebar::update_presets_from_to); a slot save moves this one alone, so the others go back.
+            for (size_t i = 0; i < slots_before.size() && i < bundle->filament_presets.size(); ++i) {
+                if (int(i) == slot || bundle->filament_presets[i] == slots_before[i]) continue;
+                select_filament_slot(i, slots_before[i]);
+                slots_kept.push_back(i);
+            }
+            if (size_t(slot) < bundle->filament_presets.size() && bundle->filament_presets[slot] != name)
+                select_filament_slot(size_t(slot), name);
+        }
+        std::string where = created ? mcp_fmt(MCP_T("New {type} preset"), {{"type", tname}})
+                                    : mcp_fmt(MCP_T("Replaced the saved {type} preset"), {{"type", tname}});
+        if (slot >= 0) where = mcp_fmt(MCP_T("{text}, filament {n}"), {{"text", where}, {"n", std::to_string(slot + 1)}});
+        McpRow row = mcp_row("preset", MCP_T("Saved preset"), name, std::string(), where);
         row.on_disk = true;
         row.target  = {{"type", "preset_saved"}, {"preset_type", tname}, {"name", name}, {"created", created}};
+        if (slot >= 0) row.target["slot"] = slot;
         if (created)
             mcp_undo(row, MCP_T("Delete preset"),
                      mcp_fmt(MCP_T("Delete the {type} preset {name}"), {{"type", tname}, {"name", name}}));
         mcp_record(std::move(row));
-        return {{"saved", name}, {"created", created}};
+        nlohmann::json reply = {{"saved", name}, {"created", created}};
+        if (slot >= 0) {
+            reply["slot"]            = slot;
+            reply["slots_reassigned"] = nlohmann::json::array({slot});
+            reply["slots_kept"]      = slots_kept;
+            reply["filaments"]       = bundle->filament_presets;
+        }
+        return reply;
     }, /*timeout_s=*/120);
     if (r.contains("error")) {
-        if (r["error"] == "name_reserved") {
+        const std::string err = r["error"].get<std::string>();
+        if (err == "name_reserved") {
             api_notify("Can't overwrite built-in " + type_s + " preset '" + name + "'", true);
             return { 409, r };
         }
+        if (err == "filament_edits_unsaved") {
+            api_notify("Can't save filament " + std::to_string(slot + 1) + ": the Filament tab has unsaved edits to '" +
+                       r.value("preset", std::string()) + "'", true);
+            return { 409, r };
+        }
+        if (err == "slot_out_of_range") return { 422, r };
         return { 500, r };
     }
-    api_notify((r["created"].get<bool>() ? "Saved new " : "Updated ") + type_s + " preset '" + name + "'");
+    std::string msg = (r["created"].get<bool>() ? "Saved new " : "Updated ") + type_s + " preset '" + name + "'";
+    if (slot >= 0) msg += " for filament " + std::to_string(slot + 1);
+    api_notify(msg);
+    return { 200, r };
+}
+
+// GET /api/v1/filaments -> the project's filament slots (filament_slots_json).
+Response Controller::handle_get_filaments()
+{
+    nlohmann::json r = run_on_ui([]() -> nlohmann::json { return filament_slots_json(); });
     return { 200, r };
 }
 
@@ -5576,8 +5729,29 @@ Response Controller::dispatch_route(const Request &req)
         }
         if (is("GET", "/api/v1/config"))        return handle_get_config(t);
         if (is("PUT", "/api/v1/config")) {
+            // ?slot=N (0-based): write that slot's filament preset instead of the one open in the Filament tab.
+            int slot = -1;
+            if (const auto q = t.find('?'); q != std::string::npos) {
+                const std::string query = t.substr(q + 1);
+                for (size_t pos = 0; pos <= query.size();) {
+                    const size_t      amp = query.find('&', pos);
+                    const std::string kv  = query.substr(pos, amp == std::string::npos ? std::string::npos : amp - pos);
+                    if (kv.rfind("slot=", 0) == 0) {
+                        const std::string v = kv.substr(5);
+                        try {
+                            size_t used = 0;
+                            slot        = std::stoi(v, &used);
+                            if (used != v.size() || slot < 0) throw std::invalid_argument("slot");
+                        } catch (const std::exception &) {
+                            return { 400, {{"error", "invalid_slot"}, {"detail", "slot must be a 0-based filament index"}} };
+                        }
+                    }
+                    if (amp == std::string::npos) break;
+                    pos = amp + 1;
+                }
+            }
             try {
-                return handle_put_config(req.body);
+                return handle_put_config(req.body, slot);
             } catch (const nlohmann::json::parse_error &) {
                 return { 400, {{"error", "invalid_json"}} };
             }
@@ -5622,6 +5796,7 @@ Response Controller::dispatch_route(const Request &req)
         }
         if (is("GET",  "/api/v1/gcode"))        return handle_get_gcode();
         if (is("GET",  "/api/v1/objects"))      return handle_get_objects();
+        if (is("GET",  "/api/v1/filaments"))    return handle_get_filaments();
         if (is("GET",  "/api/v1/plate/render")) return handle_plate_render(t);
         if (is("GET",  "/api/v1/presets"))      return handle_get_presets();
         if (is("POST", "/api/v1/arrange"))      return handle_arrange();

@@ -346,6 +346,7 @@
   "{object} only · from the print preset": "Només {object} · del perfil d'impressió",
   "{preset} (unsaved)": "{preset} (sense desar)",
   "{text} ({count} lines)": "{text} ({count} línies)",
+  "{text}, filament {n}": "{text}, filament {n}",
   "{title} and {n} more": "{title} i {n} més",
   "{value} in {preset}": "{value} a {preset}",
   "{verb} (unavailable: {why})": "{verb} (no disponible: {why})",
