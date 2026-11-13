@@ -287,6 +287,7 @@
   "Switch cancelled": "Geçiş iptal edildi",
   "Switch {label} back to {before}": "{label} ayarını {before} değerine geri geçir",
   "Switch {label} back to {before} (drops unsaved edits)": "{label} ayarını {before} değerine geri geçir (kaydedilmemiş düzenlemeler atılır)",
+  "Temperature Safety Check": "Sıcaklık Güvenlik Denetimi",
   "That filament is gone": "O filament artık yok",
   "The Remote API couldn't start. Check its port.": "Remote API başlatılamadı. Portunu kontrol edin.",
   "The Remote API is off.": "Remote API kapalı.",

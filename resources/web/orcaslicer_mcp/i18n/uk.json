@@ -287,6 +287,7 @@
   "Switch cancelled": "Перемикання скасовано",
   "Switch {label} back to {before}": "Перемкнути {label} назад на {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Перемкнути {label} назад на {before} (незбережені зміни буде втрачено)",
+  "Temperature Safety Check": "Перевірка безпеки температури",
   "That filament is gone": "Цього філамента більше немає",
   "The Remote API couldn't start. Check its port.": "Remote API не вдалося запустити. Перевірте його порт.",
   "The Remote API is off.": "Remote API вимкнено.",

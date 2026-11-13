@@ -69,7 +69,7 @@ Base URL: `http://<host>:13130/api/v1`
 | GET | `/plate/render` | PNG of the current plate: `view=editor\|preview`, `angle=iso\|top\|front\|left\|right\|rear\|bottom`, `frame=plate\|object`, `width`, `height` |
 | GET | `/presets` | Preset names per type, with system and selected flags |
 | PUT | `/preset` | Select a preset (`{"type":"print\|filament\|printer","name"}`) |
-| POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog; `slot` saves one filament slot's preset and moves only that slot |
+| POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog; `slot` saves one filament slot's preset and moves only that slot; a filament save past the temperature safety check needs `allow_temperature_pairs` |
 | POST | `/preset/config` | The full config of a named preset (`{"type","name"}`; credentials redacted) |
 | DELETE | `/preset` | Delete a user preset (never a system, selected or inherited-from one) |
 | GET | `/printer/slots` | The printer's filament trays: an Elegoo Centauri Carbon 2's CANVAS (read now), or the selected Bambu Lab printer's AMS and external spool |
@@ -275,6 +275,27 @@ when the tab holds unsaved edits to another preset, `422 slot_out_of_range`);
 `slot` with a type other than `filament` is `400 invalid_slot`. Without `slot` the
 route behaves as before.
 
+#### The temperature safety check
+
+OrcaSlicer 2.5 checks a filament preset before saving it: the first-layer
+temperature may differ from the other layers' by at most 30 °C for the nozzle and
+15 °C for each plate type. Past that it asks "Continue anyway?" in a dialog, which
+nothing can answer remotely. `POST /preset/save` runs the same check first and,
+when a pair is past its limit, refuses with nothing saved (`422`):
+
+```json
+{ "error": "temperature_pairs_unsafe",
+  "pairs": [ { "label": "Smooth High Temp Plate", "first_layer_key": "hot_plate_temp_initial_layer",
+               "other_layers_key": "hot_plate_temp", "first_layer": 60, "other_layers": 77,
+               "max_delta": 15, "delta": 17 } ] }
+```
+`label` is in OrcaSlicer's language. Change a value and save again, or send
+`"allow_temperature_pairs": true` (the dialog's Continue) to save as it is: the reply
+then lists the pairs under `temperature_pairs_allowed`. The check covers unsaved
+edits only, as in OrcaSlicer, and only filament presets. Builds with it list
+`preset_temperature_check` in `GET /status` `capabilities`; earlier 2.5 builds
+showed the dialog and the request timed out (`ui_timeout`) until someone clicked.
+
 ### GET /filaments
 
 The project's filament slots, as the sidebar shows them, in one read:
@@ -288,7 +309,7 @@ The project's filament slots, as the sidebar shows them, in one read:
       "system": false, "open_in_tab": true, "modified": true, "modified_keys": ["hot_plate_temp"] },
     { "index": 2, "preset": "Generic ASA", "filament_type": "ASA", "vendor": "Generic", "colour": "#FF0000",
       "system": true, "open_in_tab": false, "modified": false, "modified_keys": [] } ],
-  "tab": { "preset": "Polymaker LW-ASA", "slot": 1, "modified": true } }
+  "tab": { "preset": "Polymaker LW-ASA", "slot": null, "modified": true } }
 ```
 `preset` is the slot's preset; `filament_type`, `vendor` and `system` come from it,
 `colour` from the project. Only the preset open in the Filament tab can hold

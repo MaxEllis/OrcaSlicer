@@ -2005,6 +2005,13 @@
    ]
   },
   {
+   "en": "Temperature Safety Check",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
    "en": "That filament is gone",
    "host": true,
    "from": [

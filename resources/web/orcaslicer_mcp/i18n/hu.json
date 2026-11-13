@@ -287,6 +287,7 @@
   "Switch cancelled": "Váltás megszakítva",
   "Switch {label} back to {before}": "{label} visszaváltása erre: {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "{label} visszaváltása erre: {before} (elveti a nem mentett módosításokat)",
+  "Temperature Safety Check": "Hőmérséklet biztonsági ellenőrzés",
   "That filament is gone": "Ez a filament már nincs meg",
   "The Remote API couldn't start. Check its port.": "A Remote API nem tudott elindulni. Ellenőrizd a portját.",
   "The Remote API is off.": "A Remote API ki van kapcsolva.",

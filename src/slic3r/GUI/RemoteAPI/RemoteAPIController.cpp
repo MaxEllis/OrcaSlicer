@@ -288,6 +288,7 @@ static std::string mcp_reason(const std::string &e, const char *fallback = MCP_T
         {"select_cancelled", MCP_T("Switch cancelled")},
         {"tab_unavailable", MCP_T("Not ready")},
         {"name_reserved", MCP_T("Built-in name")},
+        {"temperature_pairs_unsafe", MCP_T("Temperature Safety Check")},
         {"builtin_preset", MCP_T("Built-in preset")},
         {"preset_selected", MCP_T("Preset in use")},
         {"has_children", MCP_T("Other presets inherit it")},
@@ -765,7 +766,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams", "preset_temperature_check"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -2574,6 +2575,15 @@ Response Controller::handle_save_preset(const std::string &body)
     std::string type_s = in["type"].get<std::string>();
     std::string name   = in["name"].get<std::string>();
     bool detach = in.value("detach", false);
+    // Optional "allow_temperature_pairs": save a filament preset whose first-layer and other-layer temperatures are
+    // further apart than OrcaSlicer's safety check allows (its own "Continue anyway?"); without it such a save is
+    // refused with the pairs.
+    bool allow_pairs = false;
+    if (in.contains("allow_temperature_pairs") && !in["allow_temperature_pairs"].is_null()) {
+        if (!in["allow_temperature_pairs"].is_boolean())
+            return { 400, {{"error", "invalid_allow_temperature_pairs"}} };
+        allow_pairs = in["allow_temperature_pairs"].get<bool>();
+    }
     // Optional "slot" (0-based, filament only): save from that slot's preset and move only that slot to the
     // saved name. Without it the GUI rule applies: every slot using the old preset moves to the new name.
     int slot = -1;
@@ -2600,7 +2610,7 @@ Response Controller::handle_save_preset(const std::string &body)
     if (name.empty() || name == "." || name == ".." || name.size() > 128 || bad_char)
         return { 400, {{"error", "invalid_name"}} };
 
-    nlohmann::json r = run_on_ui([type, name, detach, slot]() -> nlohmann::json {
+    nlohmann::json r = run_on_ui([type, name, detach, slot, allow_pairs]() -> nlohmann::json {
         auto *bundle = wxGetApp().preset_bundle;
         PresetCollection &presets = type == Preset::TYPE_PRINT    ? bundle->prints :
                                     type == Preset::TYPE_FILAMENT ? bundle->filaments :
@@ -2626,6 +2636,26 @@ Response Controller::handle_save_preset(const std::string &body)
             if (bound.contains("error")) return refuse(bound);
             slots_before = bundle->filament_presets;
         }
+        // OrcaSlicer 2.5 checks a filament save's first-layer / other-layer temperature pairs in Tab::save_preset and
+        // asks in a modal dialog, which would hold this request until someone clicks. Check here instead: refuse
+        // with the pairs, or save without the dialog when the caller allowed them.
+        nlohmann::json pairs = nlohmann::json::array();
+        for (const Tab::TemperaturePairIssue &i : tab->filament_temperature_pair_issues())
+            pairs.push_back(nlohmann::json{{"label", into_u8(i.label)}, {"first_layer_key", i.first_layer_key},
+                             {"other_layers_key", i.other_layers_key}, {"first_layer", i.first_layer},
+                             {"other_layers", i.other_layers}, {"max_delta", i.max_delta}, {"delta", i.delta}});
+        if (!pairs.empty() && !allow_pairs)
+            return refuse({{"error", "temperature_pairs_unsafe"}, {"pairs", pairs}});
+        struct SkipPairDialog
+        {
+            Tab *tab;
+            explicit SkipPairDialog(Tab *t) : tab(t) { tab->set_skip_temperature_pair_dialog(true); }
+            ~SkipPairDialog() { tab->set_skip_temperature_pair_dialog(false); }
+            SkipPairDialog(const SkipPairDialog &)            = delete;
+            SkipPairDialog &operator=(const SkipPairDialog &) = delete;
+        };
+        std::optional<SkipPairDialog> skip_dialog;
+        if (!pairs.empty()) skip_dialog.emplace(tab);
         mcp_before_change();
         tab->save_preset(name, detach, /*save_to_project=*/false);
         // save_preset returns void; confirm the preset actually landed.
@@ -2655,6 +2685,7 @@ Response Controller::handle_save_preset(const std::string &body)
                      mcp_fmt(MCP_T("Delete the {type} preset {name}"), {{"type", tname}, {"name", name}}));
         mcp_record(std::move(row));
         nlohmann::json reply = {{"saved", name}, {"created", created}};
+        if (!pairs.empty()) reply["temperature_pairs_allowed"] = pairs;
         if (slot >= 0) {
             reply["slot"]            = slot;
             reply["slots_reassigned"] = nlohmann::json::array({slot});
@@ -2675,6 +2706,12 @@ Response Controller::handle_save_preset(const std::string &body)
             return { 409, r };
         }
         if (err == "slot_out_of_range") return { 422, r };
+        if (err == "temperature_pairs_unsafe") {
+            api_notify("Didn't save filament preset '" + name +
+                       "': its first-layer and other-layer temperatures are further apart than the safety check allows",
+                       true);
+            return { 422, r };
+        }
         return { 500, r };
     }
     std::string msg = (r["created"].get<bool>() ? "Saved new " : "Updated ") + type_s + " preset '" + name + "'";

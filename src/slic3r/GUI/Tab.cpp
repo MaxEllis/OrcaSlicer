@@ -8826,25 +8826,19 @@ bool Tab::validate_custom_gcodes()
     return valid;
 }
 
-// ORCA: Session-only suppression keys for temperature-pair safety warnings.
-static std::unordered_set<std::string> s_filament_temp_pair_warning_suppressed_for_session;
-
-// ORCA: Validate that first-layer and other-layer temperature pairs are within safety limits, and warn the user if not.
-bool Tab::validate_filament_temperature_pairs()
+// ORCA: The first-layer / other-layer temperature pairs of the edited filament preset that exceed safety limits.
+// ORCA MCP: shared by validate_filament_temperature_pairs() (the dialog) and the Remote API's preset save (a refusal).
+std::vector<Tab::TemperaturePairIssue> Tab::filament_temperature_pair_issues() const
 {
+    std::vector<TemperaturePairIssue> issues;
     if (m_type != Preset::TYPE_FILAMENT || m_presets == nullptr)
-        return true;
+        return issues;
 
     // Warn only for newly edited state, not for unchanged presets.
     if (!m_presets->current_is_dirty())
-        return true;
+        return issues;
 
-    Preset& edited_preset = m_presets->get_edited_preset();
-    DynamicPrintConfig& config = edited_preset.config;
-    const std::string suppress_key = edited_preset.name;
-    // User opted out for this preset during current app session.
-    if (!suppress_key.empty() && s_filament_temp_pair_warning_suppressed_for_session.count(suppress_key) > 0)
-        return true;
+    const DynamicPrintConfig& config = m_presets->get_edited_preset().config;
 
     struct TempPairRule
     {
@@ -8873,9 +8867,6 @@ bool Tab::validate_filament_temperature_pairs()
         }
     }
 
-    wxString invalid_pairs;
-    int      invalid_count = 0;
-
     for (const TempPairRule& rule : temp_pair_rules) {
         if (!config.has(rule.first_layer_key) || !config.has(rule.other_layer_key))
             continue;
@@ -8896,15 +8887,37 @@ bool Tab::validate_filament_temperature_pairs()
         if (delta <= rule.max_delta)
             continue;
 
+        issues.push_back({rule.label, rule.first_layer_key, rule.other_layer_key, first_temp, other_temp, rule.max_delta, delta});
+    }
+    return issues;
+}
+
+// ORCA: Session-only suppression keys for temperature-pair safety warnings.
+static std::unordered_set<std::string> s_filament_temp_pair_warning_suppressed_for_session;
+
+// ORCA: Validate that first-layer and other-layer temperature pairs are within safety limits, and warn the user if not.
+bool Tab::validate_filament_temperature_pairs()
+{
+    // ORCA MCP: the Remote API checked the pairs itself and its caller allowed them, so no dialog.
+    if (m_skip_temperature_pair_dialog)
+        return true;
+
+    const std::vector<TemperaturePairIssue> issues = filament_temperature_pair_issues();
+    if (issues.empty())
+        return true;
+
+    const std::string suppress_key = m_presets->get_edited_preset().name;
+    // User opted out for this preset during current app session.
+    if (!suppress_key.empty() && s_filament_temp_pair_warning_suppressed_for_session.count(suppress_key) > 0)
+        return true;
+
+    wxString invalid_pairs;
+    for (const TemperaturePairIssue& issue : issues) {
         const wxString deg_c   = wxString::FromUTF8(u8"\u2103" /* °C */);
         const wxString bullet  = wxString::FromUTF8("•");
         invalid_pairs += wxString::Format(_L(" - %s:\n    %s first layer %d %s, other layers %d %s\n    %s max delta %d %s, current delta %d %s\n"),
-                                          rule.label, bullet, first_temp, deg_c, other_temp, deg_c, bullet, rule.max_delta, deg_c, delta, deg_c);
-        ++invalid_count;
+                                          issue.label, bullet, issue.first_layer, deg_c, issue.other_layers, deg_c, bullet, issue.max_delta, deg_c, issue.delta, deg_c);
     }
-
-    if (invalid_count == 0)
-        return true;
 
     wxString msg_text = _L("Some first-layer and other-layer temperature pairs exceed safety limits.\n");
     msg_text += _L("\nInvalid pairs:\n");

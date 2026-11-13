@@ -287,6 +287,7 @@
   "Switch cancelled": "Đã hủy việc chuyển",
   "Switch {label} back to {before}": "Chuyển {label} lại thành {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Chuyển {label} lại thành {before} (bỏ các chỉnh sửa chưa lưu)",
+  "Temperature Safety Check": "Kiểm tra an toàn nhiệt độ",
   "That filament is gone": "Filament đó không còn nữa",
   "The Remote API couldn't start. Check its port.": "Remote API không thể khởi động. Hãy kiểm tra cổng của nó.",
   "The Remote API is off.": "Remote API đang tắt.",

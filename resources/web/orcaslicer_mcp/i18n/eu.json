@@ -287,6 +287,7 @@
   "Switch cancelled": "Aldaketa bertan behera utzi da",
   "Switch {label} back to {before}": "Itzuli {label}: {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Itzuli {label}: {before} (gorde gabeko edizioak baztertzen ditu)",
+  "Temperature Safety Check": "Tenperaturaren segurtasun-egiaztapena",
   "That filament is gone": "Filamentu hori ez dago jada",
   "The Remote API couldn't start. Check its port.": "Remote API ezin izan da abiarazi. Egiaztatu bere ataka.",
   "The Remote API is off.": "Remote API desaktibatuta dago.",

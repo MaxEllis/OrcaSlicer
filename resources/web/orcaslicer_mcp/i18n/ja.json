@@ -287,6 +287,7 @@
   "Switch cancelled": "切り替えをキャンセルしました",
   "Switch {label} back to {before}": "{label} を {before} に切り戻す",
   "Switch {label} back to {before} (drops unsaved edits)": "{label} を {before} に切り戻す (未保存の編集は破棄されます)",
+  "Temperature Safety Check": "温度の安全チェック",
   "That filament is gone": "そのフィラメントはもうありません",
   "The Remote API couldn't start. Check its port.": "Remote API を開始できませんでした。ポートを確認してください。",
   "The Remote API is off.": "Remote API はオフです。",

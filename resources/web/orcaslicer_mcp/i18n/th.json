@@ -287,6 +287,7 @@
   "Switch cancelled": "ยกเลิกการสลับแล้ว",
   "Switch {label} back to {before}": "สลับ {label} กลับเป็น {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "สลับ {label} กลับเป็น {before} (จะทิ้งการแก้ไขที่ยังไม่ได้บันทึก)",
+  "Temperature Safety Check": "การตรวจสอบความปลอดภัยของอุณหภูมิ",
   "That filament is gone": "เส้นพลาสติกนั้นหายไปแล้ว",
   "The Remote API couldn't start. Check its port.": "Remote API เริ่มทำงานไม่ได้ ตรวจสอบพอร์ตของมัน",
   "The Remote API is off.": "Remote API ปิดอยู่",

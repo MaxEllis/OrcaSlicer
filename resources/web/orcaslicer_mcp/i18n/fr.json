@@ -287,6 +287,7 @@
   "Switch cancelled": "Changement annulé",
   "Switch {label} back to {before}": "Rebasculer {label} à {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Rebasculer {label} à {before} (abandonne les modifications non enregistrées)",
+  "Temperature Safety Check": "Vérification de sécurité de la température",
   "That filament is gone": "Ce filament n'existe plus",
   "The Remote API couldn't start. Check its port.": "Remote API n'a pas pu démarrer. Vérifiez son port.",
   "The Remote API is off.": "Remote API est désactivé.",

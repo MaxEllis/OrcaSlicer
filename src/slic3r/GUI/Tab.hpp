@@ -528,7 +528,22 @@ public:
 	static bool validate_custom_gcode(const wxString& title, const std::string& gcode);
 	bool        validate_custom_gcodes();
 	bool        validate_filament_temperature_pairs();
+	// ORCA MCP: the pairs validate_filament_temperature_pairs() would show, without a dialog, and the switch the Remote
+	// API sets around a save its caller allowed. label is in the UI language.
+	struct TemperaturePairIssue
+	{
+		wxString    label;
+		std::string first_layer_key;
+		std::string other_layers_key;
+		int         first_layer;
+		int         other_layers;
+		int         max_delta;
+		int         delta;
+	};
+	std::vector<TemperaturePairIssue> filament_temperature_pair_issues() const;
+	void        set_skip_temperature_pair_dialog(bool skip) { m_skip_temperature_pair_dialog = skip; }
     bool        validate_custom_gcodes_was_shown{ false };
+    bool        m_skip_temperature_pair_dialog{ false }; // ORCA MCP: see set_skip_temperature_pair_dialog
     void        set_just_edit(bool just_edit);
 
     void						edit_custom_gcode(const t_config_option_key& opt_key);

@@ -287,6 +287,7 @@
   "Switch cancelled": "Canvi cancel·lat",
   "Switch {label} back to {before}": "Tornar {label} a {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Tornar {label} a {before} (descarta les edicions sense desar)",
+  "Temperature Safety Check": "Comprovació de seguretat de temperatura",
   "That filament is gone": "Aquest filament ja no existeix",
   "The Remote API couldn't start. Check its port.": "Remote API no s'ha pogut iniciar. Comprova'n el port.",
   "The Remote API is off.": "Remote API està desactivada.",

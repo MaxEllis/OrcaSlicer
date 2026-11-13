@@ -287,6 +287,7 @@
   "Switch cancelled": "切换已取消",
   "Switch {label} back to {before}": "将 {label} 切换回 {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "将 {label} 切换回 {before}（会丢弃未保存的编辑）",
+  "Temperature Safety Check": "温度安全检查",
   "That filament is gone": "那个耗材丝已不存在",
   "The Remote API couldn't start. Check its port.": "Remote API 无法启动。请检查它的端口。",
   "The Remote API is off.": "Remote API 已关闭。",

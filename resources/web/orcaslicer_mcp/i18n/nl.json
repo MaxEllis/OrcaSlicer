@@ -287,6 +287,7 @@
   "Switch cancelled": "Wisselen geannuleerd",
   "Switch {label} back to {before}": "{label} terugschakelen naar {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "{label} terugschakelen naar {before} (verwerpt niet-opgeslagen wijzigingen)",
+  "Temperature Safety Check": "Veiligheidscontrole temperatuur",
   "That filament is gone": "Dat filament bestaat niet meer",
   "The Remote API couldn't start. Check its port.": "De Remote API kon niet starten. Controleer de poort.",
   "The Remote API is off.": "De Remote API staat uit.",

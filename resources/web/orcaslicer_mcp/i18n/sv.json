@@ -287,6 +287,7 @@
   "Switch cancelled": "Växlingen avbröts",
   "Switch {label} back to {before}": "Växla {label} tillbaka till {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Växla {label} tillbaka till {before} (förkastar osparade ändringar)",
+  "Temperature Safety Check": "Säkerhetskontroll av temperatur",
   "That filament is gone": "Det filamentet finns inte längre",
   "The Remote API couldn't start. Check its port.": "Remote API kunde inte starta. Kontrollera porten.",
   "The Remote API is off.": "Remote API är av.",

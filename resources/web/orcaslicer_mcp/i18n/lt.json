@@ -287,6 +287,7 @@
   "Switch cancelled": "Perjungimas atšauktas",
   "Switch {label} back to {before}": "Perjungti {label} atgal į {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Perjungti {label} atgal į {before} (atmeta neišsaugotus pakeitimus)",
+  "Temperature Safety Check": "Temperatūros saugumo patikra",
   "That filament is gone": "Tos gijos nebėra",
   "The Remote API couldn't start. Check its port.": "Remote API nepavyko paleisti. Patikrinkite jo prievadą.",
   "The Remote API is off.": "Remote API išjungtas.",

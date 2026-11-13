@@ -287,6 +287,7 @@
   "Switch cancelled": "Přepnutí zrušeno",
   "Switch {label} back to {before}": "Přepnout {label} zpět na {before}",
   "Switch {label} back to {before} (drops unsaved edits)": "Přepnout {label} zpět na {before} (zahodí neuložené úpravy)",
+  "Temperature Safety Check": "Kontrola bezpečnosti teplot",
   "That filament is gone": "Ten filament už neexistuje",
   "The Remote API couldn't start. Check its port.": "Remote API se nepodařilo spustit. Zkontrolujte její port.",
   "The Remote API is off.": "Remote API je vypnuté.",
