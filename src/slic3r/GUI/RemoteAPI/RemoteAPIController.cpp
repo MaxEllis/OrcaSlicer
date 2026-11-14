@@ -53,12 +53,17 @@
 #include "slic3r/GUI/DeviceCore/DevExtruderSystem.h" // Bambu AMS: the tray feeding the nozzle, extruder count
 #include "slic3r/GUI/DeviceCore/DevMapping.h"       // Bambu AMS: DevMappingUtil::ams_filament_mapping
 #include "libslic3r/ProjectTask.hpp"                // Bambu AMS: FilamentInfo
+#include "slic3r/GUI/DeviceCore/DevBed.h"           // Bambu status: bed temperature
+#include "slic3r/GUI/DeviceCore/DevChamber.h"       // Bambu status: chamber temperature
+#include "slic3r/GUI/DeviceCore/DevFan.h"           // Bambu status: fan speeds
+#include "slic3r/GUI/DeviceCore/DevHMS.h"           // Bambu status: HMS faults
 
 #include <algorithm>
 #include <cmath>
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
@@ -766,7 +771,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams", "preset_temperature_check"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams", "preset_temperature_check", "bambu_status"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -5206,11 +5211,11 @@ static nlohmann::json bambu_unsupported(const std::string &reason, const std::st
 
 // The selected machine when the printer preset is a Bambu one and the machine is connected, else nullptr with
 // `unsupported` = {"supported":false,"kind":"bambu","reason","message"}.
-static MachineObject *bambu_selected_machine(nlohmann::json &unsupported)
+static MachineObject *bambu_selected_machine(nlohmann::json &unsupported,
+                                             const char *not_supported = "The selected printer profile is neither a Bambu Lab printer nor an Elegoo Centauri Carbon 2 with multi-filament (CANVAS) support.")
 {
     if (!wxGetApp().preset_bundle->is_bbl_vendor()) {
-        unsupported = bambu_unsupported("not_supported",
-                                        "The selected printer profile is neither a Bambu Lab printer nor an Elegoo Centauri Carbon 2 with multi-filament (CANVAS) support.");
+        unsupported = bambu_unsupported("not_supported", not_supported);
         return nullptr;
     }
     DeviceManager *dev = wxGetApp().getDeviceManager();
@@ -5464,6 +5469,107 @@ static nlohmann::json bambu_mapping_json(MachineObject *obj)
             {"filaments", rows},
             {"valid", problems.empty()},
             {"problems", problems}};
+}
+
+// ---- Bambu Lab status ----------------------------------------------------------------------------------------------
+// GET /printer/status body: what the selected Bambu machine is doing, from the same MachineObject. The values are the
+// printer's own (gcode_state, the stage number and its GUI text, the print error code, HMS codes); nothing is
+// interpreted here, so a client can apply its own vocabulary. GUI thread only.
+
+static std::string bambu_hms_level_name(HMSMessageLevel level)
+{
+    switch (level) {
+    case HMS_FATAL: return "fatal";
+    case HMS_SERIOUS: return "serious";
+    case HMS_COMMON: return "common";
+    case HMS_INFO: return "info";
+    default: return "unknown";
+    }
+}
+
+// A fan speed as DevFan keeps it after its gear conversion (0..255), in percent.
+static int bambu_fan_percent(int raw)
+{
+    return static_cast<int>(std::lround(std::clamp(raw, 0, 255) * 100.0 / 255.0));
+}
+
+static nlohmann::json bambu_heater_json(double actual, double target)
+{
+    return {{"actual", actual}, {"target", target}};
+}
+
+static nlohmann::json bambu_status_json(MachineObject *obj)
+{
+    using namespace std::chrono;
+    const double since_update = duration<double>(system_clock::now() - obj->last_update_time).count();
+
+    DevExtderSystem *ext = obj->GetExtderSystem();
+    nlohmann::json   nozzles = nlohmann::json::array();
+    for (const DevExtder &e : ext->GetExtruders())
+        nozzles.push_back({{"extruder", e.GetExtId()},
+                           {"actual", e.GetCurrentTemp()},
+                           {"target", e.GetTargetTemp()},
+                           {"diameter", e.GetNozzleDiameter()}});
+    std::optional<DevExtder> cur = ext->GetCurrentExtder();
+    if (!cur.has_value() && !ext->GetExtruders().empty()) cur = ext->GetExtruders().front();
+    nlohmann::json nozzle = cur.has_value() ? bambu_heater_json(cur->GetCurrentTemp(), cur->GetTargetTemp()) : nlohmann::json(nullptr);
+
+    nlohmann::json bed = nullptr;
+    if (DevBed *b = obj->GetBed(); b != nullptr) bed = bambu_heater_json(b->GetBedTemp(), b->GetBedTempTarget());
+    nlohmann::json chamber = nullptr;
+    if (auto ch = obj->GetChamber(); ch != nullptr && ch->HasChamber())
+        chamber = bambu_heater_json(ch->GetChamberTemp(), ch->GetChamberTempTarget());
+
+    nlohmann::json fans = nullptr;
+    if (DevFan *f = obj->GetFan(); f != nullptr)
+        fans = {{"part", bambu_fan_percent(f->GetCoolingFanSpeed())},
+                {"aux", bambu_fan_percent(f->GetBigFan1Speed())},
+                {"chamber", bambu_fan_percent(f->GetBigFan2Speed())}};
+
+    nlohmann::json hms = nlohmann::json::array();
+    if (DevHMS *h = obj->GetHMS(); h != nullptr)
+        for (const DevHMSItem &item : h->GetHMSItems())
+            hms.push_back({{"code", item.get_long_error_code()},
+                           {"level", bambu_hms_level_name(item.get_level())},
+                           {"read", item.has_read()}});
+
+    const std::string state = obj->print_status.empty() ? obj->iot_print_status : obj->print_status;
+    nlohmann::json    layer = {{"current", nullptr}, {"total", nullptr}};
+    if (obj->is_support_layer_num) layer = {{"current", obj->curr_layer}, {"total", obj->total_layers}};
+    nlohmann::json print_error = nullptr;
+    if (obj->print_error != 0) print_error = {{"value", obj->print_error}, {"code", obj->get_print_error_str()}};
+
+    return {{"supported", true},
+            {"kind", "bambu"},
+            {"connected", true},
+            {"printer", bambu_printer_json(obj)},
+            {"updated_s_ago", std::round(since_update * 10.0) / 10.0},
+            {"state", state},
+            {"stage", obj->stage_curr},
+            {"stage_text", into_u8(obj->get_curr_stage())},
+            {"stage_remaining_s", obj->get_stage_remaining_seconds()},
+            {"job", {{"name", obj->subtask_name},
+                     {"file", obj->m_gcode_file},
+                     {"progress_percent", obj->mc_print_percent},
+                     {"remaining_s", obj->mc_left_time},
+                     {"layer", layer},
+                     {"plate_index", obj->m_plate_index},
+                     {"source", obj->print_type}}},
+            {"print_error", print_error},
+            {"temps", {{"nozzle", nozzle}, {"nozzles", nozzles}, {"bed", bed}, {"chamber", chamber}}},
+            {"fans", fans},
+            {"speed_percent", obj->printing_speed_mag},
+            {"hms", hms}};
+}
+
+// GET /printer/status - what the selected Bambu Lab printer is doing, from OrcaSlicer's own connection (bambu_status).
+Response Controller::handle_printer_status()
+{
+    return { 200, run_on_ui([]() -> nlohmann::json {
+                nlohmann::json why;
+                MachineObject *obj = bambu_selected_machine(why, "The selected printer profile is not a Bambu Lab one: this route reads only Bambu Lab printers.");
+                return obj != nullptr ? bambu_status_json(obj) : why;
+            }) };
 }
 
 // GET /printer/slots - a fresh read of the CANVAS trays; the selected Bambu machine's AMS when the preset is no CC2.
@@ -6194,6 +6300,7 @@ Response Controller::dispatch_route(const Request &req)
             try { return handle_delete_project_file(req.body); }
             catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
         }
+        if (is("GET",  "/api/v1/printer/status"))       return handle_printer_status();
         if (is("GET",  "/api/v1/printer/slots"))        return handle_printer_slots();
         if (is("GET",  "/api/v1/printer/slot_mapping")) return handle_get_slot_mapping();
         if (is("PUT",  "/api/v1/printer/slot_mapping")) {
