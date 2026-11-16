@@ -58,6 +58,7 @@
 #include "slic3r/GUI/DeviceCore/DevChamber.h"       // Bambu status: chamber temperature
 #include "slic3r/GUI/DeviceCore/DevFan.h"           // Bambu status: fan speeds
 #include "slic3r/GUI/DeviceCore/DevHMS.h"           // Bambu status: HMS faults
+#include "slic3r/GUI/HMS.hpp"                      // Bambu status: the Device tab's text for an HMS or print error code
 
 #include <algorithm>
 #include <cmath>
@@ -5477,6 +5478,22 @@ static nlohmann::json bambu_mapping_json(MachineObject *obj)
 // GET /printer/status body: what the selected Bambu machine is doing, from the same MachineObject. The values are the
 // printer's own (gcode_state, the stage number and its GUI text, the print error code, HMS codes); nothing is
 // interpreted here, so a client can apply its own vocabulary. GUI thread only.
+// ORCA MCP: each code also carries `message`, the sentence the Device tab shows for it (HMSQuery, read from
+// OrcaSlicer's HMS files in the UI language, as HMSPanel and DeviceErrorDialog do; "" when the file has none).
+// A cancel is not the absence of a code: Bambu's table has 0300400C "The task was canceled.".
+
+// The Device tab's text for a code, or "" without the HMS files.
+static std::string bambu_hms_text(MachineObject *obj, const std::string &long_code)
+{
+    HMSQuery *q = wxGetApp().get_hms_query();
+    return q != nullptr ? into_u8(q->query_hms_msg(obj, long_code)) : std::string();
+}
+
+static std::string bambu_print_error_text(MachineObject *obj, int code)
+{
+    HMSQuery *q = wxGetApp().get_hms_query();
+    return q != nullptr ? into_u8(q->query_print_error_msg(obj, code)) : std::string();
+}
 
 static std::string bambu_hms_level_name(HMSMessageLevel level)
 {
@@ -5533,13 +5550,17 @@ static nlohmann::json bambu_status_json(MachineObject *obj)
         for (const DevHMSItem &item : h->GetHMSItems())
             hms.push_back({{"code", item.get_long_error_code()},
                            {"level", bambu_hms_level_name(item.get_level())},
-                           {"read", item.has_read()}});
+                           {"read", item.has_read()},
+                           {"message", bambu_hms_text(obj, item.get_long_error_code())}});
 
     const std::string state = obj->print_status.empty() ? obj->iot_print_status : obj->print_status;
     nlohmann::json    layer = {{"current", nullptr}, {"total", nullptr}};
     if (obj->is_support_layer_num) layer = {{"current", obj->curr_layer}, {"total", obj->total_layers}};
     nlohmann::json print_error = nullptr;
-    if (obj->print_error != 0) print_error = {{"value", obj->print_error}, {"code", obj->get_print_error_str()}};
+    if (obj->print_error != 0)
+        print_error = {{"value", obj->print_error},
+                       {"code", obj->get_print_error_str()},
+                       {"message", bambu_print_error_text(obj, obj->print_error)}};
 
     return {{"supported", true},
             {"kind", "bambu"},

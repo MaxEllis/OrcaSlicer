@@ -497,14 +497,17 @@ the tray routes' (`not_supported` for a preset that is not a Bambu Lab one, `no_
              "bed": { "actual": 90.0, "target": 90.0 }, "chamber": null },
   "fans": { "part": 100, "aux": 0, "chamber": 0 },
   "speed_percent": 100,
-  "hms": [ { "code": "0700200000020001", "level": "common", "read": false } ] }
+  "hms": [ { "code": "0700200000020001", "level": "common", "read": false,
+             "message": "AMS A Slot 1 filament has run out. Please insert a new filament." } ] }
 ```
 
 The values are the printer's own, not interpreted: `state` is its `gcode_state` (`IDLE`, `PREPARE`, `RUNNING`,
 `PAUSE`, `FINISH`, `FAILED`, `SLICING`; empty before the first push), `stage` the number behind the Device tab's
 stage text (`stage_text`, in the UI language), `print_error` the code the printer reports for a stopped job
-(`null` when none; a cancelled job reports `FAILED` with no code), `hms` the Health Management System items with
-the long code the Bambu wiki is keyed by. `job` is always present and holds the last job once one has run;
+(`null` when none), `hms` the Health Management System items with the long code the Bambu wiki is keyed by. Each
+print error and HMS item carries `message`, the sentence the Device tab shows for that code, from OrcaSlicer's HMS
+files in the UI language (`""` when the files have none). A cancelled job is `FAILED` with no code or with
+`0300-400C` ("The task was canceled."). `job` is always present and holds the last job once one has run;
 `layer` is `null` on printers that do not report layers. `remaining_s` is the printer's own estimate. `chamber`
 is `null` on printers without a chamber sensor. `updated_s_ago` is the time since OrcaSlicer last heard from the
 printer; a connection that has gone quiet shows there before `printer_offline` does.
