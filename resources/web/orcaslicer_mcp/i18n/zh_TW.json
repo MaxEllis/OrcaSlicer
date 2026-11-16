@@ -214,6 +214,7 @@
   "Print preset": "列印參數預設",
   "Printer": "列印裝置",
   "Printer preset": "列印裝置預設",
+  "Printer selected in the Device tab": "已在「裝置」分頁選擇列印裝置",
   "Project is open": "專案已開啟",
   "Put back": "還原",
   "Put the height ranges of {object} back": "還原 {object} 的高度範圍",
@@ -414,6 +415,7 @@
   "Settings › Plugins › MCPs › Add, choose STDIO and paste this. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "menu path kept in English",
   "Nothing to revert": "existing file renders Revert as 復原",
   "note": "Heading drops 'your' (clumsy otherwise).",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there.",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }

@@ -214,6 +214,7 @@
   "Print preset": "Printvoorinstelling",
   "Printer": "Printer",
   "Printer preset": "Printervoorinstelling",
+  "Printer selected in the Device tab": "Printer geselecteerd op het tabblad Apparaat",
   "Project is open": "Project is geopend",
   "Put back": "Terugplaatsen",
   "Put the height ranges of {object} back": "De hoogtebereiken van {object} terugplaatsen",
@@ -405,6 +406,7 @@
   "{verb} {what}": "Infinitive verb followed by object reads a bit terse; check.",
   "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Words taken from OrcaSlicer .po (File, Plugins, Config)",
   "Needs the OrcaSlicer MCP build": "'build' = the OrcaSlicer MCP fork build (version of the app); check wording",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there.",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }

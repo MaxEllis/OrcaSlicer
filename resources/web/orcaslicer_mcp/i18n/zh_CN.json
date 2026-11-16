@@ -214,6 +214,7 @@
   "Print preset": "工艺预设",
   "Printer": "打印机",
   "Printer preset": "打印机预设",
+  "Printer selected in the Device tab": "已在“设备”标签页选择打印机",
   "Project is open": "项目已打开",
   "Put back": "恢复",
   "Put the height ranges of {object} back": "恢复 {object} 的高度范围",
@@ -414,6 +415,7 @@
   "Nothing to revert": "existing file renders Revert as 撤销; used 没有可撤销的内容",
   "Can't connect: it only reaches servers on the internet, not programs on your computer.": "kept the colon",
   "note": "Heading drops 'your' (本来 '你使用你的应用' is clumsy).",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there.",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }

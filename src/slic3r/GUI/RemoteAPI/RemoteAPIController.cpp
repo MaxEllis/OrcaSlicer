@@ -5692,9 +5692,10 @@ Response Controller::handle_select_printer_device(const std::string &body)
         }
         const std::string before_name = sel != nullptr ? sel->get_dev_name() : std::string();
         try {
-            McpRecorder::get().record_note("note", "Printer selected in the Device tab", target->get_dev_name(),
-                                           before_name.empty() ? std::string("No printer was selected before.") :
-                                                                 "Before: " + before_name);
+            // ORCA MCP: panel words through MCP_T so the panel translates them ("Was {before}" is an existing phrase).
+            McpRecorder::get().record_note("note", MCP_T("Printer selected in the Device tab"), target->get_dev_name(),
+                                           before_name.empty() ? std::string() :
+                                                                 mcp_fmt(MCP_T("Was {before}"), {{"before", before_name}}));
         } catch (const std::exception &e) {
             BOOST_LOG_TRIVIAL(error) << "MCP panel: printer selection not recorded: " << e.what();
         }

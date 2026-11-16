@@ -1492,6 +1492,13 @@
    ]
   },
   {
+   "en": "Printer selected in the Device tab",
+   "host": true,
+   "from": [
+    "RemoteAPIController.cpp"
+   ]
+  },
+  {
    "en": "Project is open",
    "host": true,
    "from": [
@@ -2232,9 +2239,10 @@
   },
   {
    "en": "Was {before}",
-   "host": false,
+   "host": true,
    "from": [
-    "panel.html"
+    "panel.html",
+    "RemoteAPIController.cpp"
    ]
   },
   {

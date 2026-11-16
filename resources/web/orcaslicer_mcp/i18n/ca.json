@@ -214,6 +214,7 @@
   "Print preset": "Perfil d'impressió",
   "Printer": "Impressora",
   "Printer preset": "Perfil d'impressora",
+  "Printer selected in the Device tab": "Impressora seleccionada a la pestanya Dispositiu",
   "Project is open": "El projecte és obert",
   "Put back": "Tornar a posar",
   "Put the height ranges of {object} back": "Tornar a posar els rangs d'alçada de {object}",
@@ -404,6 +405,7 @@
   "Copy": "Used infinitives like the .po",
   "Copy command": "'Copiar ordre' - check preferred word (ordre/comanda)",
   "Space": "'Espai'",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there.",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }

@@ -214,6 +214,7 @@
   "Print preset": "Inprimatze-aurrezarpena",
   "Printer": "Inprimagailua",
   "Printer preset": "Inprimagailu-aurrezarpena",
+  "Printer selected in the Device tab": "Inprimagailua Gailua fitxan hautatu da",
   "Project is open": "Proiektua irekita dago",
   "Put back": "Atzera jarri",
   "Put the height ranges of {object} back": "Jarri {object} objektuaren altuera-tarteak atzera",
@@ -409,6 +410,7 @@
   "Add to Cursor": "Basque case ending on product names (-era/-ra) unverified",
   "Needs the OrcaSlicer MCP build": "'bertsioa' used for 'build'",
   "your app": "'zure aplikazioa' reads OK in both sentences (absolutive); 'zain' sentence becomes 'zure aplikazioa zain…'",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT has no Basque interface; the menu path and box names stay in its English words (what a Basque user most likely sees)."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT has no Basque interface; the menu path and box names stay in its English words (what a Basque user most likely sees).",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }

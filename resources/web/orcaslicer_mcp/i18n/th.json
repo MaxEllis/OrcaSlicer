@@ -214,6 +214,7 @@
   "Print preset": "พรีเซ็ตการพิมพ์",
   "Printer": "เครื่องพิมพ์",
   "Printer preset": "พรีเซ็ตเครื่องพิมพ์",
+  "Printer selected in the Device tab": "เลือกเครื่องพิมพ์ในแท็บอุปกรณ์แล้ว",
   "Project is open": "โปรเจกต์เปิดอยู่",
   "Put back": "ใส่คืน",
   "Put the height ranges of {object} back": "ใส่ช่วงความสูงของ {object} คืน",
@@ -412,6 +413,7 @@
   "Open the {settings}": "{settings} follows without a space; check",
   "Scale back": "ปรับขนาดกลับ; check button wording",
   "Main menu (beside File) > Plugins > OrcaSlicer MCP > Config": "Used .po words ไฟล์/ปลั๊กอิน/การกำหนดค่า.",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there.",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }

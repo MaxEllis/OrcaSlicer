@@ -214,6 +214,7 @@
   "Print preset": "Cài đặt sẵn in",
   "Printer": "Máy in",
   "Printer preset": "Cài đặt sẵn máy in",
+  "Printer selected in the Device tab": "Đã chọn máy in trong tab Thiết bị",
   "Project is open": "Dự án đang mở",
   "Put back": "Đặt lại",
   "Put the height ranges of {object} back": "Đặt lại các phạm vi chiều cao của {object}",
@@ -407,6 +408,7 @@
   "Dropped by a preset switch": "'Bị loại bỏ' for dropped; check",
   "Auto-orient": "Tự động xoay hướng; check against OrcaSlicer's Orient wording",
   "{label} must be above {min} (got {got})": "'nhận được' for got; check",
-  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there."
+  "Settings › Plugins › Add › Add MCP server, then choose STDIO and fill in each box below. Works in Codex chats; ordinary ChatGPT chats can't use it yet. Needs uv.": "ChatGPT desktop route (orcaslicer-mcp OrcaCloud comment, 2026-11-13): the menu path and the box names are the ChatGPT desktop app's own words in this language (its locale files, app 26.1103), so they match what the user sees there.",
+  "Printer selected in the Device tab": "The Device tab's name is OrcaSlicer's own word for it in this language (its .po, msgid \"Device\")."
  }
 }
