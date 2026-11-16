@@ -76,6 +76,8 @@ Base URL: `http://<host>:13130/api/v1`
 | GET | `/printer/slots` | The printer's filament trays: an Elegoo Centauri Carbon 2's CANVAS (read now), or the selected Bambu Lab printer's AMS and external spool |
 | GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from (on Bambu: the Send dialog's automatic choice) |
 | PUT | `/printer/slot_mapping` | CANVAS only: set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
+| GET | `/printer/devices` | The printers the Device tab lists (id, name, model, connection, online, connected, printing) and which one is selected |
+| PUT | `/printer/device` | Select one of them (`{"id"}`), as a click in the Device tab's printer list does |
 | WS | `/events?token=…` | Live event stream |
 | GET | `/plates` | List the plates: index, name, current, locked, objects on each |
 | POST | `/plates` | Add a plate (`{"select": true}` by default) |
@@ -506,6 +508,52 @@ the long code the Bambu wiki is keyed by. `job` is always present and holds the 
 `layer` is `null` on printers that do not report layers. `remaining_s` is the printer's own estimate. `chamber`
 is `null` on printers without a chamber sensor. `updated_s_ago` is the time since OrcaSlicer last heard from the
 printer; a connection that has gone quiet shows there before `printer_offline` does.
+
+## Printer devices
+
+The Device tab keeps its own list of printers, separate from the printer presets: the account's cloud printers and
+the LAN printers whose access code OrcaSlicer holds. Which one is selected there decides what the Bambu Lab tray
+routes read. `GET /printer/devices` lists them as the tab does, by name, and `PUT /printer/device` selects one.
+Builds with these routes list `printer_select` in `GET /status` `capabilities`.
+
+```json
+GET /printer/devices
+{
+  "agent": "bbl",
+  "selected": "01P00A000000000",
+  "devices": [
+    {"id": "01P00A000000000", "name": "P1S workshop", "model": "Bambu Lab P1S", "model_id": "C12",
+     "connection": "lan", "ip": "192.0.2.40", "online": true, "connected": true, "printing": false, "selected": true},
+    {"id": "03W00A000000000", "name": "X1C office", "model": "Bambu Lab X1 Carbon", "model_id": "BL-P001",
+     "connection": "cloud", "ip": null, "online": false, "connected": false, "printing": false, "selected": false}
+  ]
+}
+```
+
+`agent` is the printer agent whose list this is (`bbl` for Bambu Lab). `online` is the printer's presence as
+OrcaSlicer last saw it; `connected` is whether OrcaSlicer holds a live connection to it, which only the selected
+printer can; `printing` follows the printer's own state. `selected` is null when nothing is selected.
+
+```json
+PUT /printer/device   {"id": "03W00A000000000"}
+{
+  "changed": true,
+  "before": "01P00A000000000",
+  "selected": true,
+  "device": {"id": "03W00A000000000", "name": "X1C office", "...": "as above", "selected": true}
+}
+```
+
+The selection goes through the Device tab's own flow when the tab has been built (its panels refresh, as after a
+click) and through the DeviceManager otherwise. The reply waits up to 2 s for it to settle; `selected` says whether
+it had. Selecting the printer already selected changes nothing (`changed: false`): re-selecting a LAN printer would
+disconnect and reconnect it. A LAN printer is connected on selection, so `connected` in the reply is usually still
+false; the tray routes answer `printer_offline` until the connection is up. The previous printer is disconnected,
+which does not affect a print it is running. The switch is noted in the MCP panel.
+
+An unknown id gets 404 `device_not_found` with the ids and names the list holds; a LAN printer OrcaSlicer has no
+access code for is not in the list and is added in the Device tab, by hand. 503 `no_device_manager` means
+OrcaSlicer has no printer agent loaded.
 
 ## Plates
 

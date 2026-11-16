@@ -48,6 +48,7 @@
 #include "slic3r/Utils/ElegooLink.hpp"              // CANVAS: get_canvas_info
 #include "slic3r/GUI/DeviceManager.hpp"             // Bambu AMS: MachineObject (trays, external spool, name)
 #include "slic3r/GUI/DeviceCore/DevManager.h"       // Bambu AMS: DeviceManager::get_selected_machine
+#include "slic3r/GUI/Monitor.hpp"                   // printer devices: the Device tab's own selection flow
 #include "slic3r/GUI/DeviceCore/DevDefs.h"          // Bambu AMS: virtual tray ids, devPrinterUtil
 #include "slic3r/GUI/DeviceCore/DevFilaSystem.h"    // Bambu AMS: DevAms / DevAmsTray
 #include "slic3r/GUI/DeviceCore/DevExtruderSystem.h" // Bambu AMS: the tray feeding the nozzle, extruder count
@@ -77,6 +78,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -771,7 +773,7 @@ Response Controller::handle_status()
             {"plates", {{"count", plates.get_plate_count()}, {"current", plates.get_curr_plate_index()}}},
             {"app_version", SoftFever_VERSION},
             {"api_version", "1.0"},
-            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams", "preset_temperature_check", "bambu_status"}},
+            {"capabilities", {"status", "config", "slice", "events", "model", "preset", "gcode", "objects", "arrange", "orient", "object_config", "slice_breakdown", "plate_render", "sensitive_key_policy", "plates", "printer_slots", "project", "preset_slot", "activity", "filament_slots", "bambu_ams", "preset_temperature_check", "bambu_status", "printer_select"}},
             {"sensitive_keys_allowed", sensitive_writes_allowed()},
             {"project_file_changes_allowed", project_file_changes_allowed()},
             {"project", plater->get_project_filename().ToUTF8().data()},
@@ -5572,6 +5574,134 @@ Response Controller::handle_printer_status()
             }) };
 }
 
+// --- Printer devices: the printers OrcaSlicer's Device tab lists, and selecting one ---------------------------------
+
+// One Device tab entry. `selected` is the selected machine's id. GUI thread only.
+static nlohmann::json device_json(MachineObject *obj, const std::string &selected)
+{
+    return {{"id", obj->get_dev_id()},
+            {"name", obj->get_dev_name()},
+            {"model", into_u8(obj->get_printer_type_display_str())},
+            {"model_id", obj->printer_type},
+            {"connection", obj->connection_type()},
+            {"ip", obj->is_local() ? nlohmann::json(obj->get_dev_ip()) : nlohmann::json(nullptr)},
+            {"online", obj->is_online()},
+            {"connected", obj->is_connected()},
+            {"printing", obj->is_in_printing()},
+            {"selected", obj->get_dev_id() == selected}};
+}
+
+// The machines the Device tab lists, in its order (by name): the current printer agent's bound machines, the
+// account's cloud printers and the LAN printers whose access code OrcaSlicer holds. Selecting any of them needs no
+// dialog. GUI thread only.
+static std::vector<MachineObject *> device_list(DeviceManager *dev)
+{
+    std::vector<MachineObject *> list;
+    for (const auto &entry : dev->get_my_machine_list(dev->get_current_printer_agent_id()))
+        if (entry.second != nullptr) list.push_back(entry.second);
+    std::sort(list.begin(), list.end(),
+              [](MachineObject *a, MachineObject *b) { return a->get_dev_name() < b->get_dev_name(); });
+    return list;
+}
+
+// GET /printer/devices body. GUI thread only.
+static nlohmann::json devices_json()
+{
+    DeviceManager *dev = wxGetApp().getDeviceManager();
+    nlohmann::json out  = {{"agent", dev != nullptr ? dev->get_current_printer_agent_id() : std::string()},
+                           {"selected", nullptr},
+                           {"devices", nlohmann::json::array()}};
+    if (dev == nullptr) return out;
+    MachineObject    *sel      = dev->get_selected_machine();
+    const std::string selected = sel != nullptr ? sel->get_dev_id() : std::string();
+    if (sel != nullptr) out["selected"] = selected;
+    for (MachineObject *obj : device_list(dev)) out["devices"].push_back(device_json(obj, selected));
+    return out;
+}
+
+// GET /printer/devices - the printers the Device tab lists and which one is selected.
+Response Controller::handle_printer_devices()
+{
+    return { 200, run_on_ui([]() -> nlohmann::json { return devices_json(); }) };
+}
+
+// PUT /printer/device  body {"id": <dev_id>} - select that printer as a click in the Device tab's printer list
+// does. The selection runs through the tab's own flow when the tab exists (it refreshes its panels and runs the
+// post-selection hooks) and through the DeviceManager otherwise, as GUI_App::select_machine does. A LAN printer is
+// connected on selection, so `connected` in the reply may still be false; the status and tray routes say
+// printer_offline until it is.
+Response Controller::handle_select_printer_device(const std::string &body)
+{
+    nlohmann::json in = nlohmann::json::parse(body); // parse_error -> 400 invalid_json in dispatch
+    if (!in.is_object())
+        return { 400, {{"error", "body_must_be_object"}} };
+    auto id_it = in.find("id");
+    if (id_it == in.end() || !id_it->is_string() || id_it->get<std::string>().empty())
+        return { 400, {{"error", "id_must_be_string"}, {"detail", "the printer's id from GET /printer/devices"}} };
+    const std::string id = id_it->get<std::string>();
+
+    nlohmann::json r = run_on_ui([id]() -> nlohmann::json {
+        DeviceManager *dev = wxGetApp().getDeviceManager();
+        if (dev == nullptr) return {{"error", "no_device_manager"}};
+        MachineObject *target = nullptr;
+        nlohmann::json known  = nlohmann::json::array();
+        for (MachineObject *obj : device_list(dev)) {
+            known.push_back({{"id", obj->get_dev_id()}, {"name", obj->get_dev_name()}});
+            if (obj->get_dev_id() == id) target = obj;
+        }
+        if (target == nullptr)
+            return {{"error", "device_not_found"},
+                    {"detail", "No printer with that id is in the Device tab's list. The list holds the account's cloud "
+                               "printers and the LAN printers whose access code OrcaSlicer has; a new LAN printer is "
+                               "added in the Device tab."},
+                    {"devices", known}};
+        MachineObject    *sel    = dev->get_selected_machine();
+        const std::string before = sel != nullptr ? sel->get_dev_id() : std::string();
+        nlohmann::json    out    = {{"changed", before != id},
+                                    {"before", before.empty() ? nlohmann::json(nullptr) : nlohmann::json(before)},
+                                    {"device", device_json(target, before)}};
+        if (before == id) return out; // re-selecting a LAN printer would disconnect and reconnect it
+        if (MonitorPanel *monitor = MonitorPanel::if_built()) {
+            monitor->select_machine(id); // queued: the tab applies it on the next pass of the event loop
+        } else if (dev->set_selected_machine(id)) {
+            MonitorPanel::on_machine_selected(dev->get_selected_machine());
+        } else {
+            return {{"error", "select_failed"},
+                    {"detail", "OrcaSlicer did not accept the selection; the printer may have dropped off the list."}};
+        }
+        const std::string before_name = sel != nullptr ? sel->get_dev_name() : std::string();
+        try {
+            McpRecorder::get().record_note("note", "Printer selected in the Device tab", target->get_dev_name(),
+                                           before_name.empty() ? std::string("No printer was selected before.") :
+                                                                 "Before: " + before_name);
+        } catch (const std::exception &e) {
+            BOOST_LOG_TRIVIAL(error) << "MCP panel: printer selection not recorded: " << e.what();
+        }
+        return out;
+    });
+    if (r.contains("error")) {
+        const std::string e = r["error"].get<std::string>();
+        return { e == "device_not_found" ? 404 : e == "no_device_manager" ? 503 : 500, r };
+    }
+    if (r.value("changed", false)) {
+        // The tab's queued selection lands on a later event-loop pass: read it back until it has.
+        for (int i = 0; i < 20; ++i) {
+            nlohmann::json now = run_on_ui([]() -> nlohmann::json { return devices_json(); });
+            if (now["selected"].is_string() && now["selected"].get<std::string>() == id) {
+                for (const auto &d : now["devices"])
+                    if (d.value("id", std::string()) == id) r["device"] = d;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        r["selected"] = r["device"].value("selected", false);
+        api_notify("Printer switched to '" + r["device"].value("name", id) + "'");
+    } else {
+        r["selected"] = true;
+    }
+    return { 200, r };
+}
+
 // GET /printer/slots - a fresh read of the CANVAS trays; the selected Bambu machine's AMS when the preset is no CC2.
 Response Controller::handle_printer_slots()
 {
@@ -6305,6 +6435,11 @@ Response Controller::dispatch_route(const Request &req)
         if (is("GET",  "/api/v1/printer/slot_mapping")) return handle_get_slot_mapping();
         if (is("PUT",  "/api/v1/printer/slot_mapping")) {
             try { return handle_put_slot_mapping(req.body); }
+            catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
+        }
+        if (is("GET",  "/api/v1/printer/devices"))      return handle_printer_devices();
+        if (is("PUT",  "/api/v1/printer/device")) {
+            try { return handle_select_printer_device(req.body); }
             catch (const nlohmann::json::parse_error &) { return { 400, {{"error", "invalid_json"}} }; }
         }
         if (is("POST", "/api/v1/plates")) {

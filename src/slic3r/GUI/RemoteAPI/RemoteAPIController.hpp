@@ -168,6 +168,8 @@ private:
     Response handle_printer_slots();                        // CANVAS: GET /printer/slots
     Response handle_get_slot_mapping();                     // CANVAS: GET /printer/slot_mapping
     Response handle_put_slot_mapping(const std::string &body); // CANVAS: PUT /printer/slot_mapping
+    Response handle_printer_devices();                           // Device tab: GET /printer/devices
+    Response handle_select_printer_device(const std::string &body); // Device tab: PUT /printer/device
 
     // CANVAS: the slot list for the selected printer preset. use_cached = take CanvasState::last_info when there is
     // one, else read the printer (MQTT on the calling io thread, never on the GUI thread) and store a good read in
