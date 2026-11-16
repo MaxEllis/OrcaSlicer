@@ -164,6 +164,7 @@ private:
     Response handle_delete_project_file(const std::string &body);   // project: DELETE /project/file
     // MCP panel: POST /activity/test/<name> (only with ORCA_MCP_PANEL_TEST=1 at start)
     Response handle_activity_test(const std::string &name, const std::string &body);
+    Response handle_printer_status();                       // Bambu: GET /printer/status
     Response handle_printer_slots();                        // CANVAS: GET /printer/slots
     Response handle_get_slot_mapping();                     // CANVAS: GET /printer/slot_mapping
     Response handle_put_slot_mapping(const std::string &body); // CANVAS: PUT /printer/slot_mapping

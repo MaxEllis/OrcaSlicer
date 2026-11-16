@@ -72,6 +72,7 @@ Base URL: `http://<host>:13130/api/v1`
 | POST | `/preset/save` | Save the current settings as a user preset (`{"type","name"}`), no dialog; `slot` saves one filament slot's preset and moves only that slot; a filament save past the temperature safety check needs `allow_temperature_pairs` |
 | POST | `/preset/config` | The full config of a named preset (`{"type","name"}`; credentials redacted) |
 | DELETE | `/preset` | Delete a user preset (never a system, selected or inherited-from one) |
+| GET | `/printer/status` | What the selected Bambu Lab printer is doing: state, stage, job progress, temperatures, fans, HMS faults, from OrcaSlicer's own connection |
 | GET | `/printer/slots` | The printer's filament trays: an Elegoo Centauri Carbon 2's CANVAS (read now), or the selected Bambu Lab printer's AMS and external spool |
 | GET | `/printer/slot_mapping` | Which tray each filament of the plate will print from (on Bambu: the Send dialog's automatic choice) |
 | PUT | `/printer/slot_mapping` | CANVAS only: set that mapping (`{"mapping":[{"filament","canvas_id","tray_id"}]}`); the Send dialog opens pre-filled |
@@ -472,6 +473,39 @@ comes back with `tray` null, a warning, a problem and `valid` false: the Send di
 pick one. `filament_id` on a filament and on its tray (the AMS's own id for the spool) are equal when the tray holds
 the filament the slot's preset describes; names differ (a system preset carries its printer, "@BBL P1S"). There is no `PUT` for Bambu printers: the choice is made in the Send dialog, which keeps no store this
 API could fill.
+
+## Printer status (Bambu Lab)
+
+`GET /printer/status` reads the Bambu Lab printer selected in the Device tab from the state OrcaSlicer's own
+connection keeps (the same `MachineObject` the Device tab draws), so the answer is instant and nothing is sent to
+the printer. Builds that serve it list `bambu_status` in `GET /status` `capabilities`. The unsupported replies are
+the tray routes' (`not_supported` for a preset that is not a Bambu Lab one, `no_printer_selected`,
+`printer_offline`).
+
+```json
+{ "supported": true, "kind": "bambu", "connected": true,
+  "printer": { "name": "P1S", "model": "Bambu Lab P1S", "connection": "lan" },
+  "updated_s_ago": 1.2,
+  "state": "RUNNING", "stage": 0, "stage_text": "Printing", "stage_remaining_s": 0,
+  "job": { "name": "benchy", "file": "benchy.gcode.3mf", "progress_percent": 42, "remaining_s": 2520,
+           "layer": { "current": 63, "total": 150 }, "plate_index": 0, "source": "local" },
+  "print_error": null,
+  "temps": { "nozzle": { "actual": 255, "target": 255 },
+             "nozzles": [ { "extruder": 0, "actual": 255, "target": 255, "diameter": 0.4 } ],
+             "bed": { "actual": 90.0, "target": 90.0 }, "chamber": null },
+  "fans": { "part": 100, "aux": 0, "chamber": 0 },
+  "speed_percent": 100,
+  "hms": [ { "code": "0700200000020001", "level": "common", "read": false } ] }
+```
+
+The values are the printer's own, not interpreted: `state` is its `gcode_state` (`IDLE`, `PREPARE`, `RUNNING`,
+`PAUSE`, `FINISH`, `FAILED`, `SLICING`; empty before the first push), `stage` the number behind the Device tab's
+stage text (`stage_text`, in the UI language), `print_error` the code the printer reports for a stopped job
+(`null` when none; a cancelled job reports `FAILED` with no code), `hms` the Health Management System items with
+the long code the Bambu wiki is keyed by. `job` is always present and holds the last job once one has run;
+`layer` is `null` on printers that do not report layers. `remaining_s` is the printer's own estimate. `chamber`
+is `null` on printers without a chamber sensor. `updated_s_ago` is the time since OrcaSlicer last heard from the
+printer; a connection that has gone quiet shows there before `printer_offline` does.
 
 ## Plates
 
