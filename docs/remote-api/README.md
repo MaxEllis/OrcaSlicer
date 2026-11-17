@@ -1363,5 +1363,9 @@ row whose group is not listed still gets a group, from its own `ts` and `time`.
 - **Survives GUI recreate.** Changing language/skin rebuilds the GUI; the server
   keeps running and slice-event subscriptions rebind onto the new window, so WS
   clients stay connected.
-- **No SO_REUSEADDR pitfalls.** The listener sets `SO_REUSEADDR`, so restarting
-  the app rebinds the port cleanly even if a prior socket is in `TIME_WAIT`.
+- **One server per port.** Restarting the app rebinds the port at once even while
+  a prior socket is in `TIME_WAIT`: macOS and Linux set `SO_REUSEADDR` for that;
+  Windows needs no option and sets `SO_EXCLUSIVEADDRUSE` instead, because there
+  `SO_REUSEADDR` would let a second OrcaSlicer bind the same port as the first.
+  A second OrcaSlicer (File > New Window, or any program already on the port) starts
+  without the server, and Preferences says "Couldn't start: port N may be in use".

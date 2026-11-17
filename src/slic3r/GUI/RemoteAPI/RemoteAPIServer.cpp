@@ -172,26 +172,42 @@ void Server::start(const Config &cfg)
 {
     if (m_running) stop();
     m_cfg = cfg;
+    // The io_context and the acceptor are built in locals and handed to the members only once
+    // listen() has succeeded. The acceptor is declared after the io_context, so on any failure it is
+    // destroyed first: its destructor deregisters the socket from the io_context's reactor. Freeing
+    // the io_context first crashed every start that found the port taken, e.g. a second OrcaSlicer
+    // (orcaslicer-mcp issue #28).
+    std::unique_ptr<net::io_context> ioc;
+    std::unique_ptr<tcp::acceptor>   acceptor;
     try {
-        m_ioc = std::make_unique<net::io_context>(1);
+        ioc = std::make_unique<net::io_context>(1);
         auto address = m_cfg.bind_lan ? net::ip::address_v4::any()
                                       : net::ip::make_address_v4("127.0.0.1");
         tcp::endpoint endpoint(address, static_cast<unsigned short>(m_cfg.port));
-        m_acceptor = std::make_unique<tcp::acceptor>(*m_ioc);
-        m_acceptor->open(endpoint.protocol());
+        acceptor = std::make_unique<tcp::acceptor>(*ioc);
+        acceptor->open(endpoint.protocol());
+#ifdef _WIN32
+        // Windows: SO_EXCLUSIVEADDRUSE, never SO_REUSEADDR. There SO_REUSEADDR lets a second process
+        // bind a port another one is listening on, so a second OrcaSlicer shared 13130 with the first
+        // and either of them could answer. Windows rebinds a port that only has TIME_WAIT connections
+        // left without any option (checked on Windows 10).
+        acceptor->set_option(net::detail::socket_option::boolean<SOL_SOCKET, SO_EXCLUSIVEADDRUSE>(true));
+#else
         // SO_REUSEADDR: rebind while a prior socket lingers in TIME_WAIT.
         // Without it, a rapid kill+relaunch silently fails to bind 13130.
-        m_acceptor->set_option(net::socket_base::reuse_address(true));
-        m_acceptor->bind(endpoint);
-        m_acceptor->listen(net::socket_base::max_listen_connections);
+        acceptor->set_option(net::socket_base::reuse_address(true));
+#endif
+        acceptor->bind(endpoint);
+        acceptor->listen(net::socket_base::max_listen_connections);
     } catch (const std::exception &e) {
         BOOST_LOG_TRIVIAL(error) << "remote-api: failed to bind port " << m_cfg.port
                                  << ": " << e.what();
-        m_ioc.reset();
-        m_acceptor.reset();
         m_start_failed = true;
         return; // disabled for this run; the Preferences page shows "failed" via running()
     }
+    // Acceptor first: whatever the members held goes in the same order as in stop().
+    m_acceptor = std::move(acceptor);
+    m_ioc      = std::move(ioc);
     m_start_failed = false;
     m_running = true;
     do_accept();
